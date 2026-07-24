@@ -43,11 +43,13 @@ LyraDB（天琴智库）把 **MySQL、PostgreSQL、Oracle、SQL Server、ClickHo
 ## 🚀 快速开始
 
 ### 环境要求
+
 - JDK 17+
 - Maven 3.6+
 - Node.js 18+ / npm
 
 ### 启动后端
+
 ```bash
 cd backend
 mvn spring-boot:run
@@ -55,6 +57,7 @@ mvn spring-boot:run
 ```
 
 ### 启动前端
+
 ```bash
 cd frontend
 npm install
@@ -63,6 +66,7 @@ npm run dev
 ```
 
 ### 桌面打包
+
 ```bash
 bash package-desktop.sh
 # 产物: backend/target/desktop/LyraDB
