@@ -1,0 +1,36 @@
+/**
+ * 应用入口文件
+ */
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+import ElementPlus from 'element-plus'
+import 'element-plus/dist/index.css'
+import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+
+// Vxe-table 注册
+import VxeUIAll from 'vxe-pc-ui'
+import 'vxe-pc-ui/lib/style.css'
+import VxeUITable from 'vxe-table'
+import 'vxe-table/lib/style.css'
+
+import App from './App.vue'
+import router from './router'
+import './styles/global.css'
+import './styles/tokens.css'
+
+const app = createApp(App)
+
+// 注册Element Plus图标
+for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+    app.component(key, component)
+}
+
+app.use(createPinia())
+app.use(router)
+app.use(ElementPlus)
+
+// 注册 Vxe-table
+app.use(VxeUIAll)
+app.use(VxeUITable)
+
+app.mount('#app')

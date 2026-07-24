@@ -1,0 +1,44 @@
+# 生产环境配置（安全收紧）
+spring:
+  datasource:
+    # H2 文件路径可经环境变量覆盖；默认与 dev 一致以便最小化部署
+    url: jdbc:h2:file:${LYRADB_H2_PATH:./data/lyradb};DB_CLOSE_DELAY=-1;MODE=MySQL;AUTO_RECONNECT=TRUE
+    driver-class-name: org.h2.Driver
+    username: ${LYRADB_DB_USER:sa}
+    password: ${LYRADB_DB_PASSWORD:}
+
+  jpa:
+    hibernate:
+      # 生产环境不自动改表结构，仅校验
+      ddl-auto: validate
+    database-platform: org.hibernate.dialect.H2Dialect
+
+  h2:
+    console:
+      # 生产环境关闭 H2 控制台
+      enabled: false
+
+# 生产环境强制要求 JASYPT_PASSWORD（无默认弱密钥；缺失则启动失败）
+jasypt:
+  encryptor:
+    password: ${JASYPT_PASSWORD}
+
+app:
+  # 生产环境收紧 CORS 白名单（逗号分隔）
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+    allowed-methods: "GET,POST,PUT,DELETE,OPTIONS"
+    allowed-headers: "*"
+  security:
+    # 生产启用 HTTP Basic；用户来自下方列表（密码建议经环境变量注入）
+    enabled: true
+    users:
+      - username: ${LYRADB_USER}
+        password: ${LYRADB_PASSWORD}
+        roles: ADMIN
+
+logging:
+  level:
+    io.github.lexaquila.lyradb: INFO
+    org.hibernate.SQL: WARN
+    org.springframework: WARN

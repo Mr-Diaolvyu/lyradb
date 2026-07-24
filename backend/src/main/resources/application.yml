@@ -1,0 +1,52 @@
+# 公共配置（所有 profile 共享）
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: lyradb
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+
+  # JSON serialization
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+
+  jpa:
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+# Jasypt 加密算法（公共；密钥由各 profile 提供，保持 PBEWithMD5AndDES 以兼容已存数据）
+jasypt:
+  encryptor:
+    algorithm: PBEWithMD5AndDES
+    iv-generator-classname: org.jasypt.iv.NoIvGenerator
+
+# 自定义应用配置
+app:
+  # 发行版：personal | enterprise
+  edition: ${LYRADB_EDITION:personal}
+  # Driver cache directory
+  driver-cache-dir: ${user.home}/.lyradb/drivers
+  # Max connections per database
+  max-connections-per-db: 10
+  # Query result limits
+  max-query-rows: 10000
+  # Per-SQL execution timeout (seconds), 0 = unlimited
+  query-timeout-seconds: 60
+
+  # 审计配置
+  audit:
+    mask-sql: false
+
+logging:
+  level:
+    io.github.lexaquila.lyradb: DEBUG
+    org.hibernate.SQL: WARN
+    org.springframework: INFO

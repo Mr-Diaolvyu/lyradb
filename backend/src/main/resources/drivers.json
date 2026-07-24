@@ -1,0 +1,588 @@
+[
+    {
+        "dbType": "MYSQL",
+        "displayName": "MySQL",
+        "driverType": "jdbc",
+        "driverClass": "com.mysql.cj.jdbc.Driver",
+        "mavenCoordinates": {
+            "groupId": "com.mysql",
+            "artifactId": "mysql-connector-j",
+            "version": "8.0.33"
+        },
+        "connectionUrlTemplate": "jdbc:mysql://{host}:{port}/{database}?useUnicode=true&characterEncoding=utf8&useSSL={ssl}&serverTimezone=Asia/Shanghai",
+        "defaultPort": 3306,
+        "capabilities": {
+            "supportsTransaction": true,
+            "supportsDML": true,
+            "supportsDDL": true,
+            "supportsPartition": false,
+            "supportsViews": true,
+            "supportsProcedures": true,
+            "supportsFunctions": true,
+            "supportsIndexes": true,
+            "supportsTriggers": true,
+            "supportsSSL": true,
+            "readOnly": false
+        },
+        "connectionFormFields": [
+            {
+                "name": "host",
+                "label": "主机地址",
+                "type": "text",
+                "required": true,
+                "defaultValue": "localhost"
+            },
+            {
+                "name": "port",
+                "label": "端口",
+                "type": "number",
+                "required": true,
+                "defaultValue": 3306
+            },
+            {
+                "name": "database",
+                "label": "数据库名",
+                "type": "text",
+                "required": true
+            },
+            {
+                "name": "username",
+                "label": "用户名",
+                "type": "text",
+                "required": true
+            },
+            {
+                "name": "password",
+                "label": "密码",
+                "type": "password",
+                "required": false
+            },
+            {
+                "name": "ssl",
+                "label": "启用SSL",
+                "type": "boolean",
+                "required": false,
+                "defaultValue": false
+            }
+        ]
+    },
+    {
+        "dbType": "POSTGRESQL",
+        "displayName": "PostgreSQL",
+        "driverType": "jdbc",
+        "driverClass": "org.postgresql.Driver",
+        "mavenCoordinates": {
+            "groupId": "org.postgresql",
+            "artifactId": "postgresql",
+            "version": "42.7.3"
+        },
+        "connectionUrlTemplate": "jdbc:postgresql://{host}:{port}/{database}?ssl={ssl}",
+        "defaultPort": 5432,
+        "capabilities": {
+            "supportsTransaction": true,
+            "supportsDML": true,
+            "supportsDDL": true,
+            "supportsPartition": true,
+            "supportsViews": true,
+            "supportsProcedures": true,
+            "supportsFunctions": true,
+            "supportsIndexes": true,
+            "supportsTriggers": true,
+            "supportsSSL": true,
+            "readOnly": false
+        },
+        "connectionFormFields": [
+            {
+                "name": "host",
+                "label": "主机地址",
+                "type": "text",
+                "required": true,
+                "defaultValue": "localhost"
+            },
+            {
+                "name": "port",
+                "label": "端口",
+                "type": "number",
+                "required": true,
+                "defaultValue": 5432
+            },
+            {
+                "name": "database",
+                "label": "数据库名",
+                "type": "text",
+                "required": true
+            },
+            {
+                "name": "username",
+                "label": "用户名",
+                "type": "text",
+                "required": true
+            },
+            {
+                "name": "password",
+                "label": "密码",
+                "type": "password",
+                "required": false
+            },
+            {
+                "name": "ssl",
+                "label": "启用SSL",
+                "type": "boolean",
+                "required": false,
+                "defaultValue": false
+            }
+        ]
+    },
+    {
+        "dbType": "ORACLE",
+        "displayName": "Oracle",
+        "driverType": "jdbc",
+        "driverClass": "oracle.jdbc.OracleDriver",
+        "mavenCoordinates": {
+            "groupId": "com.oracle.database.jdbc",
+            "artifactId": "ojdbc11",
+            "version": "23.3.0.23.09"
+        },
+        "connectionUrlTemplate": "jdbc:oracle:thin:@{host}:{port}/{serviceName}",
+        "defaultPort": 1521,
+        "capabilities": {
+            "supportsTransaction": true,
+            "supportsDML": true,
+            "supportsDDL": true,
+            "supportsPartition": true,
+            "supportsViews": true,
+            "supportsProcedures": true,
+            "supportsFunctions": true,
+            "supportsIndexes": true,
+            "supportsTriggers": true,
+            "supportsSSL": true,
+            "readOnly": false
+        },
+        "connectionFormFields": [
+            {
+                "name": "host",
+                "label": "主机地址",
+                "type": "text",
+                "required": true,
+                "defaultValue": "localhost"
+            },
+            {
+                "name": "port",
+                "label": "端口",
+                "type": "number",
+                "required": true,
+                "defaultValue": 1521
+            },
+            {
+                "name": "serviceName",
+                "label": "服务名",
+                "type": "text",
+                "required": true
+            },
+            {
+                "name": "username",
+                "label": "用户名",
+                "type": "text",
+                "required": true
+            },
+            {
+                "name": "password",
+                "label": "密码",
+                "type": "password",
+                "required": true
+            }
+        ]
+    },
+    {
+        "dbType": "MSSQL",
+        "displayName": "SQL Server",
+        "driverType": "jdbc",
+        "driverClass": "com.microsoft.sqlserver.jdbc.SQLServerDriver",
+        "mavenCoordinates": {
+            "groupId": "com.microsoft.sqlserver",
+            "artifactId": "mssql-jdbc",
+            "version": "12.6.1.jre11"
+        },
+        "connectionUrlTemplate": "jdbc:sqlserver://{host}:{port};databaseName={database};encrypt={ssl}",
+        "defaultPort": 1433,
+        "capabilities": {
+            "supportsTransaction": true,
+            "supportsDML": true,
+            "supportsDDL": true,
+            "supportsPartition": true,
+            "supportsViews": true,
+            "supportsProcedures": true,
+            "supportsFunctions": true,
+            "supportsIndexes": true,
+            "supportsTriggers": true,
+            "supportsSSL": true,
+            "readOnly": false
+        },
+        "connectionFormFields": [
+            {
+                "name": "host",
+                "label": "主机地址",
+                "type": "text",
+                "required": true,
+                "defaultValue": "localhost"
+            },
+            {
+                "name": "port",
+                "label": "端口",
+                "type": "number",
+                "required": true,
+                "defaultValue": 1433
+            },
+            {
+                "name": "database",
+                "label": "数据库名",
+                "type": "text",
+                "required": true
+            },
+            {
+                "name": "username",
+                "label": "用户名",
+                "type": "text",
+                "required": true
+            },
+            {
+                "name": "password",
+                "label": "密码",
+                "type": "password",
+                "required": false
+            },
+            {
+                "name": "ssl",
+                "label": "启用加密",
+                "type": "boolean",
+                "required": false,
+                "defaultValue": true
+            }
+        ]
+    },
+    {
+        "dbType": "SQLITE",
+        "displayName": "SQLite",
+        "driverType": "jdbc",
+        "driverClass": "org.sqlite.JDBC",
+        "mavenCoordinates": {
+            "groupId": "org.xerial",
+            "artifactId": "sqlite-jdbc",
+            "version": "3.45.1.0"
+        },
+        "connectionUrlTemplate": "jdbc:sqlite:{filePath}",
+        "defaultPort": 0,
+        "capabilities": {
+            "supportsTransaction": true,
+            "supportsDML": true,
+            "supportsDDL": true,
+            "supportsPartition": false,
+            "supportsViews": true,
+            "supportsProcedures": false,
+            "supportsFunctions": false,
+            "supportsIndexes": true,
+            "supportsTriggers": true,
+            "supportsSSL": false,
+            "readOnly": false
+        },
+        "connectionFormFields": [
+            {
+                "name": "filePath",
+                "label": "数据库文件路径",
+                "type": "text",
+                "required": true,
+                "defaultValue": ""
+            },
+            {
+                "name": "password",
+                "label": "密码(可选)",
+                "type": "password",
+                "required": false
+            }
+        ]
+    },
+    {
+        "dbType": "CLICKHOUSE",
+        "displayName": "ClickHouse",
+        "driverType": "jdbc",
+        "driverClass": "com.clickhouse.jdbc.ClickHouseDriver",
+        "mavenCoordinates": {
+            "groupId": "com.clickhouse",
+            "artifactId": "clickhouse-jdbc",
+            "version": "0.6.0",
+            "classifier": "http"
+        },
+        "connectionUrlTemplate": "jdbc:ch://{host}:{port}/{database}",
+        "defaultPort": 8123,
+        "capabilities": {
+            "supportsTransaction": false,
+            "supportsDML": true,
+            "supportsDDL": true,
+            "supportsPartition": true,
+            "supportsViews": true,
+            "supportsProcedures": false,
+            "supportsFunctions": true,
+            "supportsIndexes": false,
+            "supportsTriggers": false,
+            "supportsSSL": true,
+            "readOnly": false
+        },
+        "connectionFormFields": [
+            {
+                "name": "host",
+                "label": "主机地址",
+                "type": "text",
+                "required": true,
+                "defaultValue": "localhost"
+            },
+            {
+                "name": "port",
+                "label": "端口",
+                "type": "number",
+                "required": true,
+                "defaultValue": 8123
+            },
+            {
+                "name": "database",
+                "label": "数据库名",
+                "type": "text",
+                "required": false,
+                "defaultValue": "default"
+            },
+            {
+                "name": "username",
+                "label": "用户名",
+                "type": "text",
+                "required": false
+            },
+            {
+                "name": "password",
+                "label": "密码",
+                "type": "password",
+                "required": false
+            }
+        ]
+    },
+    {
+        "dbType": "MAXCOMPUTE",
+        "displayName": "MaxCompute",
+        "driverType": "jdbc",
+        "driverClass": "com.aliyun.odps.jdbc.OdpsDriver",
+        "mavenCoordinates": {
+            "groupId": "com.aliyun.odps",
+            "artifactId": "odps-jdbc",
+            "version": "3.6.10-public"
+        },
+        "connectionUrlTemplate": "jdbc:odps:{endpoint}?project={project}",
+        "defaultPort": 0,
+        "capabilities": {
+            "supportsTransaction": false,
+            "supportsDML": true,
+            "supportsDDL": true,
+            "supportsPartition": true,
+            "supportsViews": true,
+            "supportsProcedures": false,
+            "supportsFunctions": true,
+            "supportsIndexes": false,
+            "supportsTriggers": false,
+            "supportsSSL": true,
+            "readOnly": true,
+            "supportsMaxComputePartition": true
+        },
+        "connectionFormFields": [
+            {
+                "name": "endpoint",
+                "label": "Endpoint",
+                "type": "select",
+                "required": true,
+                "options": [
+                    {
+                        "label": "华东1(杭州)",
+                        "value": "http://service.cn-hangzhou.maxcompute.aliyun.com/api"
+                    },
+                    {
+                        "label": "华东2(上海)",
+                        "value": "http://service.cn-shanghai.maxcompute.aliyun.com/api"
+                    },
+                    {
+                        "label": "华北2(北京)",
+                        "value": "http://service.cn-beijing.maxcompute.aliyun.com/api"
+                    },
+                    {
+                        "label": "华南1(深圳)",
+                        "value": "http://service.cn-shenzhen.maxcompute.aliyun.com/api"
+                    },
+                    {
+                        "label": "西南1(成都)",
+                        "value": "http://service.cn-chengdu.maxcompute.aliyun.com/api"
+                    },
+                    {
+                        "label": "中国(香港)",
+                        "value": "http://service.cn-hongkong.maxcompute.aliyun.com/api"
+                    },
+                    {
+                        "label": "新加坡",
+                        "value": "http://service.ap-southeast-1.maxcompute.aliyun.com/api"
+                    }
+                ]
+            },
+            {
+                "name": "project",
+                "label": "Project名",
+                "type": "text",
+                "required": true
+            },
+            {
+                "name": "accessKeyId",
+                "label": "AccessKey ID",
+                "type": "text",
+                "required": true
+            },
+            {
+                "name": "accessKeySecret",
+                "label": "AccessKey Secret",
+                "type": "password",
+                "required": true
+            }
+        ]
+    },
+    {
+        "dbType": "MONGODB",
+        "displayName": "MongoDB",
+        "driverType": "nosql",
+        "driverClass": "com.mongodb.client.MongoClient",
+        "mavenCoordinates": {
+            "groupId": "org.mongodb",
+            "artifactId": "mongodb-driver-sync",
+            "version": "4.11.1"
+        },
+        "connectionUrlTemplate": "mongodb://{host}:{port}",
+        "defaultPort": 27017,
+        "capabilities": {
+            "supportsTransaction": true,
+            "supportsDML": true,
+            "supportsDDL": true,
+            "supportsPartition": false,
+            "supportsViews": false,
+            "supportsProcedures": false,
+            "supportsFunctions": false,
+            "supportsIndexes": true,
+            "supportsTriggers": false,
+            "supportsSSL": true,
+            "readOnly": false,
+            "supportsDocumentTree": true
+        },
+        "connectionFormFields": [
+            {
+                "name": "host",
+                "label": "主机地址",
+                "type": "text",
+                "required": true,
+                "defaultValue": "localhost"
+            },
+            {
+                "name": "port",
+                "label": "端口",
+                "type": "number",
+                "required": true,
+                "defaultValue": 27017
+            },
+            {
+                "name": "database",
+                "label": "认证数据库",
+                "type": "text",
+                "required": false,
+                "defaultValue": "admin"
+            },
+            {
+                "name": "username",
+                "label": "用户名",
+                "type": "text",
+                "required": false
+            },
+            {
+                "name": "password",
+                "label": "密码",
+                "type": "password",
+                "required": false
+            },
+            {
+                "name": "authSource",
+                "label": "认证源",
+                "type": "text",
+                "required": false,
+                "defaultValue": "admin"
+            },
+            {
+                "name": "ssl",
+                "label": "启用SSL",
+                "type": "boolean",
+                "required": false,
+                "defaultValue": false
+            }
+        ]
+    },
+    {
+        "dbType": "REDIS",
+        "displayName": "Redis",
+        "driverType": "nosql",
+        "driverClass": "redis.clients.jedis.Jedis",
+        "mavenCoordinates": {
+            "groupId": "redis.clients",
+            "artifactId": "jedis",
+            "version": "5.1.0"
+        },
+        "connectionUrlTemplate": "redis://{host}:{port}",
+        "defaultPort": 6379,
+        "capabilities": {
+            "supportsTransaction": true,
+            "supportsDML": true,
+            "supportsDDL": false,
+            "supportsPartition": false,
+            "supportsViews": false,
+            "supportsProcedures": false,
+            "supportsFunctions": false,
+            "supportsIndexes": false,
+            "supportsTriggers": false,
+            "supportsSSL": true,
+            "readOnly": false,
+            "supportsKeyPrefixGrouping": true
+        },
+        "connectionFormFields": [
+            {
+                "name": "host",
+                "label": "主机地址",
+                "type": "text",
+                "required": true,
+                "defaultValue": "localhost"
+            },
+            {
+                "name": "port",
+                "label": "端口",
+                "type": "number",
+                "required": true,
+                "defaultValue": 6379
+            },
+            {
+                "name": "password",
+                "label": "密码",
+                "type": "password",
+                "required": false
+            },
+            {
+                "name": "databaseIndex",
+                "label": "数据库索引",
+                "type": "number",
+                "required": false,
+                "defaultValue": 0
+            },
+            {
+                "name": "ssl",
+                "label": "启用SSL",
+                "type": "boolean",
+                "required": false,
+                "defaultValue": false
+            }
+        ]
+    }
+]

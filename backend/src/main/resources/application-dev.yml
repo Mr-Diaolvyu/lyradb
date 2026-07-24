@@ -1,0 +1,32 @@
+# 开发环境配置
+spring:
+  datasource:
+    url: jdbc:h2:file:./data/lyradb;DB_CLOSE_DELAY=-1;MODE=MySQL;AUTO_RECONNECT=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    database-platform: org.hibernate.dialect.H2Dialect
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+# 开发环境可使用默认弱密钥（仅本地）
+# 注意：此默认密钥是用于解密 H2 中已存连接凭据的加密口令，与历史数据绑定，
+#       故意保留原值 db-manager-default-key，请勿随项目改名而修改，否则旧凭据无法解密。
+jasypt:
+  encryptor:
+    password: ${JASYPT_PASSWORD:db-manager-default-key}
+
+app:
+  cors:
+    allowed-origins: "*"
+    allowed-methods: "*"
+    allowed-headers: "*"
+  security:
+    enabled: false

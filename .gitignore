@@ -1,0 +1,78 @@
+# ============================================================
+# LyraDB .gitignore
+# 说明：忽略构建产物、本地数据库/凭据、IDE 与系统文件，
+#       避免把含敏感连接配置的本地产物提交到公开仓库。
+# ============================================================
+
+# ---------- 后端 (Maven / Spring Boot) ----------
+backend/target/
+*.class
+*.jar
+*.war
+*.ear
+hs_err_pid*
+replay_pid*
+# 后端内嵌的前端静态资源（由打包脚本从 frontend/dist 复制生成）
+backend/src/main/resources/static/
+
+# ---------- 本地数据库与凭据（重要：含连接配置/加密凭据，切勿提交） ----------
+backend/data/*.db
+backend/data/*.mv.db
+backend/data/*.trace.db
+*.mv.db
+*.trace.db
+# 驱动缓存（默认在 ~/.lyradb/drivers，若被改到项目内也忽略）
+.lyradb/
+
+# ---------- 前端 (Vue / Vite / Node) ----------
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.d.ts
+frontend/vite.config.js
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- 移动端 (Android / Gradle) ----------
+mobile/**/.gradle/
+mobile/**/build/
+mobile/**/local.properties
+mobile/**/*.apk
+mobile/**/*.aab
+mobile/**/.idea/
+mobile/**/*.iml
+.cxx/
+.externalNativeBuild/
+
+# ---------- IDE / 编辑器 ----------
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.qoder/
+*.swp
+*.swo
+.classpath
+.project
+.settings/
+.factorypath
+
+# ---------- 操作系统 ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# ---------- 日志与临时文件 ----------
+*.log
+logs/
+*.tmp
+*.bak
+*.orig
+
+# ---------- 商业/战略文档（不公开）----------
+product-discovery/
