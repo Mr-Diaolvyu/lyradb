@@ -1,7 +1,7 @@
 # LyraDB 移动端（Android 瘦客户端参考骨架）
 
 > 状态：**参考骨架**，本会话未在 Android Studio 中编译验证（无 Android 工具链）。
-> 旨在可直接导入 Android Studio 后补全依赖、连后端联调。架构与 `product-discovery/mobile-app.md` 一致。
+> 旨在可直接导入 Android Studio 后补全依赖、连后端联调。架构与 `product-discovery/移动端APP规划.md` 一致。
 
 ## 设计要点
 - **瘦客户端**：不直连数据库；所有数据经企业后端 `/api/*`（会话 Cookie + JWT/Session）。
@@ -28,4 +28,4 @@
 - `.../ui/Screens.kt` — 登录/我的数据源/AI/审批/审计 Compose 界面。
 
 ## 鸿蒙 NEXT（ArkTS）说明
-鸿蒙端逻辑等价：用 `@ohos.net.http` 替代 OkHttp、ArkUI 替代 Compose、HUKS 替代 Keystore；接口契约与本骨架一致。需在 DevEco Studio 中按 `mobile-app.md` 新建 ArkTS 工程。
+鸿蒙端逻辑等价：用 `@ohos.net.http` 替代 OkHttp、ArkUI 替代 Compose、HUKS 替代 Keystore；接口契约与本骨架一致。需在 DevEco Studio 中按 `移动端APP规划.md` 新建 ArkTS 工程。

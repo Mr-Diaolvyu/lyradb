@@ -7,7 +7,7 @@ import org.hibernate.annotations.GenericGenerator;
 import java.time.LocalDateTime;
 
 /**
- * 审批申请单（状态机见 audit-approval-workflow.md）
+ * 审批申请单（状态机见 审计日志与审批工作流.md）
  */
 @Entity
 @Table(name = "ent_approval_request")

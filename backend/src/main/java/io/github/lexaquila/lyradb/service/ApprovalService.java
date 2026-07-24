@@ -11,7 +11,7 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * 审批服务（状态机见 audit-approval-workflow.md）
+ * 审批服务（状态机见 审计日志与审批工作流.md）
  *
  * <p>MVP：创建(PENDING)、批准/驳回、执行标记。支持双人审批（requireTwoApprovers）。</p>
  */
