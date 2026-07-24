@@ -5,7 +5,7 @@
 [![Java](https://img.shields.io/badge/Java-17-orange)]()
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.5-brightgreen)]()
 [![Vue](https://img.shields.io/badge/Vue-3.4-42b883)]()
-[![License](https://img.shields.io/badge/License-MIT-blue)]()
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue)]()
 
 LyraDB（天琴智库）把 **MySQL、PostgreSQL、Oracle、SQL Server、ClickHouse、SQLite、MongoDB、Redis、MaxCompute** 等多种数据库当作「一等公民」，在同一个界面里无缝连接、查询与管理。相比 DBeaver 更轻量、相比 Navicat 更开放，桌面个人高效、Web 团队协作，同一套代码两种部署。
 
@@ -27,7 +27,7 @@ LyraDB（天琴智库）把 **MySQL、PostgreSQL、Oracle、SQL Server、ClickHo
 
 ## 🧱 技术栈
 
-**后端**：Spring Boot 3.2.5（Java 17）· Spring Data JPA + H2（内嵌存储连接配置）· Spring Security · Jasypt（凭据加密）· Maven Resolver（动态驱动下载）· Apache MINA SSHD · Springdoc OpenAPI
+**后端**：Spring Boot 3.2.5（Java 17）· Spring Data JPA + H2（内嵌存储连接配置）· Spring Security · Jasypt（凭据加密）· Maven Resolver（动态驱动下载）· Apache MINA SSHD
 
 **前端**：Vue 3.4 + TypeScript · Vite 5 · Element Plus · Monaco Editor · VXE Table · Pinia · Vue Router · Vue Flow
 
@@ -82,7 +82,6 @@ lyradb/
 │       └── service/     # 业务服务层
 ├── frontend/            # Vue 3 前端
 ├── mobile/android/      # Android 移动端
-├── product-discovery/   # 产品发现文档
 └── wiki/                # 项目 Wiki
 ```
 
@@ -108,4 +107,4 @@ lyradb/
 
 ## 📄 许可证
 
-建议采用 [MIT License](https://opensource.org/licenses/MIT)（待最终确认，仓库根目录将附 `LICENSE` 文件）。
+本项目基于 [Apache License 2.0](LICENSE) 开源。该协议允许自由使用、修改与商用（含专利授权），使用时需保留版权与许可声明。
