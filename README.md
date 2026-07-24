@@ -7,6 +7,8 @@
 [![Vue](https://img.shields.io/badge/Vue-3.4-42b883)]()
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue)]()
 
+**简体中文** | [English](README.en.md)
+
 LyraDB（天琴智库）把 **MySQL、PostgreSQL、Oracle、SQL Server、ClickHouse、SQLite、MongoDB、Redis、MaxCompute** 等多种数据库当作「一等公民」，在同一个界面里无缝连接、查询与管理。相比 DBeaver 更轻量、相比 Navicat 更开放，桌面个人高效、Web 团队协作，同一套代码两种部署。
 
 ---
