@@ -354,9 +354,11 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
     public List<ColumnMetadata> getTableColumns(Object connection, String schemaName, String tableName)
             throws Exception {
         Connection conn = (Connection) connection;
-        List<ColumnMetadata> columns = new ArrayList<>();
         DatabaseMetaData metaData = conn.getMetaData();
 
+        // 按 (TABLE_CAT, TABLE_SCHEM) 归属分组收集。catalog 传 null 时，以 catalog 组织库的驱动
+        // （如 MySQL/MaxCompute）会忽略 schema 参数并匹配所有库中的同名表，导致列成倍重复。
+        Map<String, List<ColumnMetadata>> grouped = new LinkedHashMap<>();
         ResultSet rs = metaData.getColumns(null, schemaName, tableName, "%");
         while (rs.next()) {
             ColumnMetadata col = new ColumnMetadata();
@@ -370,9 +372,12 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
             col.setRemarks(rs.getString("REMARKS"));
             col.setSchemaName(schemaName);
             col.setTableName(tableName);
-            columns.add(col);
+            String owner = rs.getString("TABLE_CAT") + "\u0000" + rs.getString("TABLE_SCHEM");
+            grouped.computeIfAbsent(owner, k -> new ArrayList<>()).add(col);
         }
         rs.close();
+
+        List<ColumnMetadata> columns = selectOwnerColumns(grouped, schemaName);
 
         // 获取主键信息
         rs = metaData.getPrimaryKeys(null, schemaName, tableName);
@@ -387,6 +392,31 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         rs.close();
 
         return columns;
+    }
+
+    /**
+     * 从按归属分组的列集合中选出目标表的列：优先取 catalog 或 schema 与传入库名匹配的组，
+     * 无匹配时取第一组；组内再按列名去重，兜底个别驱动返回完全重复行的情况。
+     */
+    private List<ColumnMetadata> selectOwnerColumns(Map<String, List<ColumnMetadata>> grouped, String schemaName) {
+        List<ColumnMetadata> selected = null;
+        if (schemaName != null) {
+            for (Map.Entry<String, List<ColumnMetadata>> entry : grouped.entrySet()) {
+                String[] owner = entry.getKey().split("\u0000", -1);
+                if (schemaName.equalsIgnoreCase(owner[0]) || schemaName.equalsIgnoreCase(owner[1])) {
+                    selected = entry.getValue();
+                    break;
+                }
+            }
+        }
+        if (selected == null) {
+            selected = grouped.isEmpty() ? new ArrayList<>() : grouped.values().iterator().next();
+        }
+        Map<String, ColumnMetadata> deduped = new LinkedHashMap<>();
+        for (ColumnMetadata col : selected) {
+            deduped.putIfAbsent(col.getName(), col);
+        }
+        return new ArrayList<>(deduped.values());
     }
 
     @Override
@@ -552,7 +582,11 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
                     continue;
                 }
                 boolean nonUnique = rs.getBoolean("NON_UNIQUE");
-                indexColumns.computeIfAbsent(indexName, k -> new ArrayList<>()).add(columnName);
+                // 跨库同名表可能返回重复索引行，按 (索引名, 列名) 去重
+                List<String> cols = indexColumns.computeIfAbsent(indexName, k -> new ArrayList<>());
+                if (!cols.contains(columnName)) {
+                    cols.add(columnName);
+                }
                 indexUnique.putIfAbsent(indexName, !nonUnique);
             }
         }
