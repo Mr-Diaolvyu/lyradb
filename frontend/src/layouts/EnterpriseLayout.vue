@@ -91,13 +91,13 @@ function roleLabel(r: string) {
 .ent-layout {
   display: flex;
   height: 100vh;
-  background: var(--color-background, #f8fafc);
+  background: var(--color-background);
 }
 .ent-side {
   width: 220px;
   flex-shrink: 0;
-  background: var(--color-panel, #fff);
-  border-right: 1px solid var(--color-border, #e4e7eb);
+  background: var(--color-panel);
+  border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
 }
@@ -105,8 +105,8 @@ function roleLabel(r: string) {
   padding: 18px 20px;
   font-size: 16px;
   font-weight: 700;
-  color: var(--color-primary, #1e3a5f);
-  border-bottom: 1px solid var(--color-border, #e4e7eb);
+  color: var(--color-primary);
+  border-bottom: 1px solid var(--color-border);
 }
 .ent-nav {
   flex: 1;
@@ -119,21 +119,21 @@ function roleLabel(r: string) {
   gap: 10px;
   padding: 10px 12px;
   border-radius: 6px;
-  color: var(--color-foreground, #333);
+  color: var(--color-foreground);
   font-size: 13px;
   text-decoration: none;
   cursor: pointer;
   margin-bottom: 2px;
 }
-.ent-nav-item:hover { background: var(--color-hover, #f1f3f5); }
+.ent-nav-item:hover { background: var(--color-hover); }
 .ent-nav-item.active {
-  background: var(--color-active, #e8f5e9);
-  color: var(--color-secondary, #059669);
+  background: var(--color-active);
+  color: var(--color-secondary);
   font-weight: 600;
 }
 .nav-badge {
   margin-left: auto;
-  background: var(--color-destructive, #dc2626);
+  background: var(--color-destructive);
   color: #fff;
   font-size: 10px;
   border-radius: 9px;
@@ -153,8 +153,8 @@ function roleLabel(r: string) {
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
-  background: var(--color-panel, #fff);
-  border-bottom: 1px solid var(--color-border, #e4e7eb);
+  background: var(--color-panel);
+  border-bottom: 1px solid var(--color-border);
 }
 .ent-user {
   display: flex;

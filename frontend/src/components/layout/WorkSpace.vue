@@ -46,12 +46,19 @@
       </div>
     </template>
 
+    <!-- 条件过滤器（迭代三 F1，仅 SQL Tab 时显示） -->
+    <FilterBar v-if="editorStore.activeSqlTab" />
+
     <!-- 底部结果面板（仅 SQL Tab 时显示） -->
     <BottomPanel v-if="editorStore.activeSqlTab" />
 
     <!-- 空状态 -->
     <div class="empty-state" v-if="editorStore.tabs.length === 0">
-      <el-empty description="点击「新建查询」开始编写SQL，或双击导航树中的表查看详情" />
+      <EmptyState
+        icon="db"
+        title="开始你的数据之旅"
+        hint="点击「新建查询」开始编写 SQL，或双击导航树中的表查看详情"
+      />
     </div>
   </div>
 </template>
@@ -63,7 +70,9 @@ import { useEditorStore, type SqlTab, type TableDetailTab } from '@/stores/edito
 import { useConnectionStore } from '@/stores/connection'
 import SqlEditor from '@/components/editor/SqlEditor.vue'
 import TableDetailTabView from '@/components/editor/TableDetailTab.vue'
+import FilterBar from '@/components/editor/FilterBar.vue'
 import BottomPanel from '@/components/layout/BottomPanel.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 
 const editorStore = useEditorStore()
 const connectionStore = useConnectionStore()

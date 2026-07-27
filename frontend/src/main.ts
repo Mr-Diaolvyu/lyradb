@@ -5,6 +5,8 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
+// 暗色主题变量（由 html.dark 类激活，见 stores/theme.ts）
+import 'element-plus/theme-chalk/dark/css-vars.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 
 // Vxe-table 注册
@@ -36,3 +38,10 @@ app.use(VxeUIAll)
 app.use(VxeUITable)
 
 app.mount('#app')
+
+// V7 启动画面：应用挂载后淡出移除（与 index.html 中的 #splash 配合）
+const splash = document.getElementById('splash')
+if (splash) {
+    splash.classList.add('splash-leave')
+    setTimeout(() => splash.remove(), 400)
+}

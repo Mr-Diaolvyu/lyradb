@@ -68,10 +68,21 @@
       <!-- 结果 Tab -->
       <div v-show="uiStore.bottomPanelTab === 'results'" class="results-panel">
         <template v-if="editorStore.activeSqlTab?.loading">
-          <div class="panel-loading">
-            <el-icon class="is-loading"><Loading /></el-icon>
-            <span>正在执行查询...</span>
-            <el-button size="small" type="danger" plain @click="cancelQuery">取消查询</el-button>
+          <!-- V4 骨架屏：模拟表头+数据行的微光扫描 -->
+          <div class="panel-skeleton">
+            <div class="skeleton-toolbar">
+              <el-icon class="is-loading"><Loading /></el-icon>
+              <span>正在执行查询...</span>
+              <el-button size="small" type="danger" plain @click="cancelQuery">取消查询</el-button>
+            </div>
+            <div class="skeleton-table">
+              <div class="skeleton-row is-head">
+                <span v-for="j in 5" :key="j" class="sk-cell" :style="{ width: skWidths[0][j - 1] }"></span>
+              </div>
+              <div v-for="i in 5" :key="i" class="skeleton-row">
+                <span v-for="j in 5" :key="j" class="sk-cell" :style="{ width: skWidths[i][j - 1] }"></span>
+              </div>
+            </div>
           </div>
         </template>
         <template v-else-if="editorStore.activeSqlTab?.result">
@@ -86,12 +97,17 @@
             :editable="editMode"
             :edit-context="editContext"
             :json-row-edit="editMode && activeDbType === 'MONGODB'"
+            :remarks-loader="remarksLoader"
             @cell-edited="onCellEdited"
             @row-json-edit="openMongoDocEditor"
           />
         </template>
         <template v-else>
-          <el-empty description="暂无查询结果" :image-size="60" />
+          <EmptyState
+            title="暂无查询结果"
+            hint="在编辑器中编写 SQL，按 Ctrl+Enter 执行，结果将显示在这里"
+            icon="db"
+          />
         </template>
       </div>
 
@@ -102,7 +118,7 @@
           :columns="editorStore.activeSqlTab.result.columns"
           :rows="editorStore.activeSqlTab.result.rows"
         />
-        <el-empty v-else description="暂无查询结果" :image-size="60" />
+        <EmptyState v-else title="暂无查询结果" hint="执行查询后可将结果集可视化为图表" />
       </div>
 
       <!-- 消息 Tab -->
@@ -123,7 +139,7 @@
           </div>
         </template>
         <template v-else>
-          <el-empty description="暂无消息" :image-size="60" />
+          <EmptyState title="暂无消息" hint="查询的成功/错误信息将显示在这里" />
         </template>
       </div>
       <!-- 历史 Tab -->
@@ -162,10 +178,21 @@ import DataTable from '@/components/editor/DataTable.vue'
 import SqlHistory from '@/components/editor/SqlHistory.vue'
 import ExplainTreeView from '@/components/editor/ExplainTreeView.vue'
 import ChartView from '@/components/editor/ChartView.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 
 const editorStore = useEditorStore()
 const uiStore = useUiStore()
 const connectionStore = useConnectionStore()
+
+/** V4 骨架屏各行单元格宽度（固定随机序列，避免重渲染闪动） */
+const skWidths = [
+  ['12%', '18%', '14%', '20%', '10%'],
+  ['10%', '22%', '12%', '16%', '14%'],
+  ['14%', '16%', '18%', '12%', '10%'],
+  ['11%', '20%', '10%', '18%', '13%'],
+  ['13%', '15%', '16%', '14%', '12%'],
+  ['9%', '19%', '13%', '17%', '11%'],
+]
 
 const hasResult = computed(() => !!editorStore.activeSqlTab?.result)
 const hasError = computed(() => !!editorStore.activeSqlTab?.error)
@@ -215,6 +242,22 @@ function inferTable(sql: string): { schema: string | null; table: string } | nul
   }
   return { schema: null, table: ref }
 }
+
+/** 表头注释切换：从当前 SQL 推断单表，拉取列元数据组装 col→remarks 映射 */
+async function loadColumnRemarks(): Promise<Record<string, string>> {
+  const tab = editorStore.activeSqlTab
+  if (!tab?.sql) return {}
+  const inferred = inferTable(tab.sql)
+  if (!inferred) return {}
+  const cols = await metadataApi.getTableColumns(tab.connectionId, inferred.schema, inferred.table)
+  const map: Record<string, string> = {}
+  for (const c of cols) {
+    if (c.remarks) map[c.name] = c.remarks
+  }
+  return map
+}
+
+const remarksLoader = () => loadColumnRemarks()
 
 async function toggleEdit() {
   if (!canEdit.value) {
@@ -631,6 +674,61 @@ function extractTableName(sql: string): string {
   height: 100%;
   color: var(--color-text-muted);
   font-size: var(--text-body);
+}
+
+/* === V4 骨架屏 === */
+.panel-skeleton {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.skeleton-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+  flex-shrink: 0;
+}
+
+.skeleton-table {
+  flex: 1;
+  padding: 0 var(--space-3) var(--space-3);
+  overflow: hidden;
+}
+
+.skeleton-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  height: var(--row-h, 32px);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.skeleton-row.is-head .sk-cell {
+  height: 12px;
+  opacity: 0.9;
+}
+
+.sk-cell {
+  height: 10px;
+  border-radius: 3px;
+  background: linear-gradient(
+    90deg,
+    var(--color-active) 25%,
+    var(--color-hover) 50%,
+    var(--color-active) 75%
+  );
+  background-size: 200% 100%;
+  animation: sk-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes sk-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 .messages-panel {

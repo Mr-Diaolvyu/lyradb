@@ -52,7 +52,7 @@ onMounted(async () => {
   justify-content: center;
   gap: 8px;
   height: 100vh;
-  color: var(--color-text-muted, #999);
+  color: var(--color-text-muted);
   font-size: 14px;
 }
 /* 全局样式已在 global.css 中定义 */

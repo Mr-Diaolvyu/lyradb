@@ -29,7 +29,7 @@
           class="search-result-item"
           @click="handleSearchResultClick(node)"
         >
-          <span class="node-icon" :class="getIconClass(node)">{{ getIconText(node) }}</span>
+          <span class="node-icon" :class="getIconClass(node)"><NavIcon :type="node.type" /></span>
           <span class="node-label">{{ node.name }}</span>
           <span class="search-result-path">{{ node.path }}</span>
         </div>
@@ -70,7 +70,7 @@
             <!-- 树节点 -->
             <template v-else>
               <span class="node-icon" :class="getIconClass(data)">
-                {{ getIconText(data) }}
+                <NavIcon :type="data.type" />
               </span>
               <span class="node-label">{{ data.name }}</span>
             </template>
@@ -148,6 +148,7 @@ import {
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ImportDialog from '@/components/editor/ImportDialog.vue'
+import NavIcon from '@/components/nav/NavIcon.vue'
 import type Node from 'element-plus/es/components/tree/src/model/node'
 import { useConnectionStore } from '@/stores/connection'
 import { useUiStore } from '@/stores/ui'
@@ -417,23 +418,6 @@ function getIconClass(data: TreeNode): string {
     case 'INDEX_GROUP': return 'icon-index-group'
     case 'INDEX': return 'icon-index'
     default: return 'icon-info'
-  }
-}
-
-function getIconText(data: TreeNode): string {
-  const type = data.type
-  switch (type) {
-    case 'DATABASE': return 'DB'
-    case 'SCHEMA': return 'SC'
-    case 'TABLE': return 'T'
-    case 'VIEW': return 'V'
-    case 'COLLECTION': return 'C'
-    case 'PARTITION': return 'P'
-    case 'KEY_GROUP': return 'KG'
-    case 'KEY': return 'K'
-    case 'INDEX_GROUP': return 'IX'
-    case 'INDEX': return 'I'
-    default: return 'I'
   }
 }
 
@@ -755,7 +739,7 @@ onUnmounted(() => {
   padding-right: var(--space-2);
 }
 
-/* 节点图标颜色 */
+/* 节点图标颜色（背景徽章 + SVG 继承 currentColor 前景色） */
 .icon-db { background: var(--color-active); color: var(--color-secondary); }
 .icon-schema { background: var(--color-muted); color: var(--color-foreground); }
 .icon-table { background: #DBEAFE; color: #2563EB; }
@@ -766,7 +750,17 @@ onUnmounted(() => {
 .icon-key { background: #FEE2E2; color: #DC2626; }
 .icon-index-group { background: #E0E7FF; color: #4338CA; }
 .icon-index { background: #C7D2FE; color: #3730A3; }
-.icon-info { background: var(--color-muted); color: var(--color-muted); }
+.icon-info { background: var(--color-muted); color: var(--color-text-muted); }
+
+/* 暗色主题：半透明底 + 提亮前景，避免亮色底块刺眼 */
+html.dark .icon-table { background: rgba(59, 130, 246, 0.16); color: #60A5FA; }
+html.dark .icon-view { background: rgba(16, 185, 129, 0.16); color: #34D399; }
+html.dark .icon-collection { background: rgba(249, 115, 22, 0.16); color: #FB923C; }
+html.dark .icon-partition { background: rgba(139, 92, 246, 0.16); color: #A78BFA; }
+html.dark .icon-key-group { background: rgba(236, 72, 153, 0.16); color: #F472B6; }
+html.dark .icon-key { background: rgba(239, 68, 68, 0.16); color: #F87171; }
+html.dark .icon-index-group { background: rgba(99, 102, 241, 0.16); color: #818CF8; }
+html.dark .icon-index { background: rgba(99, 102, 241, 0.24); color: #A5B4FC; }
 
 /* 数据库文字颜色 */
 .db-text-mysql { color: var(--db-mysql); }
@@ -852,6 +846,6 @@ onUnmounted(() => {
 }
 
 :deep(.el-tree-node__content) {
-  height: 30px;
+  height: var(--row-h, 30px);
 }
 </style>

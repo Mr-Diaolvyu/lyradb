@@ -101,12 +101,37 @@
           </el-dropdown-menu>
         </template>
       </el-dropdown>
-      <el-button
-        :icon="isDark ? Sunny : Moon"
-        size="small"
-        circle
-        @click="themeStore.toggleTheme()"
-      />
+      <!-- 外观设置：主题三态 + 强调色预设 -->
+      <el-popover placement="bottom-end" :width="250" trigger="click">
+        <template #reference>
+          <el-button :icon="isDark ? Moon : Sunny" size="small" circle :title="t('appearance.title')" />
+        </template>
+        <div class="appearance-pop">
+          <div class="ap-label">{{ t('appearance.theme') }}</div>
+          <el-radio-group :model-value="themeStore.mode" size="small" @update:model-value="themeStore.setMode($event as ThemeMode)">
+            <el-radio-button value="light">{{ t('appearance.light') }}</el-radio-button>
+            <el-radio-button value="dark">{{ t('appearance.dark') }}</el-radio-button>
+            <el-radio-button value="system">{{ t('appearance.system') }}</el-radio-button>
+          </el-radio-group>
+          <div class="ap-label">{{ t('appearance.accent') }}</div>
+          <div class="accent-row">
+            <button
+              v-for="a in ACCENTS"
+              :key="a.value"
+              class="accent-swatch"
+              :class="{ on: themeStore.accent === a.value }"
+              :style="{ background: a.color }"
+              :title="t(`appearance.${a.value}`)"
+              @click="themeStore.setAccent(a.value)"
+            />
+          </div>
+          <div class="ap-label">{{ t('appearance.density') }}</div>
+          <el-radio-group :model-value="themeStore.density" size="small" @update:model-value="themeStore.setDensity($event as Density)">
+            <el-radio-button value="comfortable">{{ t('appearance.comfortable') }}</el-radio-button>
+            <el-radio-button value="compact">{{ t('appearance.compact') }}</el-radio-button>
+          </el-radio-group>
+        </div>
+      </el-popover>
       <el-button :icon="Setting" size="small" circle />
     </div>
   </div>
@@ -135,7 +160,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Connection, DocumentAdd, VideoPlay, Setting, Sunny, Moon, Coin, Aim, Share, Sort, Clock, List, Calendar } from '@element-plus/icons-vue'
-import { useThemeStore } from '@/stores/theme'
+import { useThemeStore, type ThemeMode, type AccentPreset, type Density } from '@/stores/theme'
 import { useConnectionStore } from '@/stores/connection'
 import { useEditorStore } from '@/stores/editor'
 import { useUiStore } from '@/stores/ui'
@@ -160,6 +185,14 @@ const uiStore = useUiStore()
 const taskStore = useTaskStore()
 
 const isDark = computed(() => themeStore.isDark)
+
+/** 强调色预设（色块取亮色主题主操作色，仅作选择器展示） */
+const ACCENTS: { value: AccentPreset; color: string }[] = [
+  { value: 'navy', color: '#1E3A5F' },
+  { value: 'emerald', color: '#047857' },
+  { value: 'amber', color: '#B45309' },
+  { value: 'violet', color: '#6D28D9' },
+]
 
 /** 数据库下拉菜单的双向绑定 */
 const selectedDatabase = computed({
@@ -247,5 +280,41 @@ const reportVisible = ref(false)
 
 .task-badge :deep(.el-badge__content) {
   transform: translateY(-2px) translateX(100%) scale(0.8);
+}
+</style>
+
+<style>
+/* 外观设置弹出层（popover 渲染在 body，不能用 scoped） */
+.appearance-pop .ap-label {
+  font-size: var(--text-caption);
+  color: var(--color-text-muted);
+  margin: var(--space-2) 0 var(--space-1);
+}
+
+.appearance-pop .ap-label:first-child {
+  margin-top: 0;
+}
+
+.appearance-pop .accent-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.appearance-pop .accent-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: transform var(--transition-fast), border-color var(--transition-normal);
+}
+
+.appearance-pop .accent-swatch:hover {
+  transform: scale(1.1);
+}
+
+.appearance-pop .accent-swatch.on {
+  border-color: var(--color-foreground);
 }
 </style>

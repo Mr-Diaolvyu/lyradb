@@ -100,17 +100,17 @@ function goApprove(sql: string) {
 .page { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; height: 100%; }
 .page-title { margin-bottom: 10px; }
 .page-title h2 { font-size: 18px; margin: 0; }
-.page-sub { font-size: 12px; color: var(--color-text-muted, #999); }
+.page-sub { font-size: 12px; color: var(--color-text-muted); }
 .bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.chat-box { flex: 1; overflow-y: auto; border: 1px solid var(--color-border,#e4e7eb); border-radius: 8px; padding: 12px; background: var(--color-background,#f8fafc); }
-.chat-empty { color: var(--color-text-muted,#999); text-align: center; padding: 30px; font-size: 13px; }
+.chat-box { flex: 1; overflow-y: auto; border: 1px solid var(--color-border); border-radius: 8px; padding: 12px; background: var(--color-background); }
+.chat-empty { color: var(--color-text-muted); text-align: center; padding: 30px; font-size: 13px; }
 .msg { margin-bottom: 12px; }
-.msg-role { font-size: 11px; color: var(--color-text-muted,#999); margin-bottom: 2px; }
-.msg.user .msg-content { color: var(--color-foreground,#333); }
-.msg.assistant .msg-content { background: var(--color-panel,#fff); border: 1px solid var(--color-border,#e4e7eb); border-radius: 6px; padding: 8px 10px; }
+.msg-role { font-size: 11px; color: var(--color-text-muted); margin-bottom: 2px; }
+.msg.user .msg-content { color: var(--color-foreground); }
+.msg.assistant .msg-content { background: var(--color-panel); border: 1px solid var(--color-border); border-radius: 6px; padding: 8px 10px; }
 .expl { font-size: 13px; margin-bottom: 4px; }
-.sql { background: var(--color-muted,#0f172a); color: #e2e8f0; padding: 8px; border-radius: 4px; font-size: 12px; overflow-x: auto; margin: 4px 0; }
-.err { color: var(--color-destructive,#dc2626); font-size: 12px; }
-.warn { color: var(--color-warning,#f59e0b); font-size: 12px; margin-top: 4px; }
+.sql { background: var(--color-muted); color: #e2e8f0; padding: 8px; border-radius: 4px; font-size: 12px; overflow-x: auto; margin: 4px 0; }
+.err { color: var(--color-destructive); font-size: 12px; }
+.warn { color: var(--color-warning); font-size: 12px; margin-top: 4px; }
 .input-bar { display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; }
 </style>

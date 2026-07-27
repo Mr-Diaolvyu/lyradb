@@ -28,6 +28,32 @@ export default {
         migration: '迁移',
         language: '语言'
     },
+    appearance: {
+        title: '外观',
+        theme: '主题',
+        light: '亮色',
+        dark: '暗色',
+        system: '跟随系统',
+        accent: '强调色',
+        navy: '深海军蓝',
+        emerald: '翡翠',
+        amber: '琥珀',
+        violet: '紫罗兰',
+        density: '行密度',
+        comfortable: '舒适',
+        compact: '紧凑'
+    },
+    filter: {
+        title: '条件过滤',
+        column: '列',
+        value: '值',
+        addCondition: '添加条件',
+        apply: '应用',
+        clear: '清除',
+        cleared: '已清除过滤条件',
+        previewEmpty: '填写条件后实时预览 WHERE 子句',
+        noResult: '先执行查询，再基于结果列过滤'
+    },
     sideNav: {
         exportConnections: '导出连接',
         importConnections: '导入连接',

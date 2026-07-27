@@ -135,6 +135,6 @@ async function doImport() {
 </script>
 
 <style scoped>
-.preview { margin-top: 8px; font-size: 12px; color: var(--color-text-muted, #666); }
-.file-hint { margin-left: 8px; font-size: 12px; color: var(--color-text-muted, #666); }
+.preview { margin-top: 8px; font-size: 12px; color: var(--color-text-muted); }
+.file-hint { margin-left: 8px; font-size: 12px; color: var(--color-text-muted); }
 </style>

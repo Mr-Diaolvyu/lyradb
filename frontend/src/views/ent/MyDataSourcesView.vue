@@ -62,16 +62,16 @@ function goApprove() {
 .page { max-width: 1100px; margin: 0 auto; }
 .page-title { margin-bottom: 16px; }
 .page-title h2 { font-size: 18px; margin: 0; }
-.page-sub { font-size: 12px; color: var(--color-text-muted, #999); }
-.loading { color: var(--color-text-muted, #999); padding: 20px; }
+.page-sub { font-size: 12px; color: var(--color-text-muted); }
+.loading { color: var(--color-text-muted); padding: 20px; }
 .grant-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 14px;
 }
 .grant-card {
-  background: var(--color-panel, #fff);
-  border: 1px solid var(--color-border, #e4e7eb);
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 14px;
 }
@@ -82,6 +82,6 @@ function goApprove() {
   margin-bottom: 10px;
 }
 .grant-name { font-weight: 600; font-size: 14px; flex: 1; }
-.grant-meta { font-size: 12px; color: var(--color-text-muted, #666); line-height: 1.8; }
+.grant-meta { font-size: 12px; color: var(--color-text-muted); line-height: 1.8; }
 .grant-actions { margin-top: 12px; display: flex; gap: 8px; }
 </style>

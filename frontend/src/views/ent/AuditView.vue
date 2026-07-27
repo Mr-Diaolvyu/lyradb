@@ -46,5 +46,5 @@ function fmt(d?: string) { return d ? new Date(d).toLocaleString() : '' }
 .page { max-width: 1200px; margin: 0 auto; }
 .page-title { margin-bottom: 12px; }
 .page-title h2 { font-size: 18px; margin: 0; }
-.page-sub { font-size: 12px; color: var(--color-text-muted, #999); }
+.page-sub { font-size: 12px; color: var(--color-text-muted); }
 </style>

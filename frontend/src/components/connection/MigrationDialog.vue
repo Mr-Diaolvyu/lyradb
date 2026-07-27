@@ -147,7 +147,7 @@ async function run() {
   font-size: 12px;
 }
 .err-line {
-  color: var(--color-destructive, #dc2626);
+  color: var(--color-destructive);
   margin-bottom: 4px;
 }
 </style>

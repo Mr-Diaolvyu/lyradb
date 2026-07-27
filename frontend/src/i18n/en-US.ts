@@ -28,6 +28,32 @@ export default {
         migration: 'Migrate',
         language: 'Language'
     },
+    appearance: {
+        title: 'Appearance',
+        theme: 'Theme',
+        light: 'Light',
+        dark: 'Dark',
+        system: 'System',
+        accent: 'Accent Color',
+        navy: 'Navy',
+        emerald: 'Emerald',
+        amber: 'Amber',
+        violet: 'Violet',
+        density: 'Row Density',
+        comfortable: 'Comfortable',
+        compact: 'Compact'
+    },
+    filter: {
+        title: 'Filters',
+        column: 'Column',
+        value: 'Value',
+        addCondition: 'Add Condition',
+        apply: 'Apply',
+        clear: 'Clear',
+        cleared: 'Filters cleared',
+        previewEmpty: 'Fill in conditions to preview the WHERE clause',
+        noResult: 'Run a query first, then filter by result columns'
+    },
     sideNav: {
         exportConnections: 'Export Connections',
         importConnections: 'Import Connections',

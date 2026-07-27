@@ -182,6 +182,7 @@ function generateSvg(): string {
 
   const parts: string[] = []
   parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" font-family="Segoe UI, sans-serif">`)
+  // SVG 导出为脱离页面的独立文件，CSS 变量不生效，此处固定为亮色主题色值
   parts.push(`<rect width="100%" height="100%" fill="#f8fafc"/>`)
 
   // 先画关系边（避免遮挡节点）
@@ -279,10 +280,10 @@ watch(() => props.visible, (v) => { if (v) load() })
 .er-canvas {
   width: 100%;
   height: 65vh;
-  border: 1px solid var(--color-border, #e0e0e0);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   overflow: hidden;
-  background: var(--color-background, #f8fafc);
+  background: var(--color-background);
 }
 
 .er-loading {
@@ -291,7 +292,7 @@ watch(() => props.visible, (v) => { if (v) load() })
   justify-content: center;
   height: 100%;
   gap: 8px;
-  color: var(--color-text-muted, #999);
+  color: var(--color-text-muted);
 }
 
 .vue-flow-theme :deep(.vue-flow__node) {
@@ -299,15 +300,15 @@ watch(() => props.visible, (v) => { if (v) load() })
 }
 
 .er-table-node {
-  border: 1px solid var(--color-border, #ccc);
+  border: 1px solid var(--color-border);
   border-radius: 4px;
-  background: var(--color-panel, #fff);
+  background: var(--color-panel);
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
 .er-table-title {
-  background: var(--color-secondary, #059669);
+  background: var(--color-secondary);
   color: #fff;
   padding: 4px 8px;
   font-weight: 600;
@@ -322,11 +323,11 @@ watch(() => props.visible, (v) => { if (v) load() })
   overflow-y: auto;
   font-family: var(--font-mono, monospace);
   font-size: 11px;
-  color: var(--color-foreground, #333);
+  color: var(--color-foreground);
 }
 
 .er-table-cols li.more {
-  color: var(--color-text-muted, #999);
+  color: var(--color-text-muted);
   font-style: italic;
 }
 </style>

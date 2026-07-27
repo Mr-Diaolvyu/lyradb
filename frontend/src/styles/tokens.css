@@ -37,6 +37,11 @@
     --color-connected: #059669;
     --color-disconnected: #94A3B8;
     --color-error: #DC2626;
+
+    /* 主操作色（按钮/选中态）：独立于顶栏品牌色，亮色沿用深海军蓝 */
+    --color-action: #1E3A5F;
+    --color-action-hover: #2C4F7C;
+    --shadow-overlay: 0 10px 30px rgba(15, 23, 42, 0.12);
 }
 
 /* === 暗色主题 === */
@@ -53,7 +58,7 @@
     --color-border: #475569;
 
     --color-destructive: #EF4444;
-    --color-ring: #1E293B;
+    --color-ring: #60A5FA;
     --color-success: #22C55E;
     --color-warning: #FBBF24;
     --color-info: #3B82F6;
@@ -67,6 +72,54 @@
     --color-connected: #22C55E;
     --color-disconnected: #64748B;
     --color-error: #EF4444;
+
+    /* A3 修正：暗色主操作色不再与面板同色，改用可辨识的品牌蓝 */
+    --color-action: #3B82F6;
+    --color-action-hover: #60A5FA;
+    --shadow-overlay: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* === V6 强调色预设：仅替换主操作色系变量 === */
+:root[data-accent="emerald"][data-theme="light"] {
+    --color-action: #047857;
+    --color-action-hover: #059669;
+    --color-ring: #047857;
+    --color-active: #D1FAE5;
+}
+
+:root[data-accent="emerald"][data-theme="dark"] {
+    --color-action: #10B981;
+    --color-action-hover: #34D399;
+    --color-ring: #34D399;
+    --color-active: #064E3B;
+}
+
+:root[data-accent="amber"][data-theme="light"] {
+    --color-action: #B45309;
+    --color-action-hover: #D97706;
+    --color-ring: #B45309;
+    --color-active: #FEF3C7;
+}
+
+:root[data-accent="amber"][data-theme="dark"] {
+    --color-action: #F59E0B;
+    --color-action-hover: #FBBF24;
+    --color-ring: #FBBF24;
+    --color-active: #78350F;
+}
+
+:root[data-accent="violet"][data-theme="light"] {
+    --color-action: #6D28D9;
+    --color-action-hover: #7C3AED;
+    --color-ring: #6D28D9;
+    --color-active: #EDE9FE;
+}
+
+:root[data-accent="violet"][data-theme="dark"] {
+    --color-action: #8B5CF6;
+    --color-action-hover: #A78BFA;
+    --color-ring: #A78BFA;
+    --color-active: #4C1D95;
 }
 
 /* === 数据库身份色系 === */
@@ -121,6 +174,17 @@
     --sideprops-min-width: 200px;
     --bottompanel-height: 200px;
     --bottompanel-min-height: 100px;
+}
+
+/* === V5 数据行密度 === */
+:root {
+    --row-h: 32px;
+    --cell-px: 12px;
+}
+
+:root[data-density="compact"] {
+    --row-h: 24px;
+    --cell-px: 8px;
 }
 
 /* === 效果 === */

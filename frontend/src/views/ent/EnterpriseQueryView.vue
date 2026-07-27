@@ -88,11 +88,11 @@ async function execute() {
 .page { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; height: 100%; }
 .page-title { margin-bottom: 12px; }
 .page-title h2 { font-size: 18px; margin: 0; }
-.page-sub { font-size: 12px; color: var(--color-text-muted, #999); }
+.page-sub { font-size: 12px; color: var(--color-text-muted); }
 .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .spacer { flex: 1; }
-.editor-wrap { flex: 1; min-height: 240px; border: 1px solid var(--color-border, #e4e7eb); border-radius: 6px; overflow: hidden; }
-.result-wrap { margin-top: 12px; border: 1px solid var(--color-border, #e4e7eb); border-radius: 6px; overflow: hidden; }
-.result-bar { padding: 6px 12px; font-size: 12px; color: var(--color-text-muted, #666); background: var(--color-panel-header, #f1f3f5); display: flex; gap: 12px; }
-.warn { color: var(--color-destructive, #dc2626); }
+.editor-wrap { flex: 1; min-height: 240px; border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden; }
+.result-wrap { margin-top: 12px; border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden; }
+.result-bar { padding: 6px 12px; font-size: 12px; color: var(--color-text-muted); background: var(--color-panel-header); display: flex; gap: 12px; }
+.warn { color: var(--color-destructive); }
 </style>

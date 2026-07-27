@@ -573,7 +573,7 @@ function handleClosed() {
   font-size: var(--text-subtitle, 16px);
   font-weight: 600;
   margin-bottom: var(--space-4, 16px);
-  color: var(--color-foreground, #1a1a2e);
+  color: var(--color-foreground);
 }
 
 .db-type-grid {
@@ -588,7 +588,7 @@ function handleClosed() {
   align-items: center;
   gap: 8px;
   padding: var(--space-3, 12px);
-  border: 2px solid var(--color-border, #e0e0e0);
+  border: 2px solid var(--color-border);
   border-radius: var(--radius-md, 8px);
   cursor: pointer;
   transition: all 0.2s ease;
@@ -596,14 +596,14 @@ function handleClosed() {
 }
 
 .db-type-card:hover {
-  border-color: var(--color-secondary, #059669);
+  border-color: var(--color-secondary);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
   transform: translateY(-2px);
 }
 
 .db-type-card.selected {
-  border-color: var(--color-secondary, #059669);
-  background: var(--color-active, #e8f5e9);
+  border-color: var(--color-secondary);
+  background: var(--color-active);
 }
 
 .db-type-name {
@@ -613,7 +613,7 @@ function handleClosed() {
 
 .db-type-meta {
   font-size: var(--text-caption, 11px);
-  color: var(--color-muted, #999);
+  color: var(--color-muted);
   margin-top: 2px;
 }
 
@@ -626,7 +626,7 @@ function handleClosed() {
   align-items: center;
   gap: 4px;
   font-size: var(--text-caption, 12px);
-  color: var(--color-secondary, #059669);
+  color: var(--color-secondary);
   cursor: pointer;
   margin-bottom: var(--space-3, 12px);
 }
@@ -650,8 +650,8 @@ function handleClosed() {
 /* 下载进度动画区域 */
 .download-progress-area {
   padding: 16px;
-  background: var(--color-panel, #f8f9fa);
-  border: 1px solid var(--color-border, #e0e0e0);
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
 }
 
@@ -665,13 +665,13 @@ function handleClosed() {
 .progress-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--color-foreground, #1a1a2e);
+  color: var(--color-foreground);
 }
 
 /* 进度条动画 */
 .progress-bar-container {
   height: 6px;
-  background: var(--color-border, #e0e0e0);
+  background: var(--color-border);
   border-radius: 3px;
   overflow: hidden;
   margin-bottom: 16px;
@@ -686,7 +686,7 @@ function handleClosed() {
 .progress-bar-fill {
   flex: 1;
   height: 100%;
-  background: linear-gradient(90deg, var(--color-primary, #1E3A5F), var(--color-secondary, #059669));
+  background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
   border-radius: 3px;
   animation: progress-slide 1.4s ease-in-out infinite;
 }
@@ -725,16 +725,16 @@ function handleClosed() {
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: var(--color-muted, #999);
+  color: var(--color-muted);
   transition: color 0.3s ease;
 }
 
 .progress-step.active {
-  color: var(--color-secondary, #059669);
+  color: var(--color-secondary);
 }
 
 .progress-step.done {
-  color: var(--color-success, #10b981);
+  color: var(--color-success);
 }
 
 .step-number {
@@ -750,9 +750,9 @@ function handleClosed() {
 }
 
 .progress-step.active .step-number {
-  background: var(--color-secondary, #059669);
+  background: var(--color-secondary);
   color: #fff;
-  border-color: var(--color-secondary, #059669);
+  border-color: var(--color-secondary);
 }
 
 .step-done-icon {
@@ -765,10 +765,10 @@ function handleClosed() {
 
 .progress-message {
   font-size: 12px;
-  color: var(--color-muted, #999);
+  color: var(--color-muted);
   font-family: 'JetBrains Mono', monospace;
   padding-top: 4px;
-  border-top: 1px solid var(--color-border, #e0e0e0);
+  border-top: 1px solid var(--color-border);
 }
 
 /* 驱动已就绪横幅 */
@@ -781,7 +781,7 @@ function handleClosed() {
   background: rgba(16, 185, 129, 0.08);
   border-radius: 6px;
   font-size: 13px;
-  color: var(--color-foreground, #1a1a2e);
+  color: var(--color-foreground);
 }
 
 .advanced-collapse {
@@ -791,7 +791,7 @@ function handleClosed() {
 .form-hint {
   margin-left: var(--space-2, 8px);
   font-size: var(--text-caption, 11px);
-  color: var(--color-muted, #999);
+  color: var(--color-muted);
 }
 
 .dialog-footer {

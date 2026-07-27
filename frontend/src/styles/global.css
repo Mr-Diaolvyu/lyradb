@@ -96,7 +96,8 @@ body {
 .text-caption {
     font-size: var(--text-caption);
     font-weight: 400;
-    color: var(--color-muted);
+    /* A2 修正：辅助文字用 text-muted，而非背景灰 --color-muted */
+    color: var(--color-text-muted);
 }
 
 /* === 状态指示器 === */
@@ -159,7 +160,9 @@ body {
 
 /* === Element Plus 主题定制 === */
 :root {
-    --el-color-primary: var(--color-primary);
+    /* 主色映射到主操作色，使暗色主题/强调色预设对 EP 组件生效 */
+    --el-color-primary: var(--color-action);
+    --el-color-primary-light-3: var(--color-action-hover);
     --el-color-success: var(--color-accent);
     --el-color-danger: var(--color-destructive);
     --el-bg-color: var(--color-panel);
@@ -171,12 +174,20 @@ body {
 /* === 移动端适配（BS 封装客户端 WebView / 窄屏浏览器） === */
 /* 触控设备：适当放大可点击目标，优化触屏体验 */
 @media (pointer: coarse) {
-    .el-button { min-height: 32px; }
-    .el-input__inner { font-size: 16px; } /* 防止 iOS 聚焦时自动缩放页面 */
+    .el-button {
+        min-height: 32px;
+    }
+
+    .el-input__inner {
+        font-size: 16px;
+    }
+
+    /* 防止 iOS 聚焦时自动缩放页面 */
 }
 
 /* 窄屏：表格容器允许横向滚动兑底，避免撑破布局 */
 @media (max-width: 768px) {
+
     .el-table,
     .vxe-table--main-wrapper {
         max-width: 100%;

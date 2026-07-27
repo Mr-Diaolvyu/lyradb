@@ -57,36 +57,36 @@ async function handleLogin() {
   align-items: center;
   justify-content: center;
   height: 100vh;
-  background: var(--color-background, #f8fafc);
+  background: var(--color-background);
 }
 .login-card {
   width: 360px;
   padding: 32px;
-  background: var(--color-panel, #fff);
-  border: 1px solid var(--color-border, #e4e7eb);
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
   border-radius: 10px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
 }
 .login-title {
   font-size: 20px;
   font-weight: 700;
-  color: var(--color-primary, #1e3a5f);
+  color: var(--color-primary);
   margin-bottom: 4px;
 }
 .login-sub {
   font-size: 12px;
-  color: var(--color-text-muted, #999);
+  color: var(--color-text-muted);
   margin-bottom: 24px;
 }
 .login-error {
   margin-top: 12px;
   font-size: 12px;
-  color: var(--color-destructive, #dc2626);
+  color: var(--color-destructive);
 }
 .login-hint {
   margin-top: 16px;
   font-size: 11px;
-  color: var(--color-text-muted, #999);
+  color: var(--color-text-muted);
   text-align: center;
 }
 </style>

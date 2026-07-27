@@ -1,0 +1,70 @@
+# 发行工作流：推送 v* 标签时自动构建并发布
+#   - LyraDB-<ver>-windows-x64-portable.zip  Windows 免安装便携包（解压双击 LyraDB.exe 即用）
+#   - lyradb-backend-<ver>.jar               服务端 fat jar（java -jar 启动，内嵌前端）
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装 JDK 21（含 jpackage）
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: 构建前端
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: 嵌入前端到后端 static 资源
+        shell: pwsh
+        run: |
+          $static = "backend/src/main/resources/static"
+          if (Test-Path $static) { Remove-Item -Recurse -Force $static }
+          New-Item -ItemType Directory -Path $static | Out-Null
+          Copy-Item -Recurse -Force frontend/dist/* $static
+
+      - name: 构建 fat jar 并 jpackage 生成应用镜像
+        working-directory: backend
+        run: mvn -B -q -Pdesktop clean package -DskipTests
+
+      - name: 压缩便携 zip
+        shell: pwsh
+        run: |
+          $ver = "${{ github.ref_name }}".TrimStart("v")
+          $zip = "backend/target/LyraDB-$ver-windows-x64-portable.zip"
+          if (-not (Test-Path "backend/target/desktop/LyraDB/LyraDB.exe")) {
+            throw "jpackage 产物缺失：backend/target/desktop/LyraDB/LyraDB.exe"
+          }
+          Compress-Archive -Path backend/target/desktop/LyraDB -DestinationPath $zip -CompressionLevel Optimal
+          Write-Host "便携包: $zip"
+
+      - name: 发布 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            backend/target/LyraDB-*-windows-x64-portable.zip
+            backend/target/lyradb-backend-*.jar

@@ -37,6 +37,22 @@
         {{ driverStatusText }}
       </span>
       <span class="status-item muted">{{ t('statusBar.tabs', { count: tabCount }) }}</span>
+      <!-- V5 行密度快捷切换 -->
+      <button
+        class="density-toggle"
+        :title="t('appearance.density') + ': ' + t('appearance.' + themeStore.density)"
+        @click="toggleDensity"
+      >
+        <svg viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <template v-if="themeStore.density === 'compact'">
+            <path d="M2 3h10M2 5.5h10M2 8h10M2 10.5h10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+          </template>
+          <template v-else>
+            <path d="M2 3.5h10M2 7h10M2 10.5h10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+          </template>
+        </svg>
+        <span>{{ t('appearance.' + themeStore.density) }}</span>
+      </button>
     </div>
   </div>
 </template>
@@ -47,11 +63,17 @@ import { useI18n } from 'vue-i18n'
 import { Timer, Document, Download } from '@element-plus/icons-vue'
 import { useConnectionStore } from '@/stores/connection'
 import { useEditorStore } from '@/stores/editor'
+import { useThemeStore } from '@/stores/theme'
 
 const { t } = useI18n()
 
 const connectionStore = useConnectionStore()
 const editorStore = useEditorStore()
+const themeStore = useThemeStore()
+
+function toggleDensity() {
+  themeStore.setDensity(themeStore.density === 'compact' ? 'comfortable' : 'compact')
+}
 
 const activeConnection = computed(() => connectionStore.activeConnection)
 
@@ -165,5 +187,30 @@ function formatElapsed(ms: number): string {
 
 :deep(.el-icon.pending) {
   color: var(--color-warning);
+}
+
+/* V5 密度切换按钮 */
+.density-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--text-caption);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.density-toggle:hover {
+  background: var(--color-hover);
+  color: var(--color-foreground);
+}
+
+.density-toggle svg {
+  width: 14px;
+  height: 14px;
 }
 </style>

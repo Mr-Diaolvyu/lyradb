@@ -259,7 +259,7 @@ onUnmounted(() => {
   margin-bottom: var(--space-1);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm, 4px);
-  background: var(--color-background, #fff);
+  background: var(--color-background);
   transition: border-color var(--transition-fast);
 }
 
@@ -321,7 +321,7 @@ onUnmounted(() => {
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
   font-size: var(--text-code, 13px);
   color: var(--color-foreground);
-  background: var(--color-muted, #f8f9fa);
+  background: var(--color-muted);
   border-radius: var(--radius-sm, 4px);
   white-space: pre-wrap;
   word-break: break-word;

@@ -11,6 +11,18 @@
           <el-icon><EditPen /></el-icon>
           编辑模式 · 双击单元格编辑
         </el-tag>
+        <el-tooltip v-if="remarksLoader" :content="showRemarks ? '显示原始字段名' : '显示字段注释'" placement="top">
+          <el-button
+            size="small"
+            :type="showRemarks ? 'primary' : ''"
+            :loading="remarksLoading"
+            text
+            bg
+            @click="toggleRemarks"
+          >
+            {{ showRemarks ? '注释' : '字段名' }}
+          </el-button>
+        </el-tooltip>
         <el-input
           v-model="filterText"
           size="small"
@@ -28,7 +40,8 @@
         ref="tableRef"
         :data="filteredRows"
         :height="tableHeight"
-        :row-config="{ isHover: true, isCurrent: true, height: 36 }"
+        :row-config="{ isHover: true, isCurrent: true }"
+        :cell-config="{ height: rowHeight }"
         :column-config="{ isCurrent: true, resizable: true }"
         :scroll-y="{ enabled: true, gt: 50 }"
         :scroll-x="{ enabled: true, gt: 20 }"
@@ -45,10 +58,12 @@
           :field="col"
           :title="col"
           min-width="120"
+          :align="colTypes[col] === 'number' ? 'right' : 'left'"
           show-overflow
         >
           <template #header>
-            <span>{{ col }}</span>
+            <span class="col-type-badge" :title="colTypes[col]">{{ typeBadge(colTypes[col]) }}</span>
+            <span :title="headerTitle(col) === col ? undefined : col">{{ headerTitle(col) }}</span>
             <el-icon v-if="isPk(col)" class="pk-icon" title="主键"><Key /></el-icon>
           </template>
           <template #default="{ row }">
@@ -91,6 +106,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { Search, EditPen, Key } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { useThemeStore } from '@/stores/theme'
 
 // === Props ===
 const props = defineProps<{
@@ -107,6 +124,8 @@ const props = defineProps<{
   } | null
   /** 行级 JSON 编辑模式（MongoDB 文档）：双击行触发 row-json-edit 而非单元格内联编辑 */
   jsonRowEdit?: boolean
+  /** 懒加载列注释映射（col → remarks），提供后工具栏显示「字段名/注释」切换按钮 */
+  remarksLoader?: (() => Promise<Record<string, string>>) | null
 }>()
 
 const emit = defineEmits<{
@@ -119,6 +138,10 @@ const tableRef = ref()
 const tableHeight = ref(300)
 const filterText = ref('')
 const containerRef = ref<HTMLElement>()
+
+// 行高跟随密度偏好（V5：舒适 32 / 紧凑 24，与 --row-h 令牌一致）
+const themeStore = useThemeStore()
+const rowHeight = computed(() => themeStore.density === 'compact' ? 24 : 32)
 
 // 内联编辑状态
 const editing = ref<{ row: Record<string, any>; col: string } | null>(null)
@@ -135,6 +158,87 @@ const filteredRows = computed(() => {
     })
   )
 })
+
+// === 表头字段名/注释切换 ===
+const showRemarks = ref(false)
+const remarksLoading = ref(false)
+const remarksMap = ref<Record<string, string> | null>(null)
+
+function headerTitle(col: string): string {
+  if (showRemarks.value && remarksMap.value?.[col]) return remarksMap.value[col]
+  return col
+}
+
+async function toggleRemarks() {
+  if (showRemarks.value) {
+    showRemarks.value = false
+    return
+  }
+  if (remarksMap.value === null && props.remarksLoader) {
+    remarksLoading.value = true
+    try {
+      remarksMap.value = await props.remarksLoader()
+    } catch {
+      remarksMap.value = {}
+    } finally {
+      remarksLoading.value = false
+    }
+  }
+  if (!remarksMap.value || Object.keys(remarksMap.value).length === 0) {
+    ElMessage.warning('未获取到字段注释（仅支持单表查询且表字段含注释）')
+    return
+  }
+  showRemarks.value = true
+}
+
+// 结果列变化（新查询）时重置注释状态，避免跨表错配
+watch(() => props.columns, () => {
+  showRemarks.value = false
+  remarksMap.value = null
+})
+
+// === 列类型推断（V3）：抽样非空值判定 number/boolean/date/json/text ===
+type ColType = 'number' | 'boolean' | 'date' | 'json' | 'text'
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?/
+
+const colTypes = computed<Record<string, ColType>>(() => {
+  const result: Record<string, ColType> = {}
+  for (const col of props.columns) {
+    result[col] = inferColType(col)
+  }
+  return result
+})
+
+function inferColType(col: string): ColType {
+  let seen = 0
+  let type: ColType | null = null
+  for (const row of props.rows) {
+    const v = row[col]
+    if (v === null || v === undefined) continue
+    let cur: ColType
+    if (typeof v === 'number') cur = 'number'
+    else if (typeof v === 'boolean') cur = 'boolean'
+    else if (typeof v === 'object') cur = 'json'
+    else if (DATE_RE.test(String(v))) cur = 'date'
+    else cur = 'text'
+    if (type === null) type = cur
+    else if (type !== cur) return 'text'
+    if (++seen >= 20) break
+  }
+  return type ?? 'text'
+}
+
+/** 表头类型徽标字符（纯文本字形，非 emoji） */
+function typeBadge(t: ColType): string {
+  switch (t) {
+    case 'number': return '#'
+    case 'boolean': return '01'
+    case 'date': return 'dt'
+    case 'json': return '{}'
+    default: return 'Aa'
+  }
+}
 
 // === 主键判断 ===
 function isPk(col: string): boolean {
@@ -203,7 +307,7 @@ function valuesEqual(a: any, b: any): boolean {
 
 // === 单元格格式化 ===
 function formatCellValue(val: any): string {
-  if (val === null || val === undefined) return ''
+  if (val === null || val === undefined) return 'NULL'
   if (typeof val === 'object') return JSON.stringify(val)
   return String(val)
 }
@@ -327,9 +431,24 @@ watch(() => props.editable, () => {
 }
 
 .pk-icon {
-  color: var(--color-warning, #f59e0b);
+  color: var(--color-warning);
   margin-left: 4px;
   font-size: 12px;
+  vertical-align: middle;
+}
+
+/* 表头列类型徽标 */
+.col-type-badge {
+  display: inline-block;
+  margin-right: 5px;
+  padding: 0 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  color: var(--color-text-muted);
+  background: var(--color-active);
+  border-radius: 3px;
   vertical-align: middle;
 }
 
@@ -339,14 +458,16 @@ watch(() => props.editable, () => {
 
 /* 单元格样式 */
 :deep(.cell-null) {
-  color: var(--color-disconnected);
+  color: var(--color-text-muted);
   font-style: italic;
+  opacity: 0.65;
+  font-size: var(--text-code);
 }
 
 :deep(.cell-number) {
   font-family: var(--font-mono);
   font-size: var(--text-code);
-  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 :deep(.cell-boolean) {
@@ -357,16 +478,16 @@ watch(() => props.editable, () => {
 :deep(.cell-blob) {
   font-family: var(--font-mono);
   font-size: 12px;
-  color: var(--color-secondary, #059669);
+  color: var(--color-secondary);
   cursor: pointer;
   padding: 2px 6px;
-  border: 1px solid var(--color-border, #e0e0e0);
+  border: 1px solid var(--color-border);
   border-radius: 4px;
-  background: var(--color-muted, #f8f9fa);
+  background: var(--color-muted);
 }
 
 :deep(.cell-blob:hover) {
-  background: var(--color-active, #e8f5e9);
+  background: var(--color-active);
 }
 
 .preview-content {
@@ -377,7 +498,7 @@ watch(() => props.editable, () => {
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-word;
-  background: var(--color-muted, #f8f9fa);
+  background: var(--color-muted);
   padding: 12px;
   border-radius: 4px;
 }

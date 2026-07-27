@@ -108,7 +108,8 @@ const PAD_B = 28
 const PIE_SIZE = 280
 const MAX_POINTS = 50
 
-const PALETTE = ['#409eff', '#67c23a', '#e6a23c', '#f56c6c', '#909399', '#8e44ad', '#16a085', '#d35400', '#2c3e50', '#c0392b', '#27ae60', '#2980b9']
+// 分类色板：与 tokens.css 品牌色系同源（蓝/绿/琥珀/红/紫/青…），亮暗主题下对比度均足够
+const PALETTE = ['#2563EB', '#059669', '#D97706', '#DC2626', '#7C3AED', '#0891B2', '#DB2777', '#65A30D', '#64748B', '#B45309', '#0D9488', '#6D28D9']
 
 /** 判断某列是否数值列（非空值 80% 以上可转数字） */
 function isNumericColumn(col: string): boolean {
@@ -295,7 +296,7 @@ function truncateLabel(s: string): string {
 }
 
 .bar-rect {
-  fill: #409eff;
+  fill: var(--color-secondary);
   opacity: 0.85;
 }
 
@@ -305,12 +306,12 @@ function truncateLabel(s: string): string {
 
 .line-path {
   fill: none;
-  stroke: #409eff;
+  stroke: var(--color-secondary);
   stroke-width: 2;
 }
 
 .line-dot {
-  fill: #409eff;
+  fill: var(--color-secondary);
 }
 
 .pie-wrap {
