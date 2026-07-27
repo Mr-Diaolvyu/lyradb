@@ -10,6 +10,12 @@
         <span v-if="resultRowCount" class="badge">{{ resultRowCount }}</span>
       </div>
       <div class="panel-tab-item"
+        :class="{ active: uiStore.bottomPanelTab === 'chart' }"
+        @click="uiStore.setBottomPanelTab('chart')"
+      >
+        <span>图表</span>
+      </div>
+      <div class="panel-tab-item"
         :class="{ active: uiStore.bottomPanelTab === 'messages' }"
         @click="uiStore.setBottomPanelTab('messages')"
       >
@@ -89,6 +95,16 @@
         </template>
       </div>
 
+      <!-- 图表 Tab（SVG 自绘，基于当前结果集） -->
+      <div v-show="uiStore.bottomPanelTab === 'chart'" class="chart-panel">
+        <ChartView
+          v-if="editorStore.activeSqlTab?.result && !editorStore.activeSqlTab.isExplain"
+          :columns="editorStore.activeSqlTab.result.columns"
+          :rows="editorStore.activeSqlTab.result.rows"
+        />
+        <el-empty v-else description="暂无查询结果" :image-size="60" />
+      </div>
+
       <!-- 消息 Tab -->
       <div v-show="uiStore.bottomPanelTab === 'messages'" class="messages-panel">
         <template v-if="editorStore.activeSqlTab?.error">
@@ -145,6 +161,7 @@ import { queryApi, metadataApi } from '@/api/metadata'
 import DataTable from '@/components/editor/DataTable.vue'
 import SqlHistory from '@/components/editor/SqlHistory.vue'
 import ExplainTreeView from '@/components/editor/ExplainTreeView.vue'
+import ChartView from '@/components/editor/ChartView.vue'
 
 const editorStore = useEditorStore()
 const uiStore = useUiStore()
@@ -623,6 +640,11 @@ function extractTableName(sql: string): string {
 }
 
 .history-panel {
+  height: 100%;
+  overflow: hidden;
+}
+
+.chart-panel {
   height: 100%;
   overflow: hidden;
 }

@@ -3,9 +3,12 @@ package io.github.lexaquila.lyradb.service;
 import io.github.lexaquila.lyradb.config.AppProperties;
 import io.github.lexaquila.lyradb.driver.StatementRegistry;
 import io.github.lexaquila.lyradb.model.dto.QueryResult;
+import io.github.lexaquila.lyradb.model.dto.SqlReviewFinding;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
 
 /**
  * 查询执行服务
@@ -37,12 +40,14 @@ public class QueryService {
     private final ConnectionService connectionService;
     private final AppProperties appProperties;
     private final QueryHistoryService queryHistoryService;
+    private final SqlReviewService sqlReviewService;
 
     public QueryService(ConnectionService connectionService, AppProperties appProperties,
-            QueryHistoryService queryHistoryService) {
+            QueryHistoryService queryHistoryService, SqlReviewService sqlReviewService) {
         this.connectionService = connectionService;
         this.appProperties = appProperties;
         this.queryHistoryService = queryHistoryService;
+        this.sqlReviewService = sqlReviewService;
     }
 
     /**
@@ -54,8 +59,27 @@ public class QueryService {
      * @return 查询结果
      */
     public QueryResult executeQuery(String connectionId, String sql, String defaultDatabase) throws Exception {
+        return executeQuery(connectionId, sql, defaultDatabase, false);
+    }
+
+    /**
+     * 执行查询SQL（含 SQL 审核前置）
+     *
+     * @param force 用户确认"仍要执行"后跳过拦截（逃生门）
+     */
+    public QueryResult executeQuery(String connectionId, String sql, String defaultDatabase, boolean force)
+            throws Exception {
         ConnectionService.ActiveConnection active = connectionService.getActiveConnection(connectionId);
         int limit = appProperties.getMaxQueryRows();
+
+        String dbType = active.driver.getDriverInfo() != null ? active.driver.getDriverInfo().getDbType() : null;
+
+        // SQL 审核前置：HIGH/MEDIUM 拦截（force 逃生），LOW 随结果附带提醒
+        List<SqlReviewFinding> findings = sqlReviewService.review(sql, dbType);
+        if (!force && sqlReviewService.hasBlocking(findings)) {
+            log.info("SQL审核拦截: connectionId={}, 命中={}条", connectionId, findings.size());
+            return blockedResult(sql, findings);
+        }
 
         // 如果指定了默认数据库，尝试切换
         if (defaultDatabase != null && !defaultDatabase.trim().isEmpty()) {
@@ -65,7 +89,6 @@ public class QueryService {
         log.info("执行查询: connectionId={}, sql={}", connectionId,
                 sql.length() > 100 ? sql.substring(0, 100) + "..." : sql);
 
-        String dbType = active.driver.getDriverInfo() != null ? active.driver.getDriverInfo().getDbType() : null;
         QueryResult result;
         try {
             result = active.driver.executeQuery(active.connection, sql, limit);
@@ -89,6 +112,11 @@ public class QueryService {
                 result.getElapsedMs(),
                 result.getTotalRows(),
                 !hasError, errMsg);
+
+        // LOW 级提醒随结果返回（不阻断）
+        if (!findings.isEmpty()) {
+            result.setReviewFindings(findings);
+        }
 
         return result;
     }
@@ -165,11 +193,29 @@ public class QueryService {
      * @return 影响行数
      */
     public int executeUpdate(String connectionId, String sql, String defaultDatabase) throws Exception {
+        return executeUpdate(connectionId, sql, defaultDatabase, false);
+    }
+
+    /**
+     * 执行更新/DDL语句（含 SQL 审核前置）
+     *
+     * @param force 用户确认"仍要执行"后跳过拦截（逃生门）
+     */
+    public int executeUpdate(String connectionId, String sql, String defaultDatabase, boolean force) throws Exception {
         ConnectionService.ActiveConnection active = connectionService.getActiveConnection(connectionId);
 
         // 只读数据库不允许DML
         if (active.driver.getCapabilities().isReadOnly()) {
             throw new RuntimeException("此数据库为只读模式（OLAP引擎），不允许执行DML/DDL操作");
+        }
+
+        String dbType = active.driver.getDriverInfo() != null ? active.driver.getDriverInfo().getDbType() : null;
+
+        // SQL 审核前置：命中拦截级规则且未确认时抛出审核异常（由 Controller 转换为拦截响应）
+        List<SqlReviewFinding> findings = sqlReviewService.review(sql, dbType);
+        if (!force && sqlReviewService.hasBlocking(findings)) {
+            log.info("SQL审核拦截(update): connectionId={}, 命中={}条", connectionId, findings.size());
+            throw new SqlReviewBlockedException(findings);
         }
 
         if (defaultDatabase != null && !defaultDatabase.trim().isEmpty()) {
@@ -179,7 +225,6 @@ public class QueryService {
         log.info("执行更新: connectionId={}, sql={}", connectionId,
                 sql.length() > 100 ? sql.substring(0, 100) + "..." : sql);
 
-        String dbType = active.driver.getDriverInfo() != null ? active.driver.getDriverInfo().getDbType() : null;
         int affected;
         try {
             affected = active.driver.executeUpdate(active.connection, sql);
@@ -191,5 +236,30 @@ public class QueryService {
         queryHistoryService.record(connectionId, dbType, sql, 0L, (long) affected, true, null);
 
         return affected;
+    }
+
+    /** 构造审核拦截结果（不执行 SQL） */
+    private QueryResult blockedResult(String sql, List<SqlReviewFinding> findings) {
+        QueryResult blocked = new QueryResult();
+        blocked.setSql(sql);
+        blocked.setReviewBlocked(true);
+        blocked.setReviewFindings(findings);
+        return blocked;
+    }
+
+    /**
+     * SQL 审核拦截异常（携带命中规则，供 Controller 返回结构化拦截响应）
+     */
+    public static class SqlReviewBlockedException extends RuntimeException {
+        private final transient List<SqlReviewFinding> findings;
+
+        public SqlReviewBlockedException(List<SqlReviewFinding> findings) {
+            super("SQL 审核拦截");
+            this.findings = findings;
+        }
+
+        public List<SqlReviewFinding> getFindings() {
+            return findings;
+        }
     }
 }

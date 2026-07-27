@@ -41,7 +41,9 @@ public class QueryController {
      * 执行查询SQL
      *
      * <p>
-     * 请求体格式: { "sql": "SELECT * FROM users" }
+     * 请求体格式: { "sql": "SELECT * FROM users", "force": "true"? }
+     * 命中审核拦截规则时返回 reviewBlocked=true + reviewFindings，
+     * 前端确认后携 force=true 重发（"仍要执行"逃生门）。
      * </p>
      */
     @PostMapping("/{connectionId}/execute")
@@ -50,11 +52,12 @@ public class QueryController {
             @RequestBody Map<String, String> request) {
         String sql = request.get("sql");
         String defaultDatabase = request.get("defaultDatabase");
+        boolean force = Boolean.parseBoolean(request.get("force"));
         if (sql == null || sql.trim().isEmpty()) {
             return ResponseEntity.badRequest().build();
         }
         try {
-            QueryResult result = queryService.executeQuery(connectionId, sql, defaultDatabase);
+            QueryResult result = queryService.executeQuery(connectionId, sql, defaultDatabase, force);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             log.error("查询执行失败: {} - {}", connectionId, e.getMessage(), e);
@@ -74,7 +77,8 @@ public class QueryController {
      * 执行更新/DDL语句
      *
      * <p>
-     * 请求体格式: { "sql": "INSERT INTO users VALUES(...)" }
+     * 请求体格式: { "sql": "INSERT INTO users VALUES(...)", "force": "true"? }
+     * 命中审核拦截规则时返回 reviewBlocked=true + findings。
      * </p>
      */
     @PostMapping("/{connectionId}/update")
@@ -83,14 +87,21 @@ public class QueryController {
             @RequestBody Map<String, String> request) {
         String sql = request.get("sql");
         String defaultDatabase = request.get("defaultDatabase");
+        boolean force = Boolean.parseBoolean(request.get("force"));
         if (sql == null || sql.trim().isEmpty()) {
             return ResponseEntity.badRequest().build();
         }
         try {
-            int affected = queryService.executeUpdate(connectionId, sql, defaultDatabase);
+            int affected = queryService.executeUpdate(connectionId, sql, defaultDatabase, force);
             Map<String, Object> result = Map.of(
                     "success", true,
                     "affectedRows", affected);
+            return ResponseEntity.ok(result);
+        } catch (QueryService.SqlReviewBlockedException e) {
+            Map<String, Object> result = Map.of(
+                    "success", false,
+                    "reviewBlocked", true,
+                    "reviewFindings", e.getFindings());
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             log.error("更新执行失败: {} - {}", connectionId, e.getMessage(), e);

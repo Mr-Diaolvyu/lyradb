@@ -54,6 +54,15 @@
         {{ t('header.explain') }}
       </el-button>
       <el-button
+        v-if="editorStore.activeSqlTab"
+        :icon="Clock"
+        size="small"
+        :disabled="editorStore.activeSqlTab?.loading"
+        @click="runInBackground"
+      >
+        {{ t('header.runBackground') }}
+      </el-button>
+      <el-button
         v-if="connectionStore.activeConnectionId"
         :icon="Share"
         size="small"
@@ -72,6 +81,14 @@
     </div>
 
     <div class="header-right">
+      <!-- 报表订阅入口 -->
+      <el-tooltip :content="t('reports.title')" placement="bottom">
+        <el-button :icon="Calendar" size="small" circle @click="reportVisible = true" />
+      </el-tooltip>
+      <!-- 后台任务面板入口 -->
+      <el-badge :value="taskStore.unreadCount" :hidden="taskStore.unreadCount === 0" class="task-badge">
+        <el-button :icon="List" size="small" circle @click="taskStore.openPanel()" />
+      </el-badge>
       <!-- 语言切换 -->
       <el-dropdown @command="switchLocale">
         <el-button size="small" circle>
@@ -106,20 +123,29 @@
 
   <!-- 迁移对话框 -->
   <MigrationDialog v-model:visible="migrationVisible" />
+
+  <!-- 后台任务面板 -->
+  <TaskPanel />
+
+  <!-- 报表订阅管理 -->
+  <ReportDialog v-model:visible="reportVisible" />
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Connection, DocumentAdd, VideoPlay, Setting, Sunny, Moon, Coin, Aim, Share, Sort } from '@element-plus/icons-vue'
+import { Connection, DocumentAdd, VideoPlay, Setting, Sunny, Moon, Coin, Aim, Share, Sort, Clock, List, Calendar } from '@element-plus/icons-vue'
 import { useThemeStore } from '@/stores/theme'
 import { useConnectionStore } from '@/stores/connection'
 import { useEditorStore } from '@/stores/editor'
 import { useUiStore } from '@/stores/ui'
+import { useTaskStore } from '@/stores/tasks'
 import { setLocale, type AppLocale } from '@/i18n'
 import ConnectionDialog from '@/components/connection/ConnectionDialog.vue'
 import ErDiagramView from '@/components/editor/ErDiagramView.vue'
 import MigrationDialog from '@/components/connection/MigrationDialog.vue'
+import TaskPanel from '@/components/layout/TaskPanel.vue'
+import ReportDialog from '@/components/layout/ReportDialog.vue'
 
 const { t, locale } = useI18n()
 
@@ -131,6 +157,7 @@ const themeStore = useThemeStore()
 const connectionStore = useConnectionStore()
 const editorStore = useEditorStore()
 const uiStore = useUiStore()
+const taskStore = useTaskStore()
 
 const isDark = computed(() => themeStore.isDark)
 
@@ -162,6 +189,12 @@ function explainCurrentSql() {
   }
 }
 
+function runInBackground() {
+  if (editorStore.activeTabId) {
+    editorStore.runInBackground(editorStore.activeTabId)
+  }
+}
+
 const erVisible = ref(false)
 function openErDiagram() {
   if (!connectionStore.activeConnectionId) return
@@ -169,6 +202,7 @@ function openErDiagram() {
 }
 
 const migrationVisible = ref(false)
+const reportVisible = ref(false)
 </script>
 
 <style scoped>
@@ -209,5 +243,9 @@ const migrationVisible = ref(false)
 .locale-abbr {
   font-size: 12px;
   line-height: 1;
+}
+
+.task-badge :deep(.el-badge__content) {
+  transform: translateY(-2px) translateX(100%) scale(0.8);
 }
 </style>

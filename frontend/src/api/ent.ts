@@ -67,6 +67,17 @@ export interface AuditLog {
     createdAt?: string
 }
 
+export interface MaskingRule {
+    id?: string
+    dataSourceId?: string
+    tablePattern?: string
+    columnPattern: string
+    maskType: string
+    remark?: string
+    enabled: boolean
+    createdAt?: string
+}
+
 export interface Page<T> {
     content: T[]
     totalElements: number
@@ -180,5 +191,16 @@ export const entApi = {
     },
     adminCreateUser(body: any): Promise<{ id: string; success: boolean }> {
         return apiClient.post('/admin/users', body)
+    },
+
+    // 管理员：脱敏规则
+    adminMaskingRules(): Promise<MaskingRule[]> {
+        return apiClient.get('/admin/masking')
+    },
+    adminSaveMaskingRule(body: Partial<MaskingRule>): Promise<MaskingRule> {
+        return apiClient.post('/admin/masking', body)
+    },
+    adminDeleteMaskingRule(id: string): Promise<void> {
+        return apiClient.delete(`/admin/masking/${id}`)
     },
 }

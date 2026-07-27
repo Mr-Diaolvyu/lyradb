@@ -23,7 +23,7 @@ export const useUiStore = defineStore('ui', () => {
     const bottomPanelVisible = ref(true)
 
     /** 底部面板当前激活的 tab */
-    const bottomPanelTab = ref<'results' | 'messages' | 'history'>('results')
+    const bottomPanelTab = ref<'results' | 'chart' | 'messages' | 'history'>('results')
 
     /** 连接对话框是否可见 */
     const connectionDialogVisible = ref(false)
@@ -93,7 +93,7 @@ export const useUiStore = defineStore('ui', () => {
     }
 
     /** 设置底部面板激活的 tab */
-    function setBottomPanelTab(tab: 'results' | 'messages' | 'history') {
+    function setBottomPanelTab(tab: 'results' | 'chart' | 'messages' | 'history') {
         bottomPanelTab.value = tab
     }
 

@@ -17,6 +17,9 @@
 
     <!-- 底部状态栏 -->
     <StatusBar />
+
+    <!-- 全局命令面板（Ctrl+K） -->
+    <CommandPalette />
   </div>
 </template>
 
@@ -26,6 +29,7 @@ import SideNav from '@/components/layout/SideNav.vue'
 import WorkSpace from '@/components/layout/WorkSpace.vue'
 import StatusBar from '@/components/layout/StatusBar.vue'
 import SideProps from '@/components/layout/SideProps.vue'
+import CommandPalette from '@/components/layout/CommandPalette.vue'
 import { useUiStore } from '@/stores/ui'
 
 const uiStore = useUiStore()

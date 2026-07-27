@@ -27,6 +27,13 @@ export interface ColumnMetadata {
     schemaName: string | null
 }
 
+/** SQL 审核命中条目（迭代二 E2） */
+export interface SqlReviewFinding {
+    ruleId: string
+    severity: 'HIGH' | 'MEDIUM' | 'LOW'
+    message: string
+}
+
 export interface QueryResult {
     columns: string[]
     rows: Record<string, any>[]
@@ -34,17 +41,25 @@ export interface QueryResult {
     totalRows: number
     truncated: boolean
     sql: string
+    /** 是否被 SQL 审核拦截（true 时 rows 为空） */
+    reviewBlocked?: boolean
+    /** SQL 审核命中规则（拦截原因或随结果附带的提醒） */
+    reviewFindings?: SqlReviewFinding[]
 }
 
 export interface ExecuteQueryRequest {
     sql: string
     defaultDatabase?: string
+    /** 确认"仍要执行"后跳过审核拦截 */
+    force?: boolean
 }
 
 export interface ExecuteUpdateResult {
     success: boolean
     affectedRows?: number
     message?: string
+    reviewBlocked?: boolean
+    reviewFindings?: SqlReviewFinding[]
 }
 
 export interface ErTable {

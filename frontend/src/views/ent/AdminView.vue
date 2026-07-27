@@ -65,6 +65,24 @@
           </el-table-column>
         </el-table>
       </el-tab-pane>
+
+      <!-- 脱敏 -->
+      <el-tab-pane label="脱敏" name="masking">
+        <div class="bar"><el-button type="primary" :icon="Plus" @click="maskCreate.visible = true">新建脱敏规则</el-button></div>
+        <el-table :data="maskRules" border size="small" empty-text="无">
+          <el-table-column label="数据源" width="180" show-overflow-tooltip>
+            <template #default="{ row }">{{ dsName(row.dataSourceId) }}</template>
+          </el-table-column>
+          <el-table-column prop="tablePattern" label="表匹配" width="140"><template #default="{ row }">{{ row.tablePattern || '不限' }}</template></el-table-column>
+          <el-table-column prop="columnPattern" label="列匹配" show-overflow-tooltip />
+          <el-table-column prop="maskType" label="方式" width="90"><template #default="{ row }">{{ maskTypeLabel(row.maskType) }}</template></el-table-column>
+          <el-table-column prop="remark" label="说明" width="160" show-overflow-tooltip />
+          <el-table-column label="启用" width="80">
+            <template #default="{ row }"><el-switch :model-value="row.enabled" size="small" @change="toggleMask(row)" /></template>
+          </el-table-column>
+          <el-table-column label="操作" width="100"><template #default="{ row }"><el-button size="small" type="danger" @click="delMask(row.id)">删除</el-button></template></el-table-column>
+        </el-table>
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 数据源创建 -->
@@ -145,6 +163,26 @@
       </el-form>
       <template #footer><el-button @click="aiCreate.visible=false">取消</el-button><el-button type="primary" :loading="aiCreate.busy" @click="createAi">保存</el-button></template>
     </el-dialog>
+
+    <!-- 脱敏规则创建 -->
+    <el-dialog v-model="maskCreate.visible" title="新建脱敏规则" width="520">
+      <el-form label-width="100px">
+        <el-form-item label="数据源">
+          <el-select v-model="maskCreate.form.dataSourceId" clearable placeholder="空 = 全局规则" style="width:100%">
+            <el-option v-for="d in dataSources" :key="d.id" :label="`${d.displayName} (${d.dbType})`" :value="d.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="表匹配"><el-input v-model="maskCreate.form.tablePattern" placeholder="user_*，空 = 不限表" /></el-form-item>
+        <el-form-item label="列匹配"><el-input v-model="maskCreate.form.columnPattern" placeholder="phone, id_card, *_secret，逗号分隔" /></el-form-item>
+        <el-form-item label="脱敏方式">
+          <el-radio-group v-model="maskCreate.form.maskType">
+            <el-radio value="FULL">全遮盖</el-radio><el-radio value="PARTIAL">保留首尾</el-radio><el-radio value="HASH">摘要</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="说明"><el-input v-model="maskCreate.form.remark" placeholder="如：手机号脱敏" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="maskCreate.visible=false">取消</el-button><el-button type="primary" :loading="maskCreate.busy" @click="createMask">保存</el-button></template>
+    </el-dialog>
   </div>
 </template>
 
@@ -152,7 +190,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-import { entApi, type AdminDataSource, type AdminGrant } from '@/api/ent'
+import { entApi, type AdminDataSource, type AdminGrant, type MaskingRule } from '@/api/ent'
 import { driverApi } from '@/api/driver'
 import type { DatabaseType } from '@/types/driver'
 
@@ -163,11 +201,13 @@ const users = ref<any[]>([])
 const dbTypes = ref<DatabaseType[]>([])
 const aiProviders = ref<any[]>([])
 const aiPresets = ref<Record<string, any>>({})
+const maskRules = ref<MaskingRule[]>([])
 
 const dsCreate = reactive({ visible: false, busy: false, form: { dbType: '', displayName: '', params: { host: '', port: '', username: '', password: '', database: '' } } })
 const grantCreate = reactive({ visible: false, busy: false, form: { dataSourceId: '', userId: '', grantedSourceName: '', allowedTables: '', blockedTables: '', sqlCapability: 'READ_ONLY' } })
 const userCreate = reactive({ visible: false, busy: false, form: { username: '', password: '', displayName: '', roles: ['ANALYST'] } })
 const aiCreate = reactive({ visible: false, busy: false, form: { providerKey: 'deepseek', displayName: '', baseUrl: '', model: '', apiKey: '', isDefault: true } })
+const maskCreate = reactive({ visible: false, busy: false, form: { dataSourceId: '', tablePattern: '', columnPattern: '', maskType: 'PARTIAL', remark: '' } })
 
 async function load() {
   try {
@@ -175,6 +215,10 @@ async function load() {
     else if (tab.value === 'grants') grants.value = await entApi.adminGrants('')
     else if (tab.value === 'users') users.value = await entApi.adminUsers()
     else if (tab.value === 'ai') aiProviders.value = await entApi.adminAiProviders()
+    else if (tab.value === 'masking') {
+      maskRules.value = await entApi.adminMaskingRules()
+      if (!dataSources.value.length) dataSources.value = await entApi.adminDataSources()
+    }
   } catch {}
 }
 onMounted(async () => {
@@ -252,6 +296,33 @@ async function setDefaultAi(id: string) {
 async function delAi(id: string) {
   try { await ElMessageBox.confirm('删除该 Provider？', '确认', { type: 'warning' }) } catch { return }
   await entApi.adminDeleteAiProvider(id); ElMessage.success('已删除'); load()
+}
+
+function dsName(id?: string) {
+  if (!id) return '全局'
+  return dataSources.value.find(d => d.id === id)?.displayName || id
+}
+function maskTypeLabel(t: string) {
+  return t === 'FULL' ? '全遮盖' : t === 'HASH' ? '摘要' : '保留首尾'
+}
+async function createMask() {
+  if (!maskCreate.form.columnPattern.trim()) { ElMessage.warning('列匹配必填'); return }
+  maskCreate.busy = true
+  try {
+    await entApi.adminSaveMaskingRule({ ...maskCreate.form, dataSourceId: maskCreate.form.dataSourceId || undefined, enabled: true })
+    ElMessage.success('已保存'); maskCreate.visible = false; load()
+  } catch (e: any) { ElMessage.error(e.message || '保存失败') }
+  finally { maskCreate.busy = false }
+}
+async function toggleMask(row: MaskingRule) {
+  try {
+    await entApi.adminSaveMaskingRule({ ...row, enabled: !row.enabled })
+    load()
+  } catch (e: any) { ElMessage.error(e.message || '操作失败') }
+}
+async function delMask(id: string) {
+  try { await ElMessageBox.confirm('删除该脱敏规则？', '确认', { type: 'warning' }) } catch { return }
+  await entApi.adminDeleteMaskingRule(id); ElMessage.success('已删除'); load()
 }
 
 function summaryParams(p: any) {

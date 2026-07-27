@@ -39,6 +39,12 @@ public class QueryResult {
     /** 查询SQL */
     private String sql;
 
+    /** 是否被 SQL 审核拦截（true 时 rows 为空，reviewFindings 为拦截原因） */
+    private boolean reviewBlocked = false;
+
+    /** SQL 审核命中规则（拦截原因或随结果附带的提醒） */
+    private List<SqlReviewFinding> reviewFindings;
+
     /**
      * 添加列
      */

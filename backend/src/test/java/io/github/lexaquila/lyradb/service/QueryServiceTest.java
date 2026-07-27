@@ -18,6 +18,7 @@ class QueryServiceTest {
     private ConnectionService connectionService;
     private AppProperties appProperties;
     private QueryHistoryService queryHistoryService;
+    private SqlReviewService sqlReviewService;
     private QueryService queryService;
 
     @BeforeEach
@@ -26,7 +27,10 @@ class QueryServiceTest {
         appProperties = new AppProperties();
         appProperties.setMaxQueryRows(100);
         queryHistoryService = mock(QueryHistoryService.class);
-        queryService = new QueryService(connectionService, appProperties, queryHistoryService);
+        // 审核服务默认无命中（空 findings，不拦截）
+        sqlReviewService = mock(SqlReviewService.class);
+        when(sqlReviewService.review(any(), any())).thenReturn(java.util.List.of());
+        queryService = new QueryService(connectionService, appProperties, queryHistoryService, sqlReviewService);
     }
 
     private ConnectionService.ActiveConnection activeConnection(boolean readOnly) {

@@ -51,17 +51,19 @@ export const metadataApi = {
 }
 
 export const queryApi = {
-    /** 执行查询SQL */
-    executeQuery(connectionId: string, sql: string, defaultDatabase?: string): Promise<QueryResult> {
+    /** 执行查询SQL（force=true 表示已确认"仍要执行"，跳过审核拦截） */
+    executeQuery(connectionId: string, sql: string, defaultDatabase?: string, force?: boolean): Promise<QueryResult> {
         const body: ExecuteQueryRequest = { sql }
         if (defaultDatabase) body.defaultDatabase = defaultDatabase
+        if (force) body.force = true
         return apiClient.post(`/query/${connectionId}/execute`, body)
     },
 
     /** 执行更新/DDL */
-    executeUpdate(connectionId: string, sql: string, defaultDatabase?: string): Promise<ExecuteUpdateResult> {
+    executeUpdate(connectionId: string, sql: string, defaultDatabase?: string, force?: boolean): Promise<ExecuteUpdateResult> {
         const body: any = { sql }
         if (defaultDatabase) body.defaultDatabase = defaultDatabase
+        if (force) body.force = true
         return apiClient.post(`/query/${connectionId}/update`, body)
     },
 
