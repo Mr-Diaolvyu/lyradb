@@ -1,4 +1,6 @@
-// Android 应用模块 Gradle 配置（参考；需在根工程 settings.gradle.kts include(":app")）
+// Android 应用模块 Gradle 配置
+// 移动端为 BS 封装客户端：原生外壳（AppCompat View 体系）+ WebView 加载远端 BS 前端。
+// 不承载 Compose 业务屏幕与 Retrofit API 直调（旧瘦客户端方案已废弃）。
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -16,9 +18,6 @@ android {
         versionName = "1.0.0"
     }
 
-    buildFeatures { compose = true }
-    composeOptions { kotlinCompilerExtensionVersion = "1.5.8" }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -27,17 +26,15 @@ android {
 }
 
 dependencies {
-    // Compose
-    implementation(platform("androidx.compose:compose-bom:2024.02.00"))
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.activity:activity-compose:1.8.2")
-    implementation("androidx.navigation:navigation-compose:2.7.7")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+    // AppCompat + Material（原生外壳 UI，配置页）
+    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("com.google.android.material:material:1.11.0")
+    implementation("androidx.core:core-ktx:1.12.0")
 
-    // 网络
-    implementation("com.squareup.retrofit2:retrofit:2.9.0")
-    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    // WebView 增强
+    implementation("androidx.webkit:webkit:1.10.0")
+
+    // 协程（配置页异步校验服务端可达性）
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }

@@ -1,0 +1,16 @@
+{
+    "string": [
+        {
+            "name": "module_desc",
+            "value": "LyraDB 移动端鸿蒙外壳"
+        },
+        {
+            "name": "entry_ability_desc",
+            "value": "LyraDB BS 封装客户端"
+        },
+        {
+            "name": "entry_ability_label",
+            "value": "LyraDB"
+        }
+    ]
+}

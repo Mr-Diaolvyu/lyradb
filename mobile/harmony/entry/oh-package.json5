@@ -1,0 +1,9 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "LyraDB 移动端鸿蒙外壳 entry 模块",
+  "main": "",
+  "author": "lexaquila",
+  "license": "Apache-2.0",
+  "dependencies": {}
+}

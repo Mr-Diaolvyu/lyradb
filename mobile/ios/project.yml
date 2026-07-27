@@ -1,0 +1,26 @@
+# XcodeGen 工程描述：在 mobile/ios 目录运行 `xcodegen generate` 生成 LyraDB.xcodeproj
+name: LyraDB
+options:
+  bundleIdPrefix: io.github.lexaquila.lyradb
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    GENERATE_INFOPLIST_FILE: NO
+targets:
+  LyraDB:
+    type: application
+    platform: iOS
+    sources:
+      - LyraDB
+    info:
+      path: LyraDB/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.lexaquila.lyradb.mobile
+        INFOPLIST_FILE: LyraDB/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
