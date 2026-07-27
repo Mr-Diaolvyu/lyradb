@@ -167,3 +167,26 @@ body {
     --el-border-color: var(--color-border);
     --el-font-family: var(--font-ui);
 }
+
+/* === 移动端适配（BS 封装客户端 WebView / 窄屏浏览器） === */
+/* 触控设备：适当放大可点击目标，优化触屏体验 */
+@media (pointer: coarse) {
+    .el-button { min-height: 32px; }
+    .el-input__inner { font-size: 16px; } /* 防止 iOS 聚焦时自动缩放页面 */
+}
+
+/* 窄屏：表格容器允许横向滚动兑底，避免撑破布局 */
+@media (max-width: 768px) {
+    .el-table,
+    .vxe-table--main-wrapper {
+        max-width: 100%;
+        overflow-x: auto;
+    }
+
+    /* 对话框/抽屉在窄屏上占满宽度 */
+    .el-dialog {
+        --el-dialog-width: 92% !important;
+        width: 92% !important;
+        margin-top: 8vh !important;
+    }
+}
