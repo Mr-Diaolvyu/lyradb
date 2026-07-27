@@ -24,7 +24,7 @@ LyraDB（天琴智库）把 **MySQL、PostgreSQL、Oracle、SQL Server、ClickHo
 | 📤 数据导入导出 | 支持 CSV / Excel / SQL 格式 |
 | 🔐 SSH 隧道 | 跳板机端口转发，安全连接内网数据库 |
 | 🏢 企业版 RBAC | 用户管理、数据源授权、审批工作流、操作审计 |
-| 📱 移动端 | Android 瘦客户端（Jetpack Compose），复用后端 API |
+| 📱 移动端 | Android / 鸿蒙 NEXT / iOS 客户端（原生外壳 + WebView 封装 BS 前端） |
 | 🖥️ 桌面打包 | jpackage 生成 app-image / MSI 安装包，自带精简 JRE |
 
 ## 🧱 技术栈
@@ -33,7 +33,7 @@ LyraDB（天琴智库）把 **MySQL、PostgreSQL、Oracle、SQL Server、ClickHo
 
 **前端**：Vue 3.4 + TypeScript · Vite 5 · Element Plus · Monaco Editor · VXE Table · Pinia · Vue Router · Vue Flow
 
-**移动端**：Kotlin + Jetpack Compose · Retrofit + OkHttp（瘦客户端，数据经后端 API）
+**移动端**：Kotlin（Android）/ ArkTS（鸿蒙 NEXT）/ Swift（iOS）· 原生外壳 + WebView 封装 BS 前端，连接个人自托管或企业 BS 服务
 
 ## 📦 发行版
 
@@ -87,7 +87,9 @@ lyradb/
 │       ├── repository/  # JPA 仓库
 │       └── service/     # 业务服务层
 ├── frontend/            # Vue 3 前端
-├── mobile/android/      # Android 移动端
+├── mobile/android/      # Android 移动端（原生外壳 + WebView）
+├── mobile/harmony/      # 鸿蒙 NEXT 移动端（ArkTS + ArkWeb）
+├── mobile/ios/          # iOS 移动端（SwiftUI + WKWebView）
 └── wiki/                # 项目 Wiki
 ```
 

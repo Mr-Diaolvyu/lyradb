@@ -24,7 +24,7 @@ LyraDB treats **MySQL, PostgreSQL, Oracle, SQL Server, ClickHouse, SQLite, Mongo
 | 📤 Import & export | Supports CSV / Excel / SQL formats |
 | 🔐 SSH tunneling | Bastion-host port forwarding for secure access to intranet databases |
 | 🏢 Enterprise RBAC | User management, data-source authorization, approval workflows, operation auditing |
-| 📱 Mobile | Android thin client (Jetpack Compose) reusing the backend API |
+| 📱 Mobile | Android / HarmonyOS NEXT / iOS client (native shell + WebView wrapping the BS frontend) |
 | 🖥️ Desktop packaging | jpackage builds app-image / MSI installers bundled with a trimmed JRE |
 
 ## 🧱 Tech Stack
@@ -33,7 +33,7 @@ LyraDB treats **MySQL, PostgreSQL, Oracle, SQL Server, ClickHouse, SQLite, Mongo
 
 **Frontend**: Vue 3.4 + TypeScript · Vite 5 · Element Plus · Monaco Editor · VXE Table · Pinia · Vue Router · Vue Flow
 
-**Mobile**: Kotlin + Jetpack Compose · Retrofit + OkHttp (thin client; data flows through the backend API)
+**Mobile**: Kotlin (Android) / ArkTS (HarmonyOS NEXT) / Swift (iOS) · Native shell + WebView wrapping the BS frontend, connecting to self-hosted or enterprise BS services
 
 ## 📦 Editions
 
@@ -87,7 +87,9 @@ lyradb/
 │       ├── repository/  # JPA repositories
 │       └── service/     # Business service layer
 ├── frontend/            # Vue 3 frontend
-├── mobile/android/      # Android mobile client
+├── mobile/android/      # Android mobile client (native shell + WebView)
+├── mobile/harmony/      # HarmonyOS NEXT mobile client (ArkTS + ArkWeb)
+├── mobile/ios/          # iOS mobile client (SwiftUI + WKWebView)
 └── wiki/                # Project wiki
 ```
 
