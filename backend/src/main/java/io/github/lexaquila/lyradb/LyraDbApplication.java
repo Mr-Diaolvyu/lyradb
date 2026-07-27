@@ -21,6 +21,11 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 public class LyraDbApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(LyraDbApplication.class, args);
+        SpringApplication app = new SpringApplication(LyraDbApplication.class);
+        // 桌面托盘模式需要 AWT（jpackage 桌面包经 --java-options 开启）
+        if ("true".equalsIgnoreCase(System.getProperty("app.desktop.tray-enabled"))) {
+            app.setHeadless(false);
+        }
+        app.run(args);
     }
 }

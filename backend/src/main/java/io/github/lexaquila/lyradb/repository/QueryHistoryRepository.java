@@ -33,14 +33,17 @@ public interface QueryHistoryRepository extends JpaRepository<QueryHistory, Stri
     List<QueryHistory> findAllByOrderByExecutedAtDesc();
 
     /**
-     * 关键字全文搜索（SQL 文本或标题，子串匹配），最近优先
+     * 关键字全文搜索（SQL 文本、标题或标签，子串匹配），最近优先
      *
-     * <p>注意：不使用 LOWER() —— Hibernate 6 的 lower() 不接受 @Lob 字段参数。
-     * H2 默认 LIKE 对 VARCHAR 大小写不敏感，其他库可按需在应用层处理大小写。</p>
+     * <p>
+     * 注意：不使用 LOWER() —— Hibernate 6 的 lower() 不接受 @Lob 字段参数。
+     * H2 默认 LIKE 对 VARCHAR 大小写不敏感，其他库可按需在应用层处理大小写。
+     * </p>
      */
     @Query("SELECT h FROM QueryHistory h " +
             "WHERE h.sql LIKE CONCAT('%', :keyword, '%') " +
             "OR COALESCE(h.title, '') LIKE CONCAT('%', :keyword, '%') " +
+            "OR COALESCE(h.tags, '') LIKE CONCAT('%', :keyword, '%') " +
             "ORDER BY h.executedAt DESC")
     List<QueryHistory> searchByKeyword(@Param("keyword") String keyword);
 

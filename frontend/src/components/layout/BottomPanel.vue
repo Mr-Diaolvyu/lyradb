@@ -65,15 +65,23 @@
           <div class="panel-loading">
             <el-icon class="is-loading"><Loading /></el-icon>
             <span>正在执行查询...</span>
+            <el-button size="small" type="danger" plain @click="cancelQuery">取消查询</el-button>
           </div>
         </template>
         <template v-else-if="editorStore.activeSqlTab?.result">
+          <ExplainTreeView
+            v-if="editorStore.activeSqlTab.isExplain"
+            :result="editorStore.activeSqlTab.result"
+          />
           <DataTable
+            v-else
             :columns="editorStore.activeSqlTab.result.columns"
             :rows="editorStore.activeSqlTab.result.rows"
             :editable="editMode"
             :edit-context="editContext"
+            :json-row-edit="editMode && activeDbType === 'MONGODB'"
             @cell-edited="onCellEdited"
+            @row-json-edit="openMongoDocEditor"
           />
         </template>
         <template v-else>
@@ -107,6 +115,22 @@
         <SqlHistory v-if="historyMounted" />
       </div>
     </div>
+
+    <!-- MongoDB 文档 JSON 编辑器 -->
+    <el-dialog v-model="mongoDocVisible" title="编辑文档 (JSON)" width="640" append-to-body>
+      <el-input
+        v-model="mongoDocText"
+        type="textarea"
+        :rows="16"
+        class="mongo-doc-editor"
+        placeholder="文档 JSON 内容"
+      />
+      <template #footer>
+        <el-button @click="mongoDocVisible = false">取消</el-button>
+        <el-button type="danger" plain :loading="mongoDocSaving" @click="deleteMongoDoc">删除文档</el-button>
+        <el-button type="primary" :loading="mongoDocSaving" @click="saveMongoDoc">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -120,6 +144,7 @@ import { useConnectionStore } from '@/stores/connection'
 import { queryApi, metadataApi } from '@/api/metadata'
 import DataTable from '@/components/editor/DataTable.vue'
 import SqlHistory from '@/components/editor/SqlHistory.vue'
+import ExplainTreeView from '@/components/editor/ExplainTreeView.vue'
 
 const editorStore = useEditorStore()
 const uiStore = useUiStore()
@@ -154,11 +179,11 @@ const activeDbType = computed(() => {
   return connectionStore.connections.find(c => c.id === tab.connectionId)?.dbType
 })
 
-/** 当前连接是否支持 DML（受能力描述控制，OLAP 只读则禁用；Redis 显式允许） */
+/** 当前连接是否支持 DML（受能力描述控制，OLAP 只读则禁用；Redis/MongoDB 显式允许） */
 const canEdit = computed(() => {
   const cap = uiStore.capabilities
   if (cap?.readOnly) return false
-  if (activeDbType.value === 'REDIS') return true
+  if (activeDbType.value === 'REDIS' || activeDbType.value === 'MONGODB') return true
   return !!cap && !!cap.supportsDML
 })
 
@@ -209,9 +234,27 @@ async function toggleEdit() {
     return
   }
 
-  // MongoDB：暂不支持表格内联编辑（建议命令式操作）
+  // MongoDB：文档 JSON 编辑模式（双击行打开 JSON 编辑器）
   if (activeDbType.value === 'MONGODB') {
-    ElMessage.info('MongoDB 暂不支持表格内联编辑，可通过 executeUpdate JSON DSL 命令式操作文档')
+    const target = parseMongoTarget(tab.sql)
+    if (!target) {
+      ElMessage.warning('无法从查询语句解析目标集合（格式: db.collection）')
+      return
+    }
+    if (!tab.result?.columns.includes('_id')) {
+      ElMessage.warning('结果中缺少 _id 字段，无法定位文档')
+      return
+    }
+    mongoTarget.value = target
+    editContext.value = {
+      connectionId: tab.connectionId,
+      dbType: 'MONGODB',
+      schema: target.db,
+      table: target.collection,
+      pkColumns: ['_id'],
+    }
+    editMode.value = true
+    ElMessage.success('已进入文档编辑模式，双击行打开 JSON 编辑器')
     return
   }
 
@@ -253,15 +296,24 @@ async function onCellEdited(payload: { row: Record<string, any>; column: string;
   if (!ctx) return
   const { row, column, value, oldValue } = payload
 
-  // Redis：构造 SET key value 命令（仅编辑 value 列）
+  // Redis：构造 SET / EXPIRE / PERSIST 命令（支持 value 与 ttl 列编辑）
   if (ctx.dbType === 'REDIS') {
-    if (column !== 'value') return
     const key = String(row['key'] ?? '')
-    const cmd = `SET ${key} ${value}`
+    let cmd: string
+    if (column === 'value') {
+      cmd = `SET ${key} ${value}`
+    } else if (column === 'ttl') {
+      const ttlNum = Number(value)
+      // TTL 置为负数/空 → 移除过期时间（PERSIST），否则 EXPIRE
+      cmd = (!value || isNaN(ttlNum) || ttlNum < 0) ? `PERSIST ${key}` : `EXPIRE ${key} ${ttlNum}`
+    } else {
+      row[column] = oldValue
+      return
+    }
     try {
       const res = await queryApi.executeUpdate(ctx.connectionId, cmd)
       if (res.success) {
-        ElMessage.success(`已更新 Key: ${key}`)
+        ElMessage.success(column === 'value' ? `已更新 Key: ${key}` : `已更新 TTL: ${key}`)
       } else {
         row[column] = oldValue
         ElMessage.error('更新失败: ' + (res.message || '未知错误'))
@@ -303,9 +355,116 @@ watch(() => connectionStore.activeConnectionId, () => {
   editContext.value = null
 })
 
+// === MongoDB 文档 JSON 编辑 ===
+const mongoDocVisible = ref(false)
+const mongoDocText = ref('')
+const mongoDocSaving = ref(false)
+const mongoDocRow = ref<Record<string, any> | null>(null)
+const mongoTarget = ref<{ db: string; collection: string } | null>(null)
+
+/** 从 Mongo 查询语句解析 db 与 collection（格式: db.coll 或 db/coll） */
+function parseMongoTarget(sql: string): { db: string; collection: string } | null {
+  const parts = sql.trim().replace('/', '.').split('.')
+  if (parts.length < 2 || !parts[0] || !parts[1]) return null
+  return { db: parts[0], collection: parts[1] }
+}
+
+function openMongoDocEditor(row: Record<string, any>) {
+  mongoDocRow.value = row
+  mongoDocText.value = JSON.stringify(row, null, 2)
+  mongoDocVisible.value = true
+}
+
+async function saveMongoDoc() {
+  const ctx = editContext.value
+  const target = mongoTarget.value
+  const row = mongoDocRow.value
+  if (!ctx || !target || !row) return
+
+  let doc: Record<string, any>
+  try {
+    doc = JSON.parse(mongoDocText.value)
+  } catch {
+    ElMessage.error('JSON 格式错误，请检查后重试')
+    return
+  }
+  const id = row['_id']
+  if (id === null || id === undefined || id === '') {
+    ElMessage.error('文档缺少 _id，无法更新')
+    return
+  }
+  // _id 不可修改，从 $set 中排除
+  const { _id, ...fields } = doc
+
+  mongoDocSaving.value = true
+  try {
+    const dsl = JSON.stringify({
+      op: 'update',
+      db: target.db,
+      collection: target.collection,
+      filter: { _id: id },
+      update: { $set: fields },
+    })
+    const res = await queryApi.executeUpdate(ctx.connectionId, dsl)
+    if (res.success) {
+      // 同步更新表格行显示
+      for (const [k, v] of Object.entries(fields)) {
+        row[k] = typeof v === 'object' && v !== null ? JSON.stringify(v) : v
+      }
+      mongoDocVisible.value = false
+      ElMessage.success(`已更新 ${res.affectedRows ?? 0} 个文档`)
+    } else {
+      ElMessage.error('更新失败: ' + (res.message || '未知错误'))
+    }
+  } catch (e: any) {
+    ElMessage.error('更新失败: ' + (e.message || '未知错误'))
+  } finally {
+    mongoDocSaving.value = false
+  }
+}
+
+async function deleteMongoDoc() {
+  const ctx = editContext.value
+  const target = mongoTarget.value
+  const row = mongoDocRow.value
+  if (!ctx || !target || !row) return
+  const id = row['_id']
+  if (id === null || id === undefined || id === '') {
+    ElMessage.error('文档缺少 _id，无法删除')
+    return
+  }
+  mongoDocSaving.value = true
+  try {
+    const dsl = JSON.stringify({
+      op: 'delete',
+      db: target.db,
+      collection: target.collection,
+      filter: { _id: id },
+    })
+    const res = await queryApi.executeUpdate(ctx.connectionId, dsl)
+    if (res.success) {
+      mongoDocVisible.value = false
+      ElMessage.success(`已删除 ${res.affectedRows ?? 0} 个文档，请重新执行查询刷新`)
+    } else {
+      ElMessage.error('删除失败: ' + (res.message || '未知错误'))
+    }
+  } catch (e: any) {
+    ElMessage.error('删除失败: ' + (e.message || '未知错误'))
+  } finally {
+    mongoDocSaving.value = false
+  }
+}
+
 function formatElapsed(ms: number): string {
   if (ms < 1000) return `${ms}ms`
   return `${(ms / 1000).toFixed(2)}s`
+}
+
+/** 取消正在执行的查询 */
+async function cancelQuery() {
+  if (!editorStore.activeTabId) return
+  await editorStore.cancelQuery(editorStore.activeTabId)
+  ElMessage.info('已发出取消请求')
 }
 
 /** 复制查询结果到剪贴板 */
@@ -466,6 +625,11 @@ function extractTableName(sql: string): string {
 .history-panel {
   height: 100%;
   overflow: hidden;
+}
+
+.mongo-doc-editor :deep(textarea) {
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
 }
 
 .message-error {

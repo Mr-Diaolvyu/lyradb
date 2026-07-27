@@ -187,13 +187,18 @@ public class MetadataService {
         return active.driver.getCapabilities();
     }
 
+    /** 单次 ER 图最多加载的表数量，防止超大库拖垮响应 */
+    private static final int MAX_ER_TABLES = 300;
+
     /**
      * 获取 ER 图数据（表节点 + 基于外键的关系边）
      *
-     * <p>仅 JDBC 类型数据库有效（NoSQL 无外键概念，返回空边）。</p>
+     * <p>
+     * 仅 JDBC 类型数据库有效（NoSQL 无外键概念，返回空边）。
+     * </p>
      *
      * @param connectionId 连接ID
-     * @param schema       可选，限定 schema/database
+     * @param schema       可选，限定 schema/database；缺省时回退到连接当前所在库
      */
     public io.github.lexaquila.lyradb.model.dto.ErDiagram getErDiagram(String connectionId, String schema) {
         io.github.lexaquila.lyradb.model.dto.ErDiagram er = new io.github.lexaquila.lyradb.model.dto.ErDiagram();
@@ -207,27 +212,39 @@ public class MetadataService {
 
         try {
             java.sql.DatabaseMetaData md = jdbcConn.getMetaData();
-            // 表节点
-            String catalog = null;
-            String schemaPattern = schema;
+            // MySQL/MariaDB 以 catalog 表示数据库（schemaPattern 被驱动忽略），其余库以 schema 表示；
+            // 未指定时回退到连接当前库，避免 null 触发全库扫描导致前端 60s 超时
+            String product = md.getDatabaseProductName() == null ? "" : md.getDatabaseProductName().toLowerCase();
+            boolean useCatalog = product.contains("mysql") || product.contains("mariadb");
+            String scope = (schema != null && !schema.isBlank()) ? schema : currentScope(jdbcConn, useCatalog);
+            String catalog = useCatalog ? scope : null;
+            String schemaPattern = useCatalog ? null : scope;
+
+            // 表节点（封顶 MAX_ER_TABLES，防止超大库响应超时）
+            java.util.Map<String, io.github.lexaquila.lyradb.model.dto.ErDiagram.Table> byName = new java.util.LinkedHashMap<>();
             try (java.sql.ResultSet rs = md.getTables(catalog, schemaPattern, "%",
-                    new String[]{"TABLE", "VIEW"})) {
-                while (rs.next()) {
+                    new String[] { "TABLE", "VIEW" })) {
+                while (rs.next() && byName.size() < MAX_ER_TABLES) {
                     String tName = rs.getString("TABLE_NAME");
                     String tSchema = rs.getString("TABLE_SCHEM");
-                    io.github.lexaquila.lyradb.model.dto.ErDiagram.Table t =
-                            new io.github.lexaquila.lyradb.model.dto.ErDiagram.Table(tName, tSchema);
-                    // 列
-                    try (java.sql.ResultSet cols = md.getColumns(catalog, schemaPattern, tName, "%")) {
-                        while (cols.next()) {
-                            t.getColumns().add(cols.getString("COLUMN_NAME"));
-                        }
-                    }
+                    io.github.lexaquila.lyradb.model.dto.ErDiagram.Table t = new io.github.lexaquila.lyradb.model.dto.ErDiagram.Table(
+                            tName, tSchema);
+                    byName.put(tName, t);
                     er.getTables().add(t);
                 }
             }
 
-            // 外键边
+            // 一次性批量取列并按表名分组，避免逐表 N+1 元数据往返
+            try (java.sql.ResultSet cols = md.getColumns(catalog, schemaPattern, "%", "%")) {
+                while (cols.next()) {
+                    io.github.lexaquila.lyradb.model.dto.ErDiagram.Table t = byName.get(cols.getString("TABLE_NAME"));
+                    if (t != null) {
+                        t.getColumns().add(cols.getString("COLUMN_NAME"));
+                    }
+                }
+            }
+
+            // 外键边（JDBC 无批量接口，只能逐表查询；表数已封顶可控）
             for (io.github.lexaquila.lyradb.model.dto.ErDiagram.Table t : er.getTables()) {
                 try (java.sql.ResultSet fks = md.getImportedKeys(catalog, schemaPattern, t.getName())) {
                     while (fks.next()) {
@@ -249,5 +266,17 @@ public class MetadataService {
         }
 
         return er;
+    }
+
+    /**
+     * 取连接当前所在库（MySQL 系用 catalog，其余用 schema），获取失败返回 null（退化为全量）。
+     */
+    private String currentScope(java.sql.Connection c, boolean useCatalog) {
+        try {
+            String v = useCatalog ? c.getCatalog() : c.getSchema();
+            return (v == null || v.isBlank()) ? null : v;
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

@@ -17,6 +17,9 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
 
 /**
  * WebView 外壳主界面。
@@ -26,7 +29,7 @@ import androidx.appcompat.app.AppCompatActivity
  *
  * <ul> <li>启用 JavaScript / DOM Storage，持久化会话 Cookie（企业版登录态）。</li> <li>页面内导航留在
  * WebView；外链交由系统浏览器。</li> <li>结果导出（Excel/CSV）经系统 DownloadManager 下载。</li> <li>返回键优先回退 WebView
- * 历史。</li> </ul>
+ * 历史。</li> <li>可选生物识别快速解锁（BiometricPrompt，菜单开关）。</li> </ul>
  */
 class MainActivity : AppCompatActivity() {
 
@@ -48,7 +51,13 @@ class MainActivity : AppCompatActivity() {
         setContentView(webView)
 
         setupWebView()
-        webView.loadUrl(serverUrl)
+
+        // 生物识别解锁：开启且设备可用时，验证通过后再加载页面
+        if (PrefsManager.isBiometricEnabled(this) && canUseBiometric()) {
+            showBiometricUnlock { webView.loadUrl(serverUrl) }
+        } else {
+            webView.loadUrl(serverUrl)
+        }
 
         // 返回键：优先回退 WebView 历史
         onBackPressedDispatcher.addCallback(
@@ -122,8 +131,52 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** 设备是否可用生物识别（或锁屏凭据兑底） */
+    private fun canUseBiometric(): Boolean =
+            BiometricManager.from(this).canAuthenticate(AUTHENTICATORS) ==
+                    BiometricManager.BIOMETRIC_SUCCESS
+
+    /** 启动时生物识别解锁；失败/取消则退出应用 */
+    private fun showBiometricUnlock(onSuccess: () -> Unit) {
+        val prompt =
+                BiometricPrompt(
+                        this,
+                        ContextCompat.getMainExecutor(this),
+                        object : BiometricPrompt.AuthenticationCallback() {
+                            override fun onAuthenticationSucceeded(
+                                    result: BiometricPrompt.AuthenticationResult
+                            ) = onSuccess()
+
+                            override fun onAuthenticationError(
+                                    errorCode: Int,
+                                    errString: CharSequence
+                            ) {
+                                Toast.makeText(
+                                                this@MainActivity,
+                                                "解锁失败：$errString",
+                                                Toast.LENGTH_SHORT
+                                        )
+                                        .show()
+                                finish()
+                            }
+                        }
+                )
+        val info =
+                BiometricPrompt.PromptInfo.Builder()
+                        .setTitle("解锁 LyraDB")
+                        .setAllowedAuthenticators(AUTHENTICATORS)
+                        .build()
+        prompt.authenticate(info)
+    }
+
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menu.add(Menu.NONE, MENU_SWITCH_SERVER, Menu.NONE, "切换服务端")
+        menu.add(
+                Menu.NONE,
+                MENU_TOGGLE_BIOMETRIC,
+                Menu.NONE,
+                if (PrefsManager.isBiometricEnabled(this)) "关闭生物识别解锁" else "启用生物识别解锁"
+        )
         menu.add(Menu.NONE, MENU_CLEAR_CACHE, Menu.NONE, "退出登录并清缓存")
         return true
     }
@@ -133,6 +186,22 @@ class MainActivity : AppCompatActivity() {
                 MENU_SWITCH_SERVER -> {
                     startActivity(Intent(this, ServerConfigActivity::class.java))
                     finish()
+                    true
+                }
+                MENU_TOGGLE_BIOMETRIC -> {
+                    val enable = !PrefsManager.isBiometricEnabled(this)
+                    if (enable && !canUseBiometric()) {
+                        Toast.makeText(this, "设备未录入生物特征或不支持", Toast.LENGTH_SHORT).show()
+                    } else {
+                        PrefsManager.setBiometricEnabled(this, enable)
+                        Toast.makeText(
+                                        this,
+                                        if (enable) "已启用生物识别解锁" else "已关闭生物识别解锁",
+                                        Toast.LENGTH_SHORT
+                                )
+                                .show()
+                        invalidateOptionsMenu()
+                    }
                     true
                 }
                 MENU_CLEAR_CACHE -> {
@@ -163,5 +232,9 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val MENU_SWITCH_SERVER = 1001
         private const val MENU_CLEAR_CACHE = 1002
+        private const val MENU_TOGGLE_BIOMETRIC = 1003
+        private const val AUTHENTICATORS =
+                BiometricManager.Authenticators.BIOMETRIC_WEAK or
+                        BiometricManager.Authenticators.DEVICE_CREDENTIAL
     }
 }

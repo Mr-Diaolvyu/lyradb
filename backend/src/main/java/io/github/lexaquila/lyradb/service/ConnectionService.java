@@ -256,9 +256,12 @@ public class ConnectionService {
                 int sshPort = intParam(params, "sshPort", 22);
                 String sshUser = strParam(params, "sshUser");
                 String sshPassword = strParam(params, "sshPassword");
+                String sshPrivateKey = strParam(params, "sshPrivateKey");
+                String sshPassphrase = strParam(params, "sshPassphrase");
                 String dbHost = strParam(params, "host") != null ? strParam(params, "host") : "localhost";
                 int dbPort = intParam(params, "port", 0);
-                SshTunnelService.Tunnel tunnel = sshTunnelService.open(sshHost, sshPort, sshUser, sshPassword, dbHost, dbPort);
+                SshTunnelService.Tunnel tunnel = sshTunnelService.open(sshHost, sshPort, sshUser, sshPassword,
+                        sshPrivateKey, sshPassphrase, dbHost, dbPort);
                 sshTunnel = tunnel;
                 connParams = new HashMap<>(params);
                 connParams.put("host", "127.0.0.1");
@@ -298,7 +301,10 @@ public class ConnectionService {
                 log.warn("断开连接时出错: {} - {}", connectionId, e.getMessage());
             }
             if (active.sshTunnel instanceof SshTunnelService.Tunnel tunnel) {
-                try { tunnel.close(); } catch (Exception ignored) {}
+                try {
+                    tunnel.close();
+                } catch (Exception ignored) {
+                }
             }
         }
     }
@@ -516,16 +522,22 @@ public class ConnectionService {
     /** 从参数 Map 取字符串 */
     private static String strParam(Map<String, Object> params, String key) {
         Object v = params.get(key);
-        if (v == null) return null;
+        if (v == null)
+            return null;
         String s = v.toString();
         return s.isEmpty() ? null : s;
     }
 
     private static int intParam(Map<String, Object> params, String key, int def) {
         Object v = params.get(key);
-        if (v instanceof Number) return ((Number) v).intValue();
+        if (v instanceof Number)
+            return ((Number) v).intValue();
         if (v instanceof String) {
-            try { return Integer.parseInt(((String) v).trim()); } catch (Exception e) { return def; }
+            try {
+                return Integer.parseInt(((String) v).trim());
+            } catch (Exception e) {
+                return def;
+            }
         }
         return def;
     }

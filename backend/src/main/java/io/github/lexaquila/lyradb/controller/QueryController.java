@@ -22,6 +22,7 @@ import java.util.Map;
  * <ul>
  * <li>POST /api/query/{connectionId}/execute - 执行查询SQL</li>
  * <li>POST /api/query/{connectionId}/update - 执行更新/DDL</li>
+ * <li>POST /api/query/{connectionId}/cancel - 取消正在执行的查询</li>
  * </ul>
  */
 @RestController
@@ -97,6 +98,24 @@ public class QueryController {
                     "success", false,
                     "message", e.getMessage());
             return ResponseEntity.ok(result);
+        }
+    }
+
+    /**
+     * 取消正在执行的查询
+     *
+     * <p>
+     * 仅对 JDBC 类驱动有效；返回 cancelled 表示是否找到并取消了执行中语句。
+     * </p>
+     */
+    @PostMapping("/{connectionId}/cancel")
+    public ResponseEntity<Map<String, Object>> cancelQuery(@PathVariable String connectionId) {
+        try {
+            boolean cancelled = queryService.cancelQuery(connectionId);
+            return ResponseEntity.ok(Map.of("cancelled", cancelled));
+        } catch (Exception e) {
+            log.warn("取消查询失败: {} - {}", connectionId, e.getMessage());
+            return ResponseEntity.ok(Map.of("cancelled", false, "message", String.valueOf(e.getMessage())));
         }
     }
 }

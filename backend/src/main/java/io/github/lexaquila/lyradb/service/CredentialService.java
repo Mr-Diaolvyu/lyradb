@@ -27,7 +27,8 @@ public class CredentialService {
 
     /** 需要加密的字段名集合（不区分大小写匹配） */
     private static final Set<String> SENSITIVE_FIELDS = Set.of(
-            "password", "accesskeysecret", "secret", "access_key", "accesskey");
+            "password", "accesskeysecret", "secret", "access_key", "accesskey",
+            "privatekey", "passphrase");
 
     /** 密码掩码值 */
     private static final String MASKED_VALUE = "********";

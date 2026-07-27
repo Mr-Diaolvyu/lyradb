@@ -78,7 +78,8 @@ public class RedisDriver extends AbstractNoSqlDriver {
 
         Object config = buildJedisConfig(ssl, dbIndex, password);
 
-        Class<?> jedisClientConfigClass = Class.forName("redis.clients.jedis.JedisClientConfig", true, driverClassLoader);
+        Class<?> jedisClientConfigClass = Class.forName("redis.clients.jedis.JedisClientConfig", true,
+                driverClassLoader);
         Class<?> jedisClass = Class.forName("redis.clients.jedis.Jedis", true, driverClassLoader);
         Object jedis = jedisClass
                 .getConstructor(hostAndPortClass, jedisClientConfigClass)
@@ -383,25 +384,33 @@ public class RedisDriver extends AbstractNoSqlDriver {
         String upperSql = sql.trim().toUpperCase();
 
         if (upperSql.startsWith("GET ")) {
-            // GET命令
+            // GET命令（附带 TTL 信息，便于前端行内查看/编辑）
             String key = sql.substring(4).trim();
             Method get = jedis.getClass().getMethod("get", String.class);
             Object value = get.invoke(jedis, key);
 
             result.addColumn("key");
             result.addColumn("value");
+            result.addColumn("ttl");
+            result.addColumn("ttlDisplay");
             Map<String, Object> row = result.newRow();
             row.put("key", key);
             row.put("value", value != null ? value.toString() : "(nil)");
+            long ttlVal = getKeyTtl(jedis, key);
+            row.put("ttl", ttlVal);
+            row.put("ttlDisplay", formatTtl(ttlVal));
             result.addRow(row);
             result.setTotalRows(1);
 
         } else if (upperSql.startsWith("KEYS ") || upperSql.startsWith("SCAN ")) {
-            // KEYS/SCAN命令
+            // KEYS/SCAN命令（支持前缀过滤 pattern，如 SCAN user:*），附带 type/TTL 信息
             String pattern = upperSql.startsWith("KEYS ") ? sql.substring(5).trim() : sql.substring(5).trim();
 
             Set<String> keys = scanKeys(jedis, pattern);
             result.addColumn("key");
+            result.addColumn("type");
+            result.addColumn("ttl");
+            result.addColumn("ttlDisplay");
 
             int count = 0;
             for (String key : keys) {
@@ -411,6 +420,14 @@ public class RedisDriver extends AbstractNoSqlDriver {
                 }
                 Map<String, Object> row = result.newRow();
                 row.put("key", key);
+                try {
+                    row.put("type", getKeyType(jedis, key));
+                    long ttlVal = getKeyTtl(jedis, key);
+                    row.put("ttl", ttlVal);
+                    row.put("ttlDisplay", formatTtl(ttlVal));
+                } catch (Exception e) {
+                    // 单个 key 的附加信息失败不影响列表
+                }
                 result.addRow(row);
                 count++;
             }
@@ -593,7 +610,8 @@ public class RedisDriver extends AbstractNoSqlDriver {
         } else {
             result.addColumn("error");
             Map<String, Object> row = result.newRow();
-            row.put("error", "不支持的Redis命令。支持: GET/KEYS/SCAN/TYPE/HGETALL/LRANGE/SMEMBERS/ZRANGE/STRLEN/DBSIZE/INFO/TTL");
+            row.put("error",
+                    "不支持的Redis命令。支持: GET/KEYS/SCAN/TYPE/HGETALL/LRANGE/SMEMBERS/ZRANGE/STRLEN/DBSIZE/INFO/TTL");
             result.addRow(row);
             result.setTotalRows(1);
         }

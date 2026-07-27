@@ -105,10 +105,13 @@ const props = defineProps<{
     table: string
     pkColumns: string[]
   } | null
+  /** 行级 JSON 编辑模式（MongoDB 文档）：双击行触发 row-json-edit 而非单元格内联编辑 */
+  jsonRowEdit?: boolean
 }>()
 
 const emit = defineEmits<{
   'cell-edited': [payload: { row: Record<string, any>; column: string; value: any; oldValue: any }]
+  'row-json-edit': [row: Record<string, any>]
 }>()
 
 // === 状态 ===
@@ -148,6 +151,11 @@ function isEditing(row: Record<string, any>, col: string): boolean {
 }
 
 function startEdit(row: Record<string, any>, col: string) {
+  // 行级 JSON 编辑模式：双击任意单元格打开整行文档编辑器
+  if (props.jsonRowEdit) {
+    emit('row-json-edit', row)
+    return
+  }
   if (!canEditCell(col)) return
   editing.value = { row, col }
   const v = row[col]

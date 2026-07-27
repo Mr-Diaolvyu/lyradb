@@ -26,6 +26,8 @@ export interface SqlTab extends TabBase {
     result: QueryResult | null
     loading: boolean
     error: string | null
+    /** 当前结果是否来自 EXPLAIN 执行计划 */
+    isExplain?: boolean
 }
 
 /** 表详情 Tab */
@@ -163,6 +165,7 @@ export const useEditorStore = defineStore('editor', () => {
 
         tab.loading = true
         tab.error = null
+        tab.isExplain = false
         try {
             const uiStore = useUiStore()
             tab.result = await queryApi.executeQuery(tab.connectionId, tab.sql, uiStore.currentDatabase || undefined)
@@ -171,6 +174,17 @@ export const useEditorStore = defineStore('editor', () => {
             tab.result = null
         } finally {
             tab.loading = false
+        }
+    }
+
+    /** 取消正在执行的查询（仅 SQL Tab） */
+    async function cancelQuery(tabId: string) {
+        const tab = tabs.value.find(t => t.id === tabId)
+        if (!tab || tab.type !== 'sql' || !tab.loading) return
+        try {
+            await queryApi.cancelQuery(tab.connectionId)
+        } catch (e: any) {
+            console.warn('取消查询失败:', e)
         }
     }
 
@@ -188,6 +202,7 @@ export const useEditorStore = defineStore('editor', () => {
         try {
             const uiStore = useUiStore()
             tab.result = await queryApi.executeQuery(tab.connectionId, explainSqlText, uiStore.currentDatabase || undefined)
+            tab.isExplain = true
             uiStore.setBottomPanelTab('results')
         } catch (e: any) {
             tab.error = e.message || '执行计划失败'
@@ -213,6 +228,7 @@ export const useEditorStore = defineStore('editor', () => {
         closeTab,
         updateSql,
         executeSql,
+        cancelQuery,
         explainSql,
         setActiveTab,
     }

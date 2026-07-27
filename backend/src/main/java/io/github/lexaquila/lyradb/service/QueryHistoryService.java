@@ -33,7 +33,7 @@ public class QueryHistoryService {
      * 记录一条执行历史
      */
     public QueryHistory record(String connectionId, String dbType, String sql,
-                               Long durationMs, Long rowCount, boolean success, String errorMessage) {
+            Long durationMs, Long rowCount, boolean success, String errorMessage) {
         try {
             QueryHistory h = new QueryHistory();
             h.setConnectionId(connectionId);
@@ -57,7 +57,7 @@ public class QueryHistoryService {
      * 查询历史列表
      *
      * @param connectionId 可选，限定连接
-     * @param favoriteOnly  是否仅收藏
+     * @param favoriteOnly 是否仅收藏
      */
     public List<QueryHistory> list(String connectionId, boolean favoriteOnly) {
         List<QueryHistory> all;
@@ -90,6 +90,23 @@ public class QueryHistoryService {
         QueryHistory h = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("历史记录不存在: " + id));
         h.setFavorite(!Boolean.TRUE.equals(h.getFavorite()));
+        return repository.save(h);
+    }
+
+    /**
+     * 更新标签（逗号分隔，空串/null 表示清空）
+     */
+    public QueryHistory updateTags(String id, String tags) {
+        QueryHistory h = repository.findById(id)
+                .orElseThrow(() -> new RuntimeException("历史记录不存在: " + id));
+        String normalized = tags == null ? null : tags.trim();
+        if (normalized != null && normalized.isEmpty()) {
+            normalized = null;
+        }
+        if (normalized != null) {
+            normalized = truncate(normalized, 500);
+        }
+        h.setTags(normalized);
         return repository.save(h);
     }
 

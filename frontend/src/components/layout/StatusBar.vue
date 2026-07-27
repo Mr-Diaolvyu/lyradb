@@ -10,7 +10,7 @@
         <span class="status-text">{{ activeConnection.name }}</span>
         <span class="status-type">{{ activeConnection.displayName }}</span>
       </span>
-      <span v-else class="status-item muted">未连接</span>
+      <span v-else class="status-item muted">{{ t('statusBar.notConnected') }}</span>
     </div>
 
     <!-- 中间：查询信息 -->
@@ -22,10 +22,10 @@
         </span>
         <span class="status-item">
           <el-icon><Document /></el-icon>
-          {{ editorStore.activeSqlTab.result.totalRows }} 行
+          {{ t('statusBar.rows', { count: editorStore.activeSqlTab.result.totalRows }) }}
         </span>
         <span v-if="editorStore.activeSqlTab.result.truncated" class="status-item warning">
-          结果已截断
+          {{ t('statusBar.truncated') }}
         </span>
       </template>
     </div>
@@ -36,16 +36,19 @@
         <el-icon :class="driverStatusClass"><Download /></el-icon>
         {{ driverStatusText }}
       </span>
-      <span class="status-item muted">{{ tabCount }} 个标签页</span>
+      <span class="status-item muted">{{ t('statusBar.tabs', { count: tabCount }) }}</span>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Timer, Document, Download } from '@element-plus/icons-vue'
 import { useConnectionStore } from '@/stores/connection'
 import { useEditorStore } from '@/stores/editor'
+
+const { t } = useI18n()
 
 const connectionStore = useConnectionStore()
 const editorStore = useEditorStore()
@@ -73,8 +76,8 @@ const driverStatusClass = computed(() => {
 })
 
 const driverStatusText = computed(() => {
-  if (!driverStatus.value) return '驱动未加载'
-  return `${driverStatus.value.displayName} 驱动就绪`
+  if (!driverStatus.value) return t('statusBar.driverNotLoaded')
+  return t('statusBar.driverReady', { name: driverStatus.value.displayName })
 })
 
 function formatElapsed(ms: number): string {

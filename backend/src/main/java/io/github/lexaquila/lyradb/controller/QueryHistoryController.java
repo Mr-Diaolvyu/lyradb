@@ -5,11 +5,14 @@ import io.github.lexaquila.lyradb.service.QueryHistoryService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * SQL 查询历史 REST 控制器
  *
- * <p>提供查询历史的检索、收藏、删除接口。</p>
+ * <p>
+ * 提供查询历史的检索、收藏、删除接口。
+ * </p>
  */
 @RestController
 @RequestMapping("/history")
@@ -24,7 +27,9 @@ public class QueryHistoryController {
     /**
      * 查询历史列表
      *
-     * <p>请求参数: connectionId（可选）, favorite=true/false（可选）</p>
+     * <p>
+     * 请求参数: connectionId（可选）, favorite=true/false（可选）
+     * </p>
      */
     @GetMapping
     public List<QueryHistory> list(
@@ -51,6 +56,18 @@ public class QueryHistoryController {
     }
 
     /**
+     * 更新标签（逗号分隔，传空串或 null 表示清空）
+     *
+     * <p>
+     * 请求体格式: { "tags": "报表,对账" }
+     * </p>
+     */
+    @PutMapping("/{id}/tags")
+    public QueryHistory updateTags(@PathVariable String id, @RequestBody Map<String, String> body) {
+        return queryHistoryService.updateTags(id, body.get("tags"));
+    }
+
+    /**
      * 删除单条历史
      */
     @DeleteMapping("/{id}")
@@ -61,7 +78,9 @@ public class QueryHistoryController {
     /**
      * 清空历史
      *
-     * <p>请求参数: connectionId（可选，指定则只清该连接的历史）</p>
+     * <p>
+     * 请求参数: connectionId（可选，指定则只清该连接的历史）
+     * </p>
      */
     @DeleteMapping
     public void clear(@RequestParam(value = "connectionId", required = false) String connectionId) {

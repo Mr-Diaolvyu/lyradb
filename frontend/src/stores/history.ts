@@ -79,6 +79,13 @@ export const useHistoryStore = defineStore('history', () => {
         items.value = items.value.filter(i => i.id !== id)
     }
 
+    /** 更新某条标签 */
+    async function updateTags(id: string, tags: string) {
+        const updated = await historyApi.updateTags(id, tags)
+        const it = items.value.find(i => i.id === id)
+        if (it) it.tags = updated.tags ?? null
+    }
+
     /** 清空（当前 scope） */
     async function clear() {
         await historyApi.clear(scopeConnectionId.value || undefined)
@@ -117,6 +124,7 @@ export const useHistoryStore = defineStore('history', () => {
         toggleFavoriteOnly,
         toggleFavorite,
         remove,
+        updateTags,
         clear,
         insertToActiveTab,
     }

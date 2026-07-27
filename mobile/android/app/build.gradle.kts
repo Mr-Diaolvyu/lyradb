@@ -34,6 +34,9 @@ dependencies {
     // WebView 增强
     implementation("androidx.webkit:webkit:1.10.0")
 
+    // 生物识别快速解锁
+    implementation("androidx.biometric:biometric:1.1.0")
+
     // 协程（配置页异步校验服务端可达性）
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")

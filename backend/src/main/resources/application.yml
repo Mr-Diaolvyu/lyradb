@@ -22,6 +22,12 @@ spring:
       hibernate:
         format_sql: true
 
+  # 文件上传（导入 CSV/JSON）大小限制
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
 # Jasypt 加密算法（公共；密钥由各 profile 提供，保持 PBEWithMD5AndDES 以兼容已存数据）
 jasypt:
   encryptor:

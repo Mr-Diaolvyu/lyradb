@@ -5,6 +5,7 @@ import common from '@ohos.app.ability.common';
 
 const PREFS_NAME = 'lyradb_mobile';
 const KEY_SERVER_URL = 'server_url';
+const KEY_BIOMETRIC = 'biometric_enabled';
 
 /**
  * 服务端地址配置页（ArkUI）。
@@ -18,6 +19,7 @@ struct ServerConfig {
   @State serverUrl: string = '';
   @State status: string = '';
   @State testing: boolean = false;
+  @State biometricEnabled: boolean = false;
 
   aboutToAppear() {
     this.loadSaved();
@@ -30,6 +32,14 @@ struct ServerConfig {
     if (saved) {
       this.serverUrl = saved;
     }
+    this.biometricEnabled = await prefs.get(KEY_BIOMETRIC, false) as boolean;
+  }
+
+  async saveBiometric(enabled: boolean) {
+    const ctx = getContext(this) as common.UIAbilityContext;
+    const prefs = await preferences.getPreferences(ctx, PREFS_NAME);
+    await prefs.put(KEY_BIOMETRIC, enabled);
+    await prefs.flush();
   }
 
   build() {
@@ -61,6 +71,18 @@ struct ServerConfig {
         Button('进入')
           .width('100%')
           .onClick(() => this.enter())
+        Row() {
+          Text('启动时生物识别解锁')
+            .fontSize(14)
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.biometricEnabled })
+            .onChange((isOn: boolean) => {
+              this.biometricEnabled = isOn;
+              this.saveBiometric(isOn);
+            })
+        }
+        .width('100%')
+        .margin({ top: 8 })
         Text('说明：手机端为 BS 封装客户端，所有数据库连接与查询均由所连服务端完成。可连接个人自托管服务或企业 BS 服务。')
           .fontSize(12)
           .fontColor('#888888')

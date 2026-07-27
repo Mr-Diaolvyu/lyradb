@@ -1,0 +1,32 @@
+# LyraDB 一键部署（BS 服务端）
+# 用法：
+#   1. 设置凭据加密密钥（必填）：echo "JASYPT_PASSWORD=你的强密钥" > .env
+#   2. 启动：docker compose up -d
+#   3. 浏览器访问 http://<host>:8080 （企业版默认账号 admin/admin，请立即改密）
+services:
+  lyradb:
+    build: .
+    image: lyradb:latest
+    container_name: lyradb
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      # 发行版：personal | enterprise
+      LYRADB_EDITION: ${LYRADB_EDITION:-personal}
+      # 凭据加密密钥（prod 强制要求，缺失则启动失败）
+      JASYPT_PASSWORD: ${JASYPT_PASSWORD:?请在 .env 中设置 JASYPT_PASSWORD}
+      # 首次启动自动建表；表结构稳定后可改为 validate
+      SPRING_JPA_HIBERNATE_DDL_AUTO: ${LYRADB_DDL_AUTO:-update}
+      # CORS 白名单（前端与后端同源部署时保持默认即可）
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
+    volumes:
+      # H2 元数据库（连接配置/查询历史/审计等）
+      - lyradb-data:/app/data
+      # 动态下载的数据库驱动缓存
+      - lyradb-drivers:/root/.lyradb
+    restart: unless-stopped
+
+volumes:
+  lyradb-data:
+  lyradb-drivers:

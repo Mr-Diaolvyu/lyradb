@@ -495,23 +495,27 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
         switch (op) {
             case "update": {
                 Object filter = cmd.get("filter") != null
-                        ? docCtor.newInstance(cmd.get("filter")) : docCtor.newInstance(new HashMap<>());
+                        ? docCtor.newInstance(normalizeObjectId(cmd.get("filter")))
+                        : docCtor.newInstance(new HashMap<>());
                 Object update = cmd.get("update") != null
-                        ? docCtor.newInstance(cmd.get("update")) : docCtor.newInstance(new HashMap<>());
+                        ? docCtor.newInstance(cmd.get("update"))
+                        : docCtor.newInstance(new HashMap<>());
                 Method updateOne = collection.getClass().getMethod("updateOne", Object.class, Object.class);
                 Object result = updateOne.invoke(collection, filter, update);
                 return getMongoCount(result, "getModifiedCount");
             }
             case "insert": {
                 Object document = cmd.get("document") != null
-                        ? docCtor.newInstance(cmd.get("document")) : docCtor.newInstance(new HashMap<>());
+                        ? docCtor.newInstance(cmd.get("document"))
+                        : docCtor.newInstance(new HashMap<>());
                 Method insertOne = collection.getClass().getMethod("insertOne", Object.class);
                 insertOne.invoke(collection, document);
                 return 1;
             }
             case "delete": {
                 Object filter = cmd.get("filter") != null
-                        ? docCtor.newInstance(cmd.get("filter")) : docCtor.newInstance(new HashMap<>());
+                        ? docCtor.newInstance(normalizeObjectId(cmd.get("filter")))
+                        : docCtor.newInstance(new HashMap<>());
                 Method deleteOne = collection.getClass().getMethod("deleteOne", Object.class);
                 Object result = deleteOne.invoke(collection, filter);
                 return getMongoCount(result, "getDeletedCount");
@@ -521,9 +525,29 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
         }
     }
 
+    /**
+     * 将 filter 中的 _id 字符串（24位 hex）转换为 ObjectId 实例，
+     * 保证前端以字符串形式回传的 _id 能正确匹配文档
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> normalizeObjectId(Object filterObj) {
+        Map<String, Object> filter = new LinkedHashMap<>((Map<String, Object>) filterObj);
+        Object id = filter.get("_id");
+        if (id instanceof String idStr && idStr.matches("[0-9a-fA-F]{24}")) {
+            try {
+                Class<?> objectIdClass = Class.forName("org.bson.types.ObjectId", true, driverClassLoader);
+                filter.put("_id", objectIdClass.getConstructor(String.class).newInstance(idStr));
+            } catch (Exception e) {
+                // ObjectId 转换失败时保留字符串形式
+            }
+        }
+        return filter;
+    }
+
     /** 从 Mongo UpdateResult/DeleteResult 中取影响行数 */
     private int getMongoCount(Object result, String methodName) throws Exception {
-        if (result == null) return 0;
+        if (result == null)
+            return 0;
         try {
             Method m = result.getClass().getMethod(methodName);
             Object val = m.invoke(result);

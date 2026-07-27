@@ -28,5 +28,3 @@ app:
     allowed-origins: "*"
     allowed-methods: "*"
     allowed-headers: "*"
-  security:
-    enabled: false

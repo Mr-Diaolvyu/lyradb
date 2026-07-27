@@ -183,6 +183,45 @@
               <span class="form-hint">启动时自动建立连接</span>
             </el-form-item>
           </el-collapse-item>
+          <el-collapse-item title="SSH 隧道" name="ssh">
+            <el-form-item label="启用隧道">
+              <el-switch v-model="sshEnabled" />
+              <span class="form-hint">通过 SSH 跳板机转发连接目标数据库</span>
+            </el-form-item>
+            <template v-if="sshEnabled">
+              <el-form-item label="SSH 主机" prop="params.sshHost" :rules="[{ required: true, message: '请输入 SSH 主机' }]">
+                <el-input v-model="formData.params.sshHost" placeholder="跳板机地址，如 bastion.example.com" />
+              </el-form-item>
+              <el-form-item label="SSH 端口">
+                <el-input-number v-model="formData.params.sshPort" :controls="false" placeholder="22" style="width: 100%" />
+              </el-form-item>
+              <el-form-item label="SSH 用户" prop="params.sshUser" :rules="[{ required: true, message: '请输入 SSH 用户名' }]">
+                <el-input v-model="formData.params.sshUser" placeholder="SSH 登录用户名" />
+              </el-form-item>
+              <el-form-item label="认证方式">
+                <el-radio-group v-model="sshAuthType">
+                  <el-radio-button value="password">密码</el-radio-button>
+                  <el-radio-button value="privateKey">私钥</el-radio-button>
+                </el-radio-group>
+              </el-form-item>
+              <el-form-item v-if="sshAuthType === 'password'" label="SSH 密码">
+                <el-input v-model="formData.params.sshPassword" type="password" show-password placeholder="SSH 登录密码" />
+              </el-form-item>
+              <template v-else>
+                <el-form-item label="私钥内容" prop="params.sshPrivateKey" :rules="[{ required: true, message: '请粘贴 PEM 私钥内容' }]">
+                  <el-input
+                    v-model="formData.params.sshPrivateKey"
+                    type="textarea"
+                    :rows="4"
+                    placeholder="粘贴 PEM 私钥文本（OpenSSH / PKCS#8 格式）"
+                  />
+                </el-form-item>
+                <el-form-item label="私钥口令">
+                  <el-input v-model="formData.params.sshPassphrase" type="password" show-password placeholder="可选，私钥加密口令" />
+                </el-form-item>
+              </template>
+            </template>
+          </el-collapse-item>
         </el-collapse>
       </el-form>
     </div>
@@ -250,6 +289,11 @@ const downloadStep = ref(0)
 const downloadMessage = ref('')
 const advancedCollapsed = ref<string[]>([])
 
+// === SSH 隧道 ===
+const sshEnabled = ref(false)
+const sshAuthType = ref<'password' | 'privateKey'>('password')
+const SSH_PARAM_KEYS = ['sshHost', 'sshPort', 'sshUser', 'sshPassword', 'sshPrivateKey', 'sshPassphrase']
+
 const formData = reactive<{
   name: string
   params: Record<string, any>
@@ -282,6 +326,9 @@ watch(() => props.visible, (val) => {
       formData.description = props.editConnection.description || ''
       formData.tagsInput = (props.editConnection.tags || []).join(', ')
       formData.favorite = props.editConnection.favorite || false
+      // 回显 SSH 隧道配置
+      sshEnabled.value = !!props.editConnection.params?.sshHost
+      sshAuthType.value = props.editConnection.params?.sshPrivateKey ? 'privateKey' : 'password'
       step.value = 2
     } else {
       step.value = 1
@@ -419,6 +466,23 @@ async function downloadDriver() {
   }
 }
 
+/** 整理 SSH 参数：未启用则移除全部 SSH 字段，启用时按认证方式清理互斥字段 */
+function normalizedParams(): Record<string, any> {
+  const params = { ...formData.params }
+  if (!sshEnabled.value) {
+    for (const key of SSH_PARAM_KEYS) delete params[key]
+    return params
+  }
+  if (!params.sshPort) params.sshPort = 22
+  if (sshAuthType.value === 'password') {
+    delete params.sshPrivateKey
+    delete params.sshPassphrase
+  } else {
+    delete params.sshPassword
+  }
+  return params
+}
+
 async function handleTest() {
   if (!formRef.value) return
   const valid = await formRef.value.validate().catch(() => false)
@@ -428,7 +492,7 @@ async function handleTest() {
   try {
     const result = await connectionStore.testConnection({
       dbType: selectedDbType.value,
-      params: formData.params,
+      params: normalizedParams(),
     })
     if (result.success) {
       ElMessage.success('连接测试成功')
@@ -453,7 +517,7 @@ async function handleSave() {
       name: formData.name,
       dbType: selectedDbType.value,
       displayName: selectedDisplayName.value,
-      params: formData.params,
+      params: normalizedParams(),
       group: formData.group || undefined,
       autoConnect: formData.autoConnect,
       description: formData.description || undefined,
@@ -490,6 +554,8 @@ function handleClosed() {
   formData.tagsInput = ''
   formData.favorite = false
   advancedCollapsed.value = []
+  sshEnabled.value = false
+  sshAuthType.value = 'password'
   driverReady.value = true
   driverChecked.value = false
   downloading.value = false

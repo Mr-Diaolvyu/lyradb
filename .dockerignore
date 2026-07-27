@@ -1,0 +1,14 @@
+# Docker 构建上下文裁剪：仅保留 frontend/ 与 backend/ 源码
+.git
+.github
+.qoder
+.vscode
+**/node_modules
+**/dist
+**/target
+backend/data
+mobile
+wiki
+product-discovery
+数据架构师工作空间
+*.md

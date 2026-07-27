@@ -1,6 +1,7 @@
 package io.github.lexaquila.lyradb.service;
 
 import io.github.lexaquila.lyradb.config.AppProperties;
+import io.github.lexaquila.lyradb.driver.StatementRegistry;
 import io.github.lexaquila.lyradb.model.dto.QueryResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,7 +39,7 @@ public class QueryService {
     private final QueryHistoryService queryHistoryService;
 
     public QueryService(ConnectionService connectionService, AppProperties appProperties,
-                        QueryHistoryService queryHistoryService) {
+            QueryHistoryService queryHistoryService) {
         this.connectionService = connectionService;
         this.appProperties = appProperties;
         this.queryHistoryService = queryHistoryService;
@@ -90,6 +91,24 @@ public class QueryService {
                 !hasError, errMsg);
 
         return result;
+    }
+
+    /**
+     * 取消指定连接上正在执行的查询
+     *
+     * <p>
+     * 仅对 JDBC 类驱动有效（通过 Statement.cancel 中断）；
+     * NoSQL 命令为短耗时操作，无需取消。
+     * </p>
+     *
+     * @param connectionId 连接ID
+     * @return true 表示找到执行中语句并已发出取消请求
+     */
+    public boolean cancelQuery(String connectionId) throws Exception {
+        ConnectionService.ActiveConnection active = connectionService.getActiveConnection(connectionId);
+        boolean cancelled = StatementRegistry.cancel(active.connection);
+        log.info("取消查询: connectionId={}, 结果={}", connectionId, cancelled ? "已发出取消" : "无执行中语句");
+        return cancelled;
     }
 
     /**

@@ -3,20 +3,20 @@
     <div class="nav-header">
       <el-input
         v-model="searchText"
-        placeholder="搜索..."
+        :placeholder="t('common.search')"
         :prefix-icon="Search"
         size="small"
         clearable
         class="nav-search-input"
       />
       <div class="nav-header-actions">
-        <el-tooltip content="导出连接" placement="bottom">
+        <el-tooltip :content="t('sideNav.exportConnections')" placement="bottom">
           <el-button :icon="Upload" size="small" text @click="handleExport" />
         </el-tooltip>
-        <el-tooltip content="导入连接" placement="bottom">
+        <el-tooltip :content="t('sideNav.importConnections')" placement="bottom">
           <el-button :icon="Download" size="small" text @click="triggerImport" />
         </el-tooltip>
-        <el-tooltip content="新建连接" placement="bottom">
+        <el-tooltip :content="t('sideNav.newConnection')" placement="bottom">
           <el-button :icon="Plus" size="small" text @click="handleNewConnection" />
         </el-tooltip>
       </div>
@@ -37,11 +37,14 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Search, Upload, Download, Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import NavTree from '@/components/nav/NavTree.vue'
 import { useUiStore } from '@/stores/ui'
 import { useConnectionStore } from '@/stores/connection'
+
+const { t } = useI18n()
 
 const uiStore = useUiStore()
 const connectionStore = useConnectionStore()
@@ -57,7 +60,7 @@ async function handleExport() {
   try {
     const data = await connectionStore.exportConnections()
     if (!data || data.length === 0) {
-      ElMessage.warning('没有可导出的连接')
+      ElMessage.warning(t('sideNav.noExportable'))
       return
     }
     const json = JSON.stringify(data, null, 2)
@@ -68,9 +71,9 @@ async function handleExport() {
     a.download = `db_connections_${Date.now()}.json`
     a.click()
     URL.revokeObjectURL(url)
-    ElMessage.success(`已导出 ${data.length} 个连接配置`)
+    ElMessage.success(t('sideNav.exported', { count: data.length }))
   } catch (e: any) {
-    ElMessage.error('导出失败: ' + (e.message || '未知错误'))
+    ElMessage.error(t('sideNav.exportFailed', { msg: e.message || t('common.unknownError') }))
   }
 }
 

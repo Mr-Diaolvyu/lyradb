@@ -74,10 +74,23 @@
               <el-tooltip content="插入到当前 SQL 标签" placement="top">
                 <el-button size="small" text :icon="EditPen" @click="insert(item.sql)" />
               </el-tooltip>
+              <el-tooltip content="编辑标签" placement="top">
+                <el-button size="small" text :icon="PriceTag" @click="editTags(item)" />
+              </el-tooltip>
               <el-tooltip content="删除" placement="top">
                 <el-button size="small" text :icon="Delete" @click="historyStore.remove(item.id)" />
               </el-tooltip>
             </div>
+          </div>
+          <div v-if="parseTags(item.tags).length" class="item-tags">
+            <el-tag
+              v-for="tag in parseTags(item.tags)"
+              :key="tag"
+              size="small"
+              effect="plain"
+              class="tag-chip"
+              @click="searchByTag(tag)"
+            >{{ tag }}</el-tag>
           </div>
           <pre class="item-sql" @dblclick="insert(item.sql)">{{ item.sql }}</pre>
           <div v-if="item.errorMessage" class="item-error">{{ item.errorMessage }}</div>
@@ -91,7 +104,7 @@
 import { ref, computed, onMounted, watch, onUnmounted } from 'vue'
 import {
   Search, Star, StarFilled, Refresh, Delete, EditPen,
-  Loading, CircleCheckFilled, WarningFilled,
+  Loading, CircleCheckFilled, WarningFilled, PriceTag,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useHistoryStore } from '@/stores/history'
@@ -137,6 +150,31 @@ async function confirmClear() {
     await ElMessageBox.confirm('确定清空当前作用域的查询历史吗？此操作不可撤销。', '确认', { type: 'warning' })
     await historyStore.clear()
     ElMessage.success('已清空')
+  } catch { /* cancelled */ }
+}
+
+/** 解析逗号分隔的标签串 */
+function parseTags(tags?: string | null): string[] {
+  if (!tags) return []
+  return tags.split(',').map(t => t.trim()).filter(t => t.length > 0)
+}
+
+/** 点击标签快速搜索 */
+function searchByTag(tag: string) {
+  searchInput.value = tag
+  historyStore.setKeyword(tag)
+}
+
+/** 编辑标签（逗号分隔，留空清除） */
+async function editTags(item: QueryHistory) {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '多个标签用逗号分隔，留空清除全部标签',
+      '编辑标签',
+      { inputValue: item.tags || '', inputPlaceholder: '例：报表,对账' },
+    )
+    await historyStore.updateTags(item.id, (value || '').trim())
+    ElMessage.success('标签已更新')
   } catch { /* cancelled */ }
 }
 
@@ -264,6 +302,17 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 0;
+}
+
+.item-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+.tag-chip {
+  cursor: pointer;
 }
 
 .item-sql {

@@ -15,6 +15,7 @@ import 'vxe-table/lib/style.css'
 
 import App from './App.vue'
 import router from './router'
+import { i18n } from './i18n'
 import './styles/global.css'
 import './styles/tokens.css'
 
@@ -28,6 +29,7 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 app.use(createPinia())
 app.use(router)
 app.use(ElementPlus)
+app.use(i18n)
 
 // 注册 Vxe-table
 app.use(VxeUIAll)

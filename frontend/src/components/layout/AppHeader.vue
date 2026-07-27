@@ -7,10 +7,10 @@
     <div class="header-center">
       <el-button-group>
         <el-button :icon="Connection" size="small" @click="uiStore.openConnectionDialog()">
-          新建连接
+          {{ t('header.newConnection') }}
         </el-button>
         <el-button :icon="DocumentAdd" size="small" @click="newSqlTab" :disabled="!connectionStore.activeConnectionId">
-          新建查询
+          {{ t('header.newQuery') }}
         </el-button>
       </el-button-group>
 
@@ -19,7 +19,7 @@
         v-if="uiStore.databases.length > 0"
         v-model="selectedDatabase"
         size="small"
-        placeholder="选择数据库"
+        :placeholder="t('header.selectDatabase')"
         class="db-select"
         @change="onDatabaseChange"
       >
@@ -42,7 +42,7 @@
         @click="executeCurrentSql"
         :loading="editorStore.activeTab?.loading"
       >
-        执行 (Ctrl+Enter)
+        {{ t('header.execute') }}
       </el-button>
       <el-button
         v-if="editorStore.activeSqlTab"
@@ -51,7 +51,7 @@
         :disabled="editorStore.activeSqlTab?.loading"
         @click="explainCurrentSql"
       >
-        计划
+        {{ t('header.explain') }}
       </el-button>
       <el-button
         v-if="connectionStore.activeConnectionId"
@@ -59,7 +59,7 @@
         size="small"
         @click="openErDiagram"
       >
-        ER 图
+        {{ t('header.erDiagram') }}
       </el-button>
       <el-button
         v-if="connectionStore.connectedConnections.length >= 1"
@@ -67,11 +67,23 @@
         size="small"
         @click="migrationVisible = true"
       >
-        迁移
+        {{ t('header.migration') }}
       </el-button>
     </div>
 
     <div class="header-right">
+      <!-- 语言切换 -->
+      <el-dropdown @command="switchLocale">
+        <el-button size="small" circle>
+          <span class="locale-abbr">{{ locale === 'en-US' ? 'En' : '中' }}</span>
+        </el-button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="zh-CN" :disabled="locale === 'zh-CN'">简体中文</el-dropdown-item>
+            <el-dropdown-item command="en-US" :disabled="locale === 'en-US'">English</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
       <el-button
         :icon="isDark ? Sunny : Moon"
         size="small"
@@ -98,14 +110,22 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Connection, DocumentAdd, VideoPlay, Setting, Sunny, Moon, Coin, Aim, Share, Sort } from '@element-plus/icons-vue'
 import { useThemeStore } from '@/stores/theme'
 import { useConnectionStore } from '@/stores/connection'
 import { useEditorStore } from '@/stores/editor'
 import { useUiStore } from '@/stores/ui'
+import { setLocale, type AppLocale } from '@/i18n'
 import ConnectionDialog from '@/components/connection/ConnectionDialog.vue'
 import ErDiagramView from '@/components/editor/ErDiagramView.vue'
 import MigrationDialog from '@/components/connection/MigrationDialog.vue'
+
+const { t, locale } = useI18n()
+
+function switchLocale(target: string) {
+  setLocale(target as AppLocale)
+}
 
 const themeStore = useThemeStore()
 const connectionStore = useConnectionStore()
@@ -184,5 +204,10 @@ const migrationVisible = ref(false)
   display: flex;
   align-items: center;
   gap: var(--space-2);
+}
+
+.locale-abbr {
+  font-size: 12px;
+  line-height: 1;
 }
 </style>

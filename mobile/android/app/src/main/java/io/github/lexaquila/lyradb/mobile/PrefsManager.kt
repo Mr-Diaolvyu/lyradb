@@ -10,6 +10,7 @@ import android.content.Context
 object PrefsManager {
     private const val PREFS = "lyradb_mobile"
     private const val KEY_SERVER_URL = "server_url"
+    private const val KEY_BIOMETRIC = "biometric_enabled"
 
     fun getServerUrl(context: Context): String? =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -19,6 +20,17 @@ object PrefsManager {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putString(KEY_SERVER_URL, url)
+                .apply()
+    }
+
+    fun isBiometricEnabled(context: Context): Boolean =
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getBoolean(KEY_BIOMETRIC, false)
+
+    fun setBiometricEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_BIOMETRIC, enabled)
                 .apply()
     }
 

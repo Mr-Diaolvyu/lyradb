@@ -22,6 +22,9 @@
     <string>1</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <!-- 生物识别解锁（Face ID）用途声明 -->
+    <key>NSFaceIDUsageDescription</key>
+    <string>用于启动时快速解锁 LyraDB</string>
     <key>UILaunchScreen</key>
     <dict/>
     <key>UISupportedInterfaceOrientations</key>

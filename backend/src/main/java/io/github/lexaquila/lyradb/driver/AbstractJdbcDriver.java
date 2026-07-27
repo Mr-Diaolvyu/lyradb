@@ -211,8 +211,10 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
     /**
      * 获取Schema下的子节点（表/视图等）
      *
-     * <p>在表/视图列表之后，按能力声明追加「存储过程 / 函数 / 触发器」组节点（F6 元数据增强）。
-     * 各组的展开由 {@link #getTreeNodes} 中的哨兵路径分发处理。</p>
+     * <p>
+     * 在表/视图列表之后，按能力声明追加「存储过程 / 函数 / 触发器」组节点（F6 元数据增强）。
+     * 各组的展开由 {@link #getTreeNodes} 中的哨兵路径分发处理。
+     * </p>
      */
     protected List<TreeNode> getSchemaChildren(Connection conn, String parentPath) throws SQLException {
         List<TreeNode> nodes = new ArrayList<>(getTables(conn, null, parentPath));
@@ -247,7 +249,8 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
             try (ResultSet rs = metaData.getProcedures(null, schema, "%")) {
                 while (rs.next()) {
                     String name = rs.getString("PROCEDURE_NAME");
-                    if (name == null) continue;
+                    if (name == null)
+                        continue;
                     TreeNode node = TreeNode.of(schema + "/" + name, name, "PROCEDURE",
                             schema + "/__procedures__/" + name);
                     node.setIconType("procedure");
@@ -271,7 +274,8 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
             try (ResultSet rs = metaData.getFunctions(null, schema, "%")) {
                 while (rs.next()) {
                     String name = rs.getString("FUNCTION_NAME");
-                    if (name == null) continue;
+                    if (name == null)
+                        continue;
                     TreeNode node = TreeNode.of(schema + "/" + name, name, "FUNCTION",
                             schema + "/__functions__/" + name);
                     node.setIconType("function");
@@ -294,10 +298,11 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         List<TreeNode> nodes = new ArrayList<>();
         try {
             DatabaseMetaData metaData = conn.getMetaData();
-            try (ResultSet rs = metaData.getTables(null, schema, "%", new String[]{"TRIGGER"})) {
+            try (ResultSet rs = metaData.getTables(null, schema, "%", new String[] { "TRIGGER" })) {
                 while (rs.next()) {
                     String name = rs.getString("TABLE_NAME");
-                    if (name == null) continue;
+                    if (name == null)
+                        continue;
                     TreeNode node = TreeNode.of(schema + "/" + name, name, "TRIGGER",
                             schema + "/__triggers__/" + name);
                     node.setIconType("trigger");
@@ -395,6 +400,7 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         try (Statement stmt = conn.createStatement()) {
             stmt.setMaxRows(limit > 0 ? limit : 10000);
             applyQueryTimeout(stmt);
+            StatementRegistry.register(conn, stmt);
 
             boolean hasResultSet = stmt.execute(sql);
             if (hasResultSet) {
@@ -431,6 +437,8 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
                 result.addRow(row);
                 result.setTotalRows(1);
             }
+        } finally {
+            StatementRegistry.unregister(conn);
         }
 
         result.setElapsedMs(System.currentTimeMillis() - startTime);
@@ -442,7 +450,10 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         Connection conn = (Connection) connection;
         try (Statement stmt = conn.createStatement()) {
             applyQueryTimeout(stmt);
+            StatementRegistry.register(conn, stmt);
             return stmt.executeUpdate(sql);
+        } finally {
+            StatementRegistry.unregister(conn);
         }
     }
 
@@ -520,7 +531,10 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
     /**
      * 生成索引 DDL（CREATE [UNIQUE] INDEX ... ON table (cols)）
      *
-     * <p>聚合 {@link DatabaseMetaData#getIndexInfo} 的结果，按索引名分组。主键索引（INDEX_NAME 为 null）跳过。</p>
+     * <p>
+     * 聚合 {@link DatabaseMetaData#getIndexInfo} 的结果，按索引名分组。主键索引（INDEX_NAME 为
+     * null）跳过。
+     * </p>
      */
     protected String buildIndexDdl(Connection conn, String schemaName, String tableName) throws SQLException {
         DatabaseMetaData metaData = conn.getMetaData();

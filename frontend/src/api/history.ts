@@ -23,6 +23,11 @@ export const historyApi = {
         return apiClient.post(`/history/${id}/favorite`)
     },
 
+    /** 更新标签（逗号分隔，传空串清空） */
+    updateTags(id: string, tags: string): Promise<QueryHistory> {
+        return apiClient.put(`/history/${id}/tags`, { tags })
+    },
+
     /** 删除单条 */
     remove(id: string): Promise<void> {
         return apiClient.delete(`/history/${id}`)

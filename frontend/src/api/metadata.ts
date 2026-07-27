@@ -36,10 +36,10 @@ export const metadataApi = {
         return apiClient.get(`/metadata/${connectionId}/capabilities`)
     },
 
-    /** 获取 ER 图数据（表 + 外键关系） */
+    /** 获取 ER 图数据（表 + 外键关系）；大库元数据扫描较慢，单独放宽超时 */
     getErDiagram(connectionId: string, schema?: string): Promise<ErDiagram> {
         const params = schema ? { schema } : {}
-        return apiClient.get(`/metadata/${connectionId}/er`, { params })
+        return apiClient.get(`/metadata/${connectionId}/er`, { params, timeout: 180000 })
     },
 
     /** 搜索导航树节点 */
@@ -65,6 +65,11 @@ export const queryApi = {
         return apiClient.post(`/query/${connectionId}/update`, body)
     },
 
+    /** 取消正在执行的查询（仅 JDBC 类驱动有效） */
+    cancelQuery(connectionId: string): Promise<{ cancelled: boolean; message?: string }> {
+        return apiClient.post(`/query/${connectionId}/cancel`)
+    },
+
     /** 导出查询结果 (CSV/JSON/Excel/SQL INSERT) */
     export(connectionId: string, params: {
         sql: string
@@ -82,5 +87,17 @@ export const queryApi = {
     /** 批量导入数据 (CSV/JSON 解析为行) */
     importRows(connectionId: string, schema: string | null, table: string, rows: Record<string, any>[]): Promise<{ success: boolean; inserted: number; total: number; errors: string[]; message?: string }> {
         return apiClient.post(`/query/${connectionId}/import`, { schema, table, rows })
+    },
+
+    /** 文件上传导入（multipart，CSV 首行表头 / JSON 数组） */
+    importFile(connectionId: string, schema: string | null, table: string, file: File, format?: 'csv' | 'json'): Promise<{ success: boolean; inserted: number; total: number; errors: string[]; message?: string }> {
+        const form = new FormData()
+        form.append('file', file)
+        form.append('table', table)
+        if (schema) form.append('schema', schema)
+        if (format) form.append('format', format)
+        return apiClient.post(`/query/${connectionId}/import/file`, form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        })
     },
 }

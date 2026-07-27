@@ -249,6 +249,8 @@
                                             <arg value="1.0.0"/>
                                             <arg value="--java-options"/>
                                             <arg value="-Xmx512m"/>
+                                            <arg value="--java-options"/>
+                                            <arg value="-Dapp.desktop.tray-enabled=true"/>
                                             <arg value="--verbose"/>
                                         </exec>
                                     </target>
@@ -303,6 +305,8 @@
                                             <arg value="--win-shortcut"/>
                                             <arg value="--java-options"/>
                                             <arg value="-Xmx512m"/>
+                                            <arg value="--java-options"/>
+                                            <arg value="-Dapp.desktop.tray-enabled=true"/>
                                         </exec>
                                     </target>
                                 </configuration>
