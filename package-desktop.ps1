@@ -200,15 +200,23 @@ function Assert-NativePackageArchitecture {
 }
 
 function Test-NativeDesktop {
-    $resolvedWorkspace = [System.IO.Path]::GetFullPath($WorkspacePath)
-    New-Item -ItemType Directory -Path $resolvedWorkspace -Force | Out-Null
+    # GitHub Hosted Runner 的控制台启动器使用英文代码页，无法无损传递中文路径。
+    # CI 使用官方 ASCII 临时目录；本地仍统一写入数据架构师工作空间。
+    $smokeRoot = if ($env:GITHUB_ACTIONS -eq "true" -and
+        -not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
+        Join-Path $env:RUNNER_TEMP "lyradb-native-smoke"
+    } else {
+        $WorkspacePath
+    }
+    $resolvedSmokeRoot = [System.IO.Path]::GetFullPath($smokeRoot)
+    New-Item -ItemType Directory -Path $resolvedSmokeRoot -Force | Out-Null
     $smokePath = [System.IO.Path]::GetFullPath(
-        (Join-Path $resolvedWorkspace "native-desktop-smoke-$PID")
+        (Join-Path $resolvedSmokeRoot "native-desktop-smoke-$PID")
     )
     if (-not $smokePath.StartsWith(
-        $resolvedWorkspace + [System.IO.Path]::DirectorySeparatorChar,
+        $resolvedSmokeRoot + [System.IO.Path]::DirectorySeparatorChar,
         [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "拒绝使用工作区外的冒烟测试目录：$smokePath"
+        throw "拒绝使用冒烟根目录外的测试目录：$smokePath"
     }
     if (Test-Path -LiteralPath $smokePath) {
         Remove-Item -LiteralPath $smokePath -Recurse -Force
