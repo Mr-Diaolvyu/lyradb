@@ -1,6 +1,6 @@
 {
     "name": "lyradb-harmony",
-    "version": "3.0.0",
+    "version": "3.0.1",
     "description": "LyraDB 移动端鸿蒙外壳（BS 封装客户端：ArkTS + ArkWeb）",
     "main": "",
     "author": "lexaquila",

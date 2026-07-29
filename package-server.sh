@@ -6,7 +6,7 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 FRONTEND="$ROOT/frontend"
 BACKEND="$ROOT/backend"
 STATIC="$BACKEND/src/main/resources/static"
-VERSION="${1:-3.0.0}"
+VERSION="${1:-3.0.1}"
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "版本号必须使用 X.Y.Z 格式，实际：$VERSION" >&2
@@ -47,8 +47,8 @@ mkdir -p -- "$STATIC"
 cp -R -- "$FRONTEND/dist/." "$STATIC/"
 
 echo "==> [3/3] 验证并打包后端"
-pushd "$BACKEND" >/dev/null
-mvn -B -q clean verify "-Drevision=$VERSION"
+pushd "$ROOT" >/dev/null
+mvn -B -q -pl backend -am clean verify "-Drevision=$VERSION"
 popd >/dev/null
 
 ARTIFACT="$BACKEND/target/lyradb-backend-$VERSION.jar"

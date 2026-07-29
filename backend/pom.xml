@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.2.5</version>
+        <version>3.5.16</version>
         <relativePath/>
     </parent>
 
@@ -19,7 +19,7 @@
 
     <properties>
         <!-- CI 通过 -Drevision=<tag> 覆盖，作为后端包与桌面包的单一版本源。 -->
-        <revision>3.0.0</revision>
+        <revision>3.0.1</revision>
         <java.version>17</java.version>
         <maven-resolver.version>1.9.18</maven-resolver.version>
         <jasypt.version>3.0.5</jasypt.version>
@@ -28,6 +28,13 @@
     </properties>
 
     <dependencies>
+        <!-- 桌面与企业服务端共享的数据库驱动、模型及 SQL 安全核心。 -->
+        <dependency>
+            <groupId>io.github.lexaquila</groupId>
+            <artifactId>lyradb-core</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
         <!-- Spring Boot Starter -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -239,7 +246,7 @@
             如需安装包（msi/dmg/deb），将 type 参数改为对应类型并安装 WiX（Windows）/ dmg 提示。
         -->
         <profile>
-            <id>desktop</id>
+            <id>legacy-web-wrapper-disabled</id>
             <build>
                 <plugins>
                     <plugin>
@@ -253,6 +260,7 @@
                                 <goals><goal>run</goal></goals>
                                 <configuration>
                                     <target>
+                                        <fail message="旧 B/S 桌面包装已禁用；请在仓库根目录使用 -pl desktop -am -Pdesktop-package"/>
                                         <echo>Building desktop app-image via jpackage...</echo>
                                         <!-- JPackage 输入与输出必须隔离，避免递归打包自身输出。 -->
                                         <delete dir="${project.build.directory}/jpackage-input"/>
@@ -301,7 +309,7 @@
             产物：target/desktop/LyraDB-${revision}.msi
         -->
         <profile>
-            <id>desktop-msi</id>
+            <id>legacy-web-wrapper-msi-disabled</id>
             <build>
                 <plugins>
                     <plugin>
@@ -315,6 +323,7 @@
                                 <goals><goal>run</goal></goals>
                                 <configuration>
                                     <target>
+                                        <fail message="旧 B/S 桌面 MSI 包装已禁用；安装包必须由 desktop 原生模块生成"/>
                                         <echo>Building Windows MSI via jpackage (needs WiX)...</echo>
                                         <!-- JPackage 输入与输出必须隔离，避免递归打包自身输出。 -->
                                         <delete dir="${project.build.directory}/jpackage-input"/>

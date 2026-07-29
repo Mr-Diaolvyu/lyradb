@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   frontend:
-    name: 前端质量门禁
+    name: 企业版前端质量门禁
     runs-on: ubuntu-latest
     steps:
       - name: 检出代码
@@ -35,22 +35,16 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      - name: 静态检查
+      - name: 静态检查、单元测试与生产构建
         working-directory: frontend
         run: |
           npm run lint
           npm run typecheck
-
-      - name: 单元测试
-        working-directory: frontend
-        run: npm run test
-
-      - name: 生产构建
-        working-directory: frontend
-        run: npm run build
+          npm run test
+          npm run build
 
   backend:
-    name: 后端与部署配置
+    name: core、企业后端与部署配置
     runs-on: ubuntu-latest
     steps:
       - name: 检出代码
@@ -65,9 +59,8 @@ jobs:
           java-version: '17'
           cache: maven
 
-      - name: 验证后端
-        working-directory: backend
-        run: mvn -B -ntp clean verify
+      - name: 验证共享核心与企业后端
+        run: mvn -B -ntp -pl backend -am clean verify
 
       - name: 校验 Compose 生产配置
         env:
@@ -78,7 +71,7 @@ jobs:
           CORS_ALLOWED_ORIGINS: https://lyradb.example.test
         run: docker compose config --quiet
 
-      - name: 构建镜像并以空卷启动
+      - name: 构建企业版镜像并以空卷启动
         env:
           COMPOSE_PROJECT_NAME: lyradb-ci-${{ github.run_id }}
           LYRADB_IMAGE_TAG: ci-${{ github.run_id }}
@@ -131,6 +124,37 @@ jobs:
           CORS_ALLOWED_ORIGINS: http://localhost:18080
           LYRADB_COOKIE_SECURE: 'false'
         run: docker compose down --volumes --remove-orphans
+
+  desktop-native:
+    name: Windows 原生桌面构建与 EXE 冒烟
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: 安装 JDK 21（含 jpackage）
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: 构建原生便携包并验证无浏览器架构
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          $version = ([xml](Get-Content pom.xml -Raw)).project.properties.revision
+          ./package-desktop.ps1 -Version $version
+
+      - name: 上传 CI 原生便携包
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lyradb-native-windows-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 3
+          path: desktop/target/LyraDB-*-windows-x64-portable.zip
 
   android:
     name: Android 构建

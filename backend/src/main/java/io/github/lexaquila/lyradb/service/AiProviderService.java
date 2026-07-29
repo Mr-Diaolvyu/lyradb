@@ -11,6 +11,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.NoOpResponseErrorHandler;
 import org.springframework.web.client.RestTemplate;
 
 import java.io.FilterInputStream;
@@ -76,17 +77,7 @@ public class AiProviderService {
         requestFactory.setReadTimeout(60_000);
         this.restTemplate = new RestTemplate(requestFactory);
         // 避免默认错误处理器先无界读取错误响应；状态码由有界 extractor 检查。
-        this.restTemplate.setErrorHandler(new org.springframework.web.client.ResponseErrorHandler() {
-            @Override
-            public boolean hasError(org.springframework.http.client.ClientHttpResponse response) {
-                return false;
-            }
-
-            @Override
-            public void handleError(org.springframework.http.client.ClientHttpResponse response) {
-                // 状态码在响应提取器中处理。
-            }
-        });
+        this.restTemplate.setErrorHandler(new NoOpResponseErrorHandler());
     }
 
     public Map<String, Map<String, String>> presets() {

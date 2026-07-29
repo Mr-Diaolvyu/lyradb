@@ -1,24 +1,72 @@
-# 桌面便携版打包：前端质量门禁 → 后端测试 → jpackage → zip。
+# LyraDB 个人版原生桌面打包：core/desktop 测试 → jpackage → 独立架构扫描 → 原生冒烟 → zip。
 param(
-    [string]$Version = "3.0.0"
+    [string]$Version = "3.0.1"
 )
 
 $ErrorActionPreference = "Stop"
 if ($Version -notmatch '^\d+\.\d+\.\d+$') {
     throw "版本号必须使用 X.Y.Z 格式，实际：$Version"
 }
+
 $RootPath = $PSScriptRoot
-$FrontendPath = Join-Path $RootPath "frontend"
-$BackendPath = Join-Path $RootPath "backend"
-$TargetPath = Join-Path $BackendPath "target"
-$StaticPath = Join-Path $BackendPath "src\main\resources\static"
-$ImagePath = Join-Path $BackendPath "target\desktop\LyraDB"
-$ZipPath = Join-Path $BackendPath "target\LyraDB-$Version-windows-x64-portable.zip"
+$DesktopPath = Join-Path $RootPath "desktop"
+$ImagePath = Join-Path $DesktopPath "target\desktop\LyraDB"
+$Executable = Join-Path $ImagePath "LyraDB.exe"
+$LauncherConfig = Join-Path $ImagePath "app\LyraDB.cfg"
+$ZipPath = Join-Path $DesktopPath "target\LyraDB-$Version-windows-x64-portable.zip"
 $WorkspacePath = Join-Path $RootPath "数据架构师工作空间"
+$PackageResourcePath = Join-Path $DesktopPath "src\main\jpackage"
 
 function Assert-Command([string]$Name) {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
         throw "缺少命令：$Name"
+    }
+}
+
+function Clear-ReadOnlyBuildArtifacts {
+    $targetPath = Join-Path $DesktopPath "target"
+    if (-not (Test-Path -LiteralPath $targetPath -PathType Container)) {
+        return
+    }
+    Get-ChildItem -LiteralPath $targetPath -Recurse -Force |
+        Where-Object {
+            ($_.Attributes -band [System.IO.FileAttributes]::ReadOnly) -ne 0
+        } |
+        ForEach-Object {
+            $_.IsReadOnly = $false
+        }
+}
+
+function Assert-BrandAssets {
+    foreach ($name in @("LyraDB.svg", "LyraDB.ico", "LyraDB.icns", "LyraDB.png")) {
+        $path = Join-Path $PackageResourcePath $name
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "缺少 LyraDB 品牌资源：$path"
+        }
+    }
+
+    $icoBytes = [System.IO.File]::ReadAllBytes(
+        (Join-Path $PackageResourcePath "LyraDB.ico"))
+    if ($icoBytes.Length -lt 22 -or
+        $icoBytes[0] -ne 0 -or $icoBytes[1] -ne 0 -or
+        $icoBytes[2] -ne 1 -or $icoBytes[3] -ne 0 -or
+        $icoBytes[4] -lt 5) {
+        throw "LyraDB.ico 不是有效的多尺寸 Windows 图标"
+    }
+
+    $pngBytes = [System.IO.File]::ReadAllBytes(
+        (Join-Path $PackageResourcePath "LyraDB.png"))
+    $pngSignature = @(137, 80, 78, 71, 13, 10, 26, 10)
+    for ($index = 0; $index -lt $pngSignature.Count; $index++) {
+        if ($pngBytes[$index] -ne $pngSignature[$index]) {
+            throw "LyraDB.png 签名无效"
+        }
+    }
+
+    $icnsBytes = [System.IO.File]::ReadAllBytes(
+        (Join-Path $PackageResourcePath "LyraDB.icns"))
+    if ([System.Text.Encoding]::ASCII.GetString($icnsBytes, 0, 4) -ne "icns") {
+        throw "LyraDB.icns 签名无效"
     }
 }
 
@@ -29,216 +77,209 @@ function Invoke-Native([string]$Command, [string[]]$Arguments) {
     }
 }
 
-function Test-DesktopLauncher(
-    [string]$Executable,
-    [string]$LauncherConfig,
-    [string]$MainJar
-) {
+function Assert-NativeLauncher {
+    if (-not (Test-Path -LiteralPath $Executable)) {
+        throw "jpackage 原生可执行文件缺失：$Executable"
+    }
     if (-not (Test-Path -LiteralPath $LauncherConfig)) {
         throw "jpackage 启动配置缺失：$LauncherConfig"
     }
-    $LauncherText = Get-Content -LiteralPath $LauncherConfig -Raw
-    if ($LauncherText -notmatch '(?m)^app\.mainjar=') {
-        throw "jpackage 启动配置未声明主 JAR"
+    $launcherText = Get-Content -LiteralPath $LauncherConfig -Raw
+    if ($launcherText -notmatch
+        '(?m)^app\.mainclass=io\.github\.lexaquila\.lyradb\.desktop\.NativeDesktopApplication\r?$') {
+        throw "启动器未指向原生桌面入口"
     }
-    if ($LauncherText -match
-        '(?m)^app\.mainclass=io\.github\.lexaquila\.lyradb\.LyraDbApplication') {
-        throw "jpackage 错误地绕过了 Spring Boot JarLauncher"
-    }
-    if (-not (Test-Path -LiteralPath $MainJar)) {
-        throw "jpackage 主 JAR 缺失：$MainJar"
+    if ($launcherText -match
+        'LyraDbApplication|spring\.profiles\.active=desktop|server\.port|JarLauncher') {
+        throw "启动器仍包含旧 B/S 桌面包装配置"
     }
 
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $Archive = [System.IO.Compression.ZipFile]::OpenRead($MainJar)
+    Add-Type -AssemblyName System.Drawing
+    $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($Executable)
+    if ($null -eq $icon) {
+        throw "无法读取 LyraDB.exe 应用图标"
+    }
+    $bitmap = $icon.ToBitmap()
     try {
-        $ManifestEntry = $Archive.GetEntry("META-INF/MANIFEST.MF")
-        if (-not $ManifestEntry) {
-            throw "主 JAR 缺少 MANIFEST.MF"
+        $bluePixels = 0
+        $opaquePixels = 0
+        for ($x = 0; $x -lt $bitmap.Width; $x++) {
+            for ($y = 0; $y -lt $bitmap.Height; $y++) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                if ($pixel.A -gt 32) {
+                    $opaquePixels++
+                    if ($pixel.B -gt ($pixel.R + 50) -and
+                        $pixel.B -gt ($pixel.G + 50)) {
+                        $bluePixels++
+                    }
+                }
+            }
         }
-        $Reader = [System.IO.StreamReader]::new($ManifestEntry.Open())
-        try {
-            $Manifest = $Reader.ReadToEnd()
-        } finally {
-            $Reader.Dispose()
+        if ($opaquePixels -eq 0 -or ($bluePixels / $opaquePixels) -lt 0.25) {
+            throw "LyraDB.exe 未嵌入预期的蓝色品牌图标"
         }
     } finally {
-        $Archive.Dispose()
+        $bitmap.Dispose()
+        $icon.Dispose()
     }
-    if ($Manifest -notmatch
-        '(?m)^Main-Class: org\.springframework\.boot\.loader\.launch\.JarLauncher\r?$') {
-        throw "主 JAR Manifest 未使用 Spring Boot JarLauncher"
+}
+function Assert-NativePackageArchitecture {
+    $appPath = Join-Path $ImagePath "app"
+    if (-not (Test-Path -LiteralPath $appPath -PathType Container)) {
+        throw "jpackage 应用依赖目录缺失：$appPath"
     }
 
-    $ResolvedWorkspace = [System.IO.Path]::GetFullPath($WorkspacePath)
-    New-Item -ItemType Directory -Path $ResolvedWorkspace -Force | Out-Null
-    $SmokePath = [System.IO.Path]::GetFullPath(
-        (Join-Path $ResolvedWorkspace "desktop-launcher-smoke-$PID")
+    $desktopJar = Join-Path $appPath "lyradb-desktop-$Version.jar"
+    $coreJar = Join-Path $appPath "lyradb-core-$Version.jar"
+    foreach ($requiredJar in @($desktopJar, $coreJar)) {
+        if (-not (Test-Path -LiteralPath $requiredJar -PathType Leaf)) {
+            throw "原生桌面核心 JAR 缺失：$requiredJar"
+        }
+    }
+
+    $jars = @(Get-ChildItem -LiteralPath $appPath -Filter "*.jar" -File)
+    if ($jars.Count -eq 0) {
+        throw "jpackage 应用依赖目录中没有 JAR：$appPath"
+    }
+
+    $forbiddenJarPattern = (
+        '(?i)(^lyradb-backend-|^spring-web(?:mvc|flux)?-|^tomcat-embed-|' +
+        '^jetty-|^undertow-|javafx-web|jxbrowser|(?:^|-)cef(?:-|$)|playwright)'
     )
-    if (-not $SmokePath.StartsWith(
-        $ResolvedWorkspace + [System.IO.Path]::DirectorySeparatorChar,
+    $forbiddenEntryPattern = (
+        '(?im)(^|/)(javafx/scene/web|org/cef|com/teamdev/jxbrowser|' +
+        'com/microsoft/playwright)/'
+    )
+    foreach ($jarFile in $jars) {
+        if ($jarFile.Name -match $forbiddenJarPattern) {
+            throw "原生桌面镜像包含禁止的 B/S 或嵌入式浏览器依赖：$($jarFile.Name)"
+        }
+        $entries = & jar tf $jarFile.FullName 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "无法检查 JAR 内容：$($jarFile.FullName)"
+        }
+        if (($entries -join "`n") -match $forbiddenEntryPattern) {
+            throw "原生桌面镜像包含嵌入式浏览器类：$($jarFile.Name)"
+        }
+    }
+
+    $classPath = Join-Path $appPath "*"
+    $jdepsArguments = @(
+        "--ignore-missing-deps",
+        "--multi-release", "17",
+        "-verbose:class",
+        "--class-path", $classPath,
+        $desktopJar,
+        $coreJar
+    )
+    $jdepsOutput = & jdeps @jdepsArguments 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "jdeps 原生桌面字节码扫描失败，退出码：$LASTEXITCODE"
+    }
+    $forbiddenDependencyPattern = (
+        '(?im)\b(java\.awt\.Desktop|com\.sun\.net\.httpserver\.|' +
+        'javafx\.scene\.web\.|org\.cef\.|com\.teamdev\.jxbrowser\.|' +
+        'com\.microsoft\.playwright\.|org\.springframework\.boot\.SpringApplication)\b'
+    )
+    if (($jdepsOutput -join "`n") -match $forbiddenDependencyPattern) {
+        throw "原生桌面核心字节码引用了浏览器、本地 HTTP 服务或 B/S 启动入口：$($Matches[1])"
+    }
+}
+
+function Test-NativeDesktop {
+    $resolvedWorkspace = [System.IO.Path]::GetFullPath($WorkspacePath)
+    New-Item -ItemType Directory -Path $resolvedWorkspace -Force | Out-Null
+    $smokePath = [System.IO.Path]::GetFullPath(
+        (Join-Path $resolvedWorkspace "native-desktop-smoke-$PID")
+    )
+    if (-not $smokePath.StartsWith(
+        $resolvedWorkspace + [System.IO.Path]::DirectorySeparatorChar,
         [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "拒绝使用工作区外的冒烟测试目录：$SmokePath"
+        throw "拒绝使用工作区外的冒烟测试目录：$smokePath"
     }
-    if (Test-Path -LiteralPath $SmokePath) {
-        Remove-Item -LiteralPath $SmokePath -Recurse -Force
+    if (Test-Path -LiteralPath $smokePath) {
+        Remove-Item -LiteralPath $smokePath -Recurse -Force
     }
-    New-Item -ItemType Directory -Path $SmokePath | Out-Null
+    New-Item -ItemType Directory -Path $smokePath | Out-Null
+    $markerPath = Join-Path $smokePath "native-smoke.json"
+    $dataPath = Join-Path $smokePath "data"
 
-    $Listener = [System.Net.Sockets.TcpListener]::new(
-        [System.Net.IPAddress]::Loopback, 0
-    )
-    $Listener.Start()
     try {
-        $Port = $Listener.LocalEndpoint.Port
-    } finally {
-        $Listener.Stop()
-    }
-
-    $PreviousH2Path = $env:LYRADB_H2_PATH
-    $PreviousKeyPath = $env:LYRADB_DESKTOP_KEY_PATH
-    $PreviousLogPath = $env:LOGGING_FILE_NAME
-    $env:LYRADB_H2_PATH = Join-Path $SmokePath "data\lyradb"
-    $env:LYRADB_DESKTOP_KEY_PATH = Join-Path $SmokePath "master.key"
-    $env:LOGGING_FILE_NAME = Join-Path $SmokePath "lyradb.log"
-    $Process = $null
-    try {
-        $StartInfo = [System.Diagnostics.ProcessStartInfo]::new()
-        $StartInfo.FileName = $Executable
-        $StartInfo.Arguments = (
-            "--server.port=$Port --app.desktop.tray-enabled=false"
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $Executable
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.Arguments = (
+            "`"--smoke-test=$markerPath`" `"--data-dir=$dataPath`""
         )
-        $StartInfo.UseShellExecute = $false
-        $StartInfo.CreateNoWindow = $true
-        $Process = [System.Diagnostics.Process]::new()
-        $Process.StartInfo = $StartInfo
-        if (-not $Process.Start()) {
-            throw "无法启动 LyraDB.exe"
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $startInfo
+        try {
+            if (-not $process.Start()) {
+                throw "无法启动原生 LyraDB.exe"
+            }
+            if (-not $process.WaitForExit(60000)) {
+                $process.Kill()
+                $process.WaitForExit()
+                throw "原生 LyraDB.exe 冒烟测试超时"
+            }
+            if ($process.ExitCode -ne 0) {
+                throw "原生 LyraDB.exe 冒烟测试失败，退出码：$($process.ExitCode)"
+            }
+        } finally {
+            $process.Dispose()
         }
 
-        $Ready = $false
-        $Deadline = (Get-Date).AddSeconds(90)
-        do {
-            $Process.Refresh()
-            if ($Process.HasExited) {
-                $Process.WaitForExit()
-                throw "LyraDB.exe 提前退出，退出码：$($Process.ExitCode)"
-            }
-            try {
-                $Response = Invoke-WebRequest `
-                    -Uri "http://127.0.0.1:$port/api/app/info" `
-                    -UseBasicParsing `
-                    -TimeoutSec 3
-                if ($Response.StatusCode -eq 200) {
-                    $Ready = $true
-                    break
-                }
-            } catch {
-                # 服务启动期间连接失败属于预期，继续轮询。
-            }
-            Start-Sleep -Seconds 1
-        } while ((Get-Date) -lt $Deadline)
-
-        if (-not $Ready) {
-            throw "LyraDB.exe 在 90 秒内未通过 HTTP 就绪检查"
+        if (-not (Test-Path -LiteralPath $markerPath)) {
+            throw "原生冒烟标记缺失：$markerPath"
         }
-        Write-Host "桌面启动验证通过：http://127.0.0.1:$port/api/app/info"
-    } catch {
-        $LogPath = Join-Path $SmokePath "lyradb.log"
-        if (Test-Path -LiteralPath $LogPath) {
-            Get-Content -LiteralPath $LogPath -Tail 200
+        $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+        if ($marker.status -ne "ok" -or
+            $marker.architecture -ne "native-swing" -or
+            $marker.nativeUiToolkit -ne "javax.swing" -or
+            $marker.browserLaunched -ne $false -or
+            $marker.webViewEmbedded -ne $false -or
+            $marker.localHttpServerStarted -ne $false -or
+            $marker.aiConfigAvailable -ne $true -or
+            $marker.driverCount -ne 9) {
+            throw "原生桌面架构冒烟结果不符合要求：$($marker | ConvertTo-Json -Compress)"
         }
-        throw
+        Write-Host "原生启动验证通过：无浏览器、无 WebView、无本地 HTTP 服务，AI 配置可用。"
     } finally {
-        if ($Process -and -not $Process.HasExited) {
-            $Process.Kill()
-            $Process.WaitForExit()
-        }
-        if ($Process) {
-            $Process.Dispose()
-        }
-        $env:LYRADB_H2_PATH = $PreviousH2Path
-        $env:LYRADB_DESKTOP_KEY_PATH = $PreviousKeyPath
-        $env:LOGGING_FILE_NAME = $PreviousLogPath
-        for ($Attempt = 1;
-             $Attempt -le 10 -and (Test-Path -LiteralPath $SmokePath);
-             $Attempt++) {
-            try {
-                Remove-Item -LiteralPath $SmokePath -Recurse -Force -ErrorAction Stop
-            } catch {
-                if ($Attempt -eq 10) {
-                    throw
-                }
-                Start-Sleep -Milliseconds 500
-            }
+        if (Test-Path -LiteralPath $smokePath) {
+            Remove-Item -LiteralPath $smokePath -Recurse -Force
         }
     }
 }
 
-Assert-Command "npm"
 Assert-Command "mvn"
 Assert-Command "jpackage"
+Assert-Command "jar"
+Assert-Command "jdeps"
 
-Write-Host "==> [1/5] 校验并构建前端"
-Push-Location $FrontendPath
+Assert-BrandAssets
+Clear-ReadOnlyBuildArtifacts
+Write-Host "==> [1/5] 运行 core 与原生 desktop 测试并生成应用镜像"
+Push-Location $RootPath
 try {
-    Invoke-Native "npm" @("ci")
-    Invoke-Native "npm" @("run", "lint")
-    Invoke-Native "npm" @("run", "typecheck")
-    Invoke-Native "npm" @("run", "test")
-    Invoke-Native "npm" @("run", "build")
+    Invoke-Native "mvn" @(
+        "-B", "-ntp", "-pl", "desktop", "-am",
+        "-Pdesktop-package", "clean", "verify", "-Drevision=$Version"
+    )
 } finally {
     Pop-Location
 }
 
-if (-not (Test-Path -LiteralPath (Join-Path $FrontendPath "dist"))) {
-    throw "前端构建成功但未找到产物：$(Join-Path $FrontendPath 'dist')"
-}
+Write-Host "==> [2/5] 校验 jpackage 原生启动器"
+Assert-NativeLauncher
 
-Write-Host "==> [2/5] 嵌入前端静态资源"
-$ExpectedStaticParent = [System.IO.Path]::GetFullPath((Join-Path $BackendPath "src\main\resources"))
-$ResolvedStatic = [System.IO.Path]::GetFullPath($StaticPath)
-if (-not $ResolvedStatic.StartsWith($ExpectedStaticParent, [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "拒绝清理意外路径：$ResolvedStatic"
-}
-if (Test-Path -LiteralPath $ResolvedStatic) {
-    Remove-Item -LiteralPath $ResolvedStatic -Recurse -Force
-}
-New-Item -ItemType Directory -Path $ResolvedStatic | Out-Null
-Copy-Item -Path (Join-Path $FrontendPath "dist\*") -Destination $ResolvedStatic -Recurse -Force
+Write-Host "==> [3/5] 独立扫描依赖清单、JAR 内容与核心字节码"
+Assert-NativePackageArchitecture
 
-Write-Host "==> [3/5] 验证后端并生成桌面应用镜像"
-$ResolvedTarget = [System.IO.Path]::GetFullPath($TargetPath)
-$ResolvedBackend = [System.IO.Path]::GetFullPath($BackendPath)
-if (-not $ResolvedTarget.StartsWith(
-    $ResolvedBackend + [System.IO.Path]::DirectorySeparatorChar,
-    [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "拒绝清理意外构建路径：$ResolvedTarget"
-}
-if (Test-Path -LiteralPath $ResolvedTarget) {
-    Get-ChildItem -LiteralPath $ResolvedTarget -Recurse -Force -File |
-        Where-Object { $_.IsReadOnly } |
-        ForEach-Object { $_.IsReadOnly = $false }
-}
-Push-Location $BackendPath
-try {
-    Invoke-Native "mvn" @("-B", "-q", "-Pdesktop", "clean", "verify", "-Drevision=$Version")
-} finally {
-    Pop-Location
-}
+Write-Host "==> [4/5] 执行真实 EXE 原生架构冒烟测试"
+Test-NativeDesktop
 
-$Executable = Join-Path $ImagePath "LyraDB.exe"
-if (-not (Test-Path -LiteralPath $Executable)) {
-    throw "jpackage 产物缺失：$Executable。请确认 Maven 使用的 JDK 包含 jpackage。"
-}
-
-Write-Host "==> [4/5] 验证桌面应用真实启动"
-Test-DesktopLauncher `
-    -Executable $Executable `
-    -LauncherConfig (Join-Path $ImagePath "app\LyraDB.cfg") `
-    -MainJar (Join-Path $ImagePath "app\lyradb-backend-$Version.jar")
-
-Write-Host "==> [5/5] 压缩便携包"
+Write-Host "==> [5/5] 生成 Windows x64 便携包"
 if (Test-Path -LiteralPath $ZipPath) {
     Remove-Item -LiteralPath $ZipPath -Force
 }
@@ -248,5 +289,5 @@ if (-not (Test-Path -LiteralPath $ZipPath)) {
 }
 
 Write-Host "==> 完成"
-Write-Host "应用镜像：$ImagePath"
+Write-Host "原生应用镜像：$ImagePath"
 Write-Host "便携包：$ZipPath"

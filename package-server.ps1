@@ -1,6 +1,6 @@
 # BS 服务端打包：前端质量门禁 → 嵌入静态资源 → 后端测试与 fat jar。
 param(
-    [string]$Version = "3.0.0"
+    [string]$Version = "3.0.1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,9 +57,9 @@ New-Item -ItemType Directory -Path $ResolvedStatic | Out-Null
 Copy-Item -Path (Join-Path $FrontendPath "dist\*") -Destination $ResolvedStatic -Recurse -Force
 
 Write-Host "==> [3/3] 验证并打包后端"
-Push-Location $BackendPath
+Push-Location $RootPath
 try {
-    Invoke-Native "mvn" @("-B", "-q", "clean", "verify", "-Drevision=$Version")
+    Invoke-Native "mvn" @("-B", "-q", "-pl", "backend", "-am", "clean", "verify", "-Drevision=$Version")
 } finally {
     Pop-Location
 }

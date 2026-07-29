@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.5.16</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>io.github.lexaquila</groupId>
+    <artifactId>lyradb-desktop</artifactId>
+    <version>${revision}</version>
+    <name>LyraDB Native Desktop</name>
+    <description>LyraDB 个人版原生桌面数据库工作台</description>
+
+    <properties>
+        <revision>3.0.1</revision>
+        <java.version>17</java.version>
+        <main.class>io.github.lexaquila.lyradb.desktop.NativeDesktopApplication</main.class>
+        <flatlaf.version>3.7</flatlaf.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.github.lexaquila</groupId>
+            <artifactId>lyradb-core</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.formdev</groupId>
+            <artifactId>flatlaf</artifactId>
+            <version>${flatlaf.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <release>17</release>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>${main.class}</mainClass>
+                            <addClasspath>true</addClasspath>
+                            <classpathPrefix></classpathPrefix>
+                        </manifest>
+                        <manifestEntries>
+                            <Implementation-Title>LyraDB Native Desktop</Implementation-Title>
+                            <Implementation-Version>${revision}</Implementation-Version>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>desktop-package</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-dependency-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>copy-runtime-dependencies</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>copy-dependencies</goal>
+                                </goals>
+                                <configuration>
+                                    <includeScope>runtime</includeScope>
+                                    <outputDirectory>${project.build.directory}/jpackage-input</outputDirectory>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>prepare-native-desktop-package</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <delete dir="${project.build.directory}/jpackage-input"/>
+                                        <delete dir="${project.build.directory}/desktop"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>jpackage-native-desktop</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <mkdir dir="${project.build.directory}/jpackage-input"/>
+                                        <copy file="${project.build.directory}/${project.build.finalName}.jar"
+                                              todir="${project.build.directory}/jpackage-input"/>
+                                        <mkdir dir="${project.build.directory}/desktop"/>
+                                        <exec executable="${java.home}/bin/jpackage" failonerror="true">
+                                            <arg value="--type"/>
+                                            <arg value="app-image"/>
+                                            <arg value="--input"/>
+                                            <arg value="${project.build.directory}/jpackage-input"/>
+                                            <arg value="--dest"/>
+                                            <arg value="${project.build.directory}/desktop"/>
+                                            <arg value="--name"/>
+                                            <arg value="LyraDB"/>
+                                            <arg value="--main-jar"/>
+                                            <arg value="${project.build.finalName}.jar"/>
+                                            <arg value="--main-class"/>
+                                            <arg value="${main.class}"/>
+                                            <arg value="--app-version"/>
+                                            <arg value="${revision}"/>
+                                            <arg value="--vendor"/>
+                                            <arg value="LyraDB"/>
+                                            <arg value="--description"/>
+                                            <arg value="LyraDB 个人版原生数据库工作台"/>
+                                            <arg value="--resource-dir"/>
+                                            <arg value="${project.basedir}/src/main/jpackage"/>
+                                            <arg value="--java-options"/>
+                                            <arg value="-Xmx1024m"/>
+                                            <arg value="--java-options"/>
+                                            <arg value="-Dfile.encoding=UTF-8"/>
+                                            <arg value="--java-options"/>
+                                            <arg value="-Dlyradb.desktop.native=true"/>
+                                            <arg value="--verbose"/>
+                                        </exec>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

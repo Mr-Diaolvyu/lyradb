@@ -1,4 +1,4 @@
-# 标签发布：构建任务只读仓库；发布任务单独获得 contents: write。
+# 标签发布：个人版原生桌面与企业版服务端分别构建；发布任务单独获得 contents: write。
 name: Release
 
 on:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build-windows:
-    name: 构建 Windows 便携包
+    name: 构建个人原生桌面与企业服务端
     runs-on: windows-latest
     permissions:
       contents: read
@@ -41,51 +41,102 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}".TrimStart("v")
-          if ($version -notmatch '^\d+\.\d+\.\d+$') {
-            throw "发布标签必须是 v主版本.次版本.修订号，实际：${{ github.ref_name }}"
+          $tag = $env:GITHUB_REF_NAME
+          $tagMatch = [regex]::Match($tag, '^v(?<version>\d+\.\d+\.\d+)$')
+          if (-not $tagMatch.Success) {
+            throw "发布标签必须严格使用 v主版本.次版本.修订号，实际：$tag"
           }
+          $version = $tagMatch.Groups["version"].Value
 
           $versions = [ordered]@{}
-          $versions["frontend"] = (Get-Content frontend/package.json -Raw | ConvertFrom-Json).version
+          $versions["root"] = ([xml](Get-Content pom.xml -Raw)).project.properties.revision
+          $versions["core"] = ([xml](Get-Content core/pom.xml -Raw)).project.properties.revision
+          $versions["desktop"] = ([xml](Get-Content desktop/pom.xml -Raw)).project.properties.revision
           $versions["backend"] = ([xml](Get-Content backend/pom.xml -Raw)).project.properties.revision
+          $versions["frontend"] = (Get-Content frontend/package.json -Raw | ConvertFrom-Json).version
+
+          $lockVersions = @(
+            & node -e "const lock = require('./frontend/package-lock.json'); console.log(lock.version); console.log(lock.packages[''].version);"
+          )
+          $lockCommandExitCode = $LASTEXITCODE
+          $emptyLockVersions = @(
+            $lockVersions | Where-Object { [string]::IsNullOrWhiteSpace($_) }
+          )
+          if ($lockCommandExitCode -ne 0 -or $lockVersions.Count -ne 2 -or
+              $emptyLockVersions.Count -gt 0) {
+            throw "无法读取 frontend/package-lock.json 顶层版本或根包版本"
+          }
+          $versions["frontend-lock"] = $lockVersions[0].Trim()
+          $versions["frontend-lock-root"] = $lockVersions[1].Trim()
+
           $androidText = Get-Content mobile/android/app/build.gradle.kts -Raw
-          $versions["android"] = [regex]::Match(
-            $androidText,
-            'versionName\s*=\s*"([^"]+)"'
-          ).Groups[1].Value
+          $androidVersion = [regex]::Match(
+            $androidText, 'versionName\s*=\s*"([^"]+)"'
+          )
+          $androidBuild = [regex]::Match(
+            $androidText, 'versionCode\s*=\s*(\d+)'
+          )
+          if (-not $androidVersion.Success -or -not $androidBuild.Success) {
+            throw "无法读取 Android versionName/versionCode"
+          }
+          $versions["android"] = $androidVersion.Groups[1].Value
+
           $iosPlist = [xml](Get-Content mobile/ios/LyraDB/Info.plist -Raw)
           $iosEntries = $iosPlist.plist.dict.ChildNodes
+          $iosBuild = $null
           for ($index = 0; $index -lt $iosEntries.Count - 1; $index++) {
-            if ($iosEntries[$index].Name -eq "key" -and
-                $iosEntries[$index].InnerText -eq "CFBundleShortVersionString") {
-              $versions["ios"] = $iosEntries[$index + 1].InnerText
-              break
+            if ($iosEntries[$index].Name -eq "key") {
+              if ($iosEntries[$index].InnerText -eq "CFBundleShortVersionString") {
+                $versions["ios"] = $iosEntries[$index + 1].InnerText
+              } elseif ($iosEntries[$index].InnerText -eq "CFBundleVersion") {
+                $iosBuild = $iosEntries[$index + 1].InnerText
+              }
             }
           }
-          $versions["harmony"] = (Get-Content mobile/harmony/AppScope/app.json5 -Raw |
-            ConvertFrom-Json).app.versionName
+          if (-not $versions.Contains("ios") -or [string]::IsNullOrWhiteSpace($iosBuild)) {
+            throw "无法读取 iOS CFBundleShortVersionString/CFBundleVersion"
+          }
+
+          $harmony = (Get-Content mobile/harmony/AppScope/app.json5 -Raw |
+            ConvertFrom-Json).app
+          $versions["harmony"] = $harmony.versionName
 
           foreach ($entry in $versions.GetEnumerator()) {
             if ($entry.Value -ne $version) {
               throw "版本不一致：$($entry.Key)=$($entry.Value)，标签=$version"
             }
           }
+
+          $parts = $version.Split(".") | ForEach-Object { [int64]$_ }
+          if ($parts[1] -gt 999 -or $parts[2] -gt 999) {
+            throw "次版本和修订号必须小于 1000，才能生成唯一移动端 build code：$version"
+          }
+          $expectedBuild = $parts[0] * 1000000 + $parts[1] * 1000 + $parts[2]
+          if ($expectedBuild -gt [int]::MaxValue) {
+            throw "移动端 build code 超出 32 位整数范围：$expectedBuild"
+          }
+          $buildCodes = [ordered]@{
+            "android" = [int64]$androidBuild.Groups[1].Value
+            "ios" = [int64]$iosBuild
+            "harmony" = [int64]$harmony.versionCode
+          }
+          foreach ($entry in $buildCodes.GetEnumerator()) {
+            if ($entry.Value -ne $expectedBuild) {
+              throw "移动端 build code 不一致：$($entry.Key)=$($entry.Value)，预期=$expectedBuild"
+            }
+          }
           "version=$version" >> $env:GITHUB_OUTPUT
 
-      - name: 安装前端锁定依赖
-        working-directory: frontend
-        run: npm ci
-
-      - name: 前端质量门禁
+      - name: 企业版前端质量门禁
         working-directory: frontend
         run: |
+          npm ci
           npm run lint
           npm run typecheck
           npm run test
           npm run build
 
-      - name: 嵌入前端静态资源
+      - name: 嵌入企业版前端静态资源
         shell: pwsh
         run: |
           $static = [System.IO.Path]::GetFullPath("backend/src/main/resources/static")
@@ -99,165 +150,23 @@ jobs:
           New-Item -ItemType Directory -Path $static | Out-Null
           Copy-Item -Path "frontend/dist/*" -Destination $static -Recurse -Force
 
-      - name: 后端测试并生成 jpackage 应用镜像
+      - name: 验证 core 并构建企业版后端
         timeout-minutes: 15
-        working-directory: backend
-        run: mvn -B -ntp -Pdesktop clean verify "-Drevision=${{ steps.version.outputs.version }}"
+        run: >
+          mvn -B -ntp -pl backend -am clean verify
+          "-Drevision=${{ steps.version.outputs.version }}"
 
-      - name: 运行 Windows 便携包冒烟测试
-        timeout-minutes: 3
+      - name: 构建个人版原生桌面并执行 EXE 冒烟
+        timeout-minutes: 15
         shell: pwsh
-        run: |
-          $executable = [System.IO.Path]::GetFullPath(
-            "backend/target/desktop/LyraDB/LyraDB.exe"
-          )
-          $launcherConfig = [System.IO.Path]::GetFullPath(
-            "backend/target/desktop/LyraDB/app/LyraDB.cfg"
-          )
-          if (-not (Test-Path -LiteralPath $executable)) {
-            throw "jpackage 产物缺失：$executable"
-          }
-          if (-not (Test-Path -LiteralPath $launcherConfig)) {
-            throw "jpackage 启动配置缺失：$launcherConfig"
-          }
-          $launcherText = Get-Content -LiteralPath $launcherConfig -Raw
-          if ($launcherText -notmatch '(?m)^app\.mainjar=') {
-            throw "jpackage 启动配置未声明主 JAR"
-          }
-          if ($launcherText -match
-              '(?m)^app\.mainclass=io\.github\.lexaquila\.lyradb\.LyraDbApplication') {
-            throw "jpackage 错误地绕过了 Spring Boot JarLauncher"
-          }
-
-          $mainJar = [System.IO.Path]::GetFullPath(
-            "backend/target/desktop/LyraDB/app/" +
-            "lyradb-backend-${{ steps.version.outputs.version }}.jar"
-          )
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $archive = [System.IO.Compression.ZipFile]::OpenRead($mainJar)
-          try {
-            $manifestEntry = $archive.GetEntry("META-INF/MANIFEST.MF")
-            if (-not $manifestEntry) {
-              throw "主 JAR 缺少 MANIFEST.MF"
-            }
-            $reader = [System.IO.StreamReader]::new($manifestEntry.Open())
-            try {
-              $manifest = $reader.ReadToEnd()
-            } finally {
-              $reader.Dispose()
-            }
-          } finally {
-            $archive.Dispose()
-          }
-          if ($manifest -notmatch
-              '(?m)^Main-Class: org\.springframework\.boot\.loader\.launch\.JarLauncher\r?$') {
-            throw "主 JAR Manifest 未使用 Spring Boot JarLauncher"
-          }
-
-          $workspace = [System.IO.Path]::GetFullPath("数据架构师工作空间")
-          New-Item -ItemType Directory -Path $workspace -Force | Out-Null
-          $smokePath = [System.IO.Path]::GetFullPath(
-            (Join-Path $workspace "release-desktop-smoke-${{ github.run_id }}")
-          )
-          if (-not $smokePath.StartsWith(
-              $workspace + [System.IO.Path]::DirectorySeparatorChar,
-              [System.StringComparison]::OrdinalIgnoreCase)) {
-            throw "拒绝使用工作区外的冒烟测试目录：$smokePath"
-          }
-          if (Test-Path -LiteralPath $smokePath) {
-            Remove-Item -LiteralPath $smokePath -Recurse -Force
-          }
-          New-Item -ItemType Directory -Path $smokePath | Out-Null
-
-          $listener = [System.Net.Sockets.TcpListener]::new(
-            [System.Net.IPAddress]::Loopback, 0
-          )
-          $listener.Start()
-          try {
-            $port = $listener.LocalEndpoint.Port
-          } finally {
-            $listener.Stop()
-          }
-
-          $env:LYRADB_H2_PATH = Join-Path $smokePath "data/lyradb"
-          $env:LYRADB_DESKTOP_KEY_PATH = Join-Path $smokePath "master.key"
-          $env:LOGGING_FILE_NAME = Join-Path $smokePath "lyradb.log"
-          $process = $null
-          try {
-            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-            $startInfo.FileName = $executable
-            $startInfo.Arguments = (
-              "--server.port=$port --app.desktop.tray-enabled=false"
-            )
-            $startInfo.UseShellExecute = $false
-            $startInfo.CreateNoWindow = $true
-            $process = [System.Diagnostics.Process]::new()
-            $process.StartInfo = $startInfo
-            if (-not $process.Start()) {
-              throw "无法启动 LyraDB.exe"
-            }
-
-            $ready = $false
-            $deadline = (Get-Date).AddSeconds(90)
-            do {
-              $process.Refresh()
-              if ($process.HasExited) {
-                $process.WaitForExit()
-                throw "LyraDB.exe 提前退出，退出码：$($process.ExitCode)"
-              }
-              try {
-                $response = Invoke-WebRequest `
-                  -Uri "http://127.0.0.1:$port/api/app/info" `
-                  -UseBasicParsing `
-                  -TimeoutSec 3
-                if ($response.StatusCode -eq 200) {
-                  $ready = $true
-                  break
-                }
-              } catch {
-                # 服务启动期间连接失败属于预期，继续轮询。
-              }
-              Start-Sleep -Seconds 1
-            } while ((Get-Date) -lt $deadline)
-
-            if (-not $ready) {
-              throw "LyraDB.exe 在 90 秒内未通过 HTTP 就绪检查"
-            }
-            Write-Output "Windows 便携包启动验证通过：127.0.0.1:$port"
-          } catch {
-            $logPath = Join-Path $smokePath "lyradb.log"
-            if (Test-Path -LiteralPath $logPath) {
-              Get-Content -LiteralPath $logPath -Tail 200
-            }
-            throw
-          } finally {
-            if ($process -and -not $process.HasExited) {
-              $process.Kill()
-              $process.WaitForExit()
-            }
-            if ($process) {
-              $process.Dispose()
-            }
-            for ($attempt = 1;
-                 $attempt -le 10 -and (Test-Path -LiteralPath $smokePath);
-                 $attempt++) {
-              try {
-                Remove-Item -LiteralPath $smokePath -Recurse -Force -ErrorAction Stop
-              } catch {
-                if ($attempt -eq 10) {
-                  throw
-                }
-                Start-Sleep -Milliseconds 500
-              }
-            }
-          }
+        run: ./package-desktop.ps1 -Version "${{ steps.version.outputs.version }}"
 
       - name: 生成 CycloneDX SBOM
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
           $metadata = [System.IO.Path]::GetFullPath("release-metadata")
-          New-Item -ItemType Directory -Path $metadata | Out-Null
+          New-Item -ItemType Directory -Path $metadata -Force | Out-Null
 
           Push-Location frontend
           try {
@@ -270,44 +179,42 @@ jobs:
             Pop-Location
           }
 
-          Push-Location backend
-          try {
-            mvn -B -ntp org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom `
-              "-Drevision=$version" `
-              "-DoutputFormat=json" `
-              "-DoutputName=bom" `
-              "-DincludeTestScope=false"
-            if ($LASTEXITCODE -ne 0) {
-              throw "后端 SBOM 生成失败，退出码：$LASTEXITCODE"
-            }
-          } finally {
-            Pop-Location
+          $javaBom = Join-Path $metadata "lyradb-java-$version.cdx.json"
+          mvn -B -ntp `
+            org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom `
+            "-Drevision=$version" `
+            "-DoutputFormat=json" `
+            "-DoutputName=lyradb-java-$version.cdx" `
+            "-DoutputDirectory=$metadata" `
+            "-DoutputReactorProjects=false" `
+            "-DincludeTestScope=false" `
+            "-Dcyclonedx.skipNotDeployed=false" `
+            "-Dcyclonedx.skipAttach=true"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Java 聚合 SBOM 生成失败，退出码：$LASTEXITCODE"
           }
-          Copy-Item -LiteralPath "backend/target/bom.json" `
-            -Destination (Join-Path $metadata "lyradb-backend-$version.cdx.json")
+          if (-not (Test-Path -LiteralPath $javaBom)) {
+            throw "Java 聚合 SBOM 未生成到预期路径：$javaBom"
+          }
 
           Get-ChildItem -LiteralPath $metadata -Filter "*.json" | ForEach-Object {
             Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json | Out-Null
           }
 
-      - name: 生成便携包与校验和
+      - name: 汇总产物与 SHA-256
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
-          $image = "backend/target/desktop/LyraDB"
-          $executable = Join-Path $image "LyraDB.exe"
+          $zip = "desktop/target/LyraDB-$version-windows-x64-portable.zip"
           $jar = "backend/target/lyradb-backend-$version.jar"
-          $zip = "backend/target/LyraDB-$version-windows-x64-portable.zip"
-          if (-not (Test-Path -LiteralPath $executable)) {
-            throw "jpackage 产物缺失：$executable"
+          foreach ($artifact in @($zip, $jar)) {
+            if (-not (Test-Path -LiteralPath $artifact)) {
+              throw "发布产物缺失：$artifact"
+            }
           }
-          if (-not (Test-Path -LiteralPath $jar)) {
-            throw "服务端产物缺失：$jar"
-          }
-          Compress-Archive -Path $image -DestinationPath $zip -CompressionLevel Optimal
 
           $stage = [System.IO.Path]::GetFullPath("release-assets")
-          New-Item -ItemType Directory -Path $stage | Out-Null
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
           Copy-Item -LiteralPath $zip, $jar -Destination $stage
           Copy-Item -Path "release-metadata/*.cdx.json" -Destination $stage
 
@@ -317,7 +224,16 @@ jobs:
               $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
               "$hash  $($_.Name)"
             }
-          $checksums | Set-Content -Encoding ascii (Join-Path $stage "SHA256SUMS.txt")
+          $checksumPath = Join-Path $stage "SHA256SUMS.txt"
+          $checksumText = ($checksums -join "`n") + "`n"
+          [System.IO.File]::WriteAllText(
+            $checksumPath,
+            $checksumText,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+          if ([System.IO.File]::ReadAllText($checksumPath).Contains("`r")) {
+            throw "SHA256SUMS 必须使用 LF 换行"
+          }
 
       - name: 上传待发布产物
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -342,6 +258,10 @@ jobs:
           name: release-assets
           path: release-assets
 
+      - name: 在 Linux 校验发布附件 SHA-256
+        working-directory: release-assets
+        run: sha256sum --check SHA256SUMS.txt
+
       - name: 生成 Sigstore/SLSA 来源证明
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
@@ -365,6 +285,9 @@ jobs:
         with:
           generate_release_notes: true
           fail_on_unmatched_files: true
+          body: |
+            个人版：真正的原生桌面数据库工作台，内置本地 AI 配置；不启动浏览器、WebView 或本地 HTTP 服务。
+            企业版：继续以独立 B/S 服务端 JAR 交付。
           files: |
             release-assets/LyraDB-*-windows-x64-portable.zip
             release-assets/lyradb-backend-*.jar

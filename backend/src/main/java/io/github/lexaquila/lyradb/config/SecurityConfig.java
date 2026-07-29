@@ -26,7 +26,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
-import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.security.web.util.matcher.OrRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
@@ -71,8 +71,7 @@ public class SecurityConfig {
 
     @Bean
     public DaoAuthenticationProvider authenticationProvider() {
-        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
-        provider.setUserDetailsService(dbUserDetailsService);
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider(dbUserDetailsService);
         provider.setPasswordEncoder(passwordEncoder());
         return provider;
     }
@@ -154,7 +153,7 @@ public class SecurityConfig {
 
     private static RequestMatcher endpointMatcher(String[] patterns) {
         return new OrRequestMatcher(Arrays.stream(patterns)
-                .map(AntPathRequestMatcher::antMatcher)
+                .map(PathPatternRequestMatcher.withDefaults()::matcher)
                 .map(RequestMatcher.class::cast)
                 .toList());
     }

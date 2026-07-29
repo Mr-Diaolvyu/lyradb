@@ -1,4 +1,4 @@
-# LyraDB 服务端镜像：前端质量门禁 → 后端验证 → 最小权限运行时
+# LyraDB 企业版服务端镜像：Vue 前端 → core/backend 验证 → 最小权限运行时。
 
 FROM node:24-alpine AS frontend-build
 WORKDIR /build/frontend
@@ -8,11 +8,15 @@ COPY frontend/ ./
 RUN npm run lint && npm run typecheck && npm run test && npm run build
 
 FROM maven:3.9-eclipse-temurin-17 AS backend-build
-WORKDIR /build/backend
-COPY backend/pom.xml ./
-COPY backend/src ./src
-COPY --from=frontend-build /build/frontend/dist ./src/main/resources/static
-RUN mvn -B -q clean verify
+WORKDIR /build
+COPY pom.xml ./
+COPY core/pom.xml core/pom.xml
+COPY backend/pom.xml backend/pom.xml
+COPY desktop/pom.xml desktop/pom.xml
+COPY core/src core/src
+COPY backend/src backend/src
+COPY --from=frontend-build /build/frontend/dist backend/src/main/resources/static
+RUN mvn -B -q -pl backend -am clean verify
 
 FROM eclipse-temurin:17-jre
 

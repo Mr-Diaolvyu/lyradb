@@ -1,102 +1,80 @@
 # LyraDB
 
-> Light as a lyre, master of all databases — a lightweight, AI-powered database management tool.
+> A native personal database workbench and an enterprise B/S data-governance platform.
 
 [![Java](https://img.shields.io/badge/Java-17-orange)]()
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.5-brightgreen)]()
 [![Vue](https://img.shields.io/badge/Vue-3.4-42b883)]()
-[![Version](https://img.shields.io/badge/version-3.0.0-334155)]()
+[![Version](https://img.shields.io/badge/version-3.0.1-334155)]()
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue)]()
 
 [简体中文](README.md) | **English**
 
-LyraDB provides one workspace for MySQL, PostgreSQL, Oracle, SQL Server, ClickHouse, SQLite, MongoDB, Redis, and MaxCompute. It combines SQL editing, AI assistance, ER diagrams, import/export, and enterprise governance.
+LyraDB supports MySQL, PostgreSQL, Oracle, SQL Server, SQLite, ClickHouse, MaxCompute, MongoDB, and Redis.
 
-## Capabilities
+## Editions
 
-| Capability | Description |
-| --- | --- |
-| Multiple data sources | On-demand drivers for relational, document, OLAP, and cloud warehouse sources |
-| SQL workbench | Monaco editor, completion, tabs, execution plans, and result export |
-| AI assistance | Natural-language SQL; custom AI and webhook egress are denied until hosts are allowlisted |
-| Enterprise governance | Workspace-scoped RBAC, grants, SQL-bound approvals, audit, and one-time exports |
-| Multiple clients | Browser, jpackage desktop app, and Android / HarmonyOS / iOS WebView shells |
-| Reproducible delivery | Lockfile installs, tests, PR CI, version checks, SBOMs, checksums, and provenance attestations |
-
-## Runtime modes
-
-| Scenario | Default edition | Purpose |
+| Product | Architecture | AI |
 | --- | --- | --- |
-| Local development / desktop profile | `personal` | Single-user local use |
-| `prod` profile / Docker Compose | `enterprise` | Authentication, RBAC, approvals, and audit |
+| Personal desktop | Native Java Swing C/S client; direct database connections; no browser, WebView, or local HTTP server | Available to individuals; API keys are encrypted locally |
+| Enterprise Web | Separately deployed Spring Boot + Vue B/S platform | Centrally configured and governed by workspace RBAC and audit |
+| Enterprise mobile | Native shell plus system WebView connected to the remote enterprise server | Uses enterprise-server capabilities |
 
-Production has no default administrator password. On an empty enterprise database,
-`LYRADB_BOOTSTRAP_ADMIN_USERNAME` and `LYRADB_BOOTSTRAP_ADMIN_PASSWORD` are required. The password must be 12–128 characters, contain uppercase and lowercase letters, a number, and a special character, and must not contain the username. Remove both bootstrap variables from the runtime environment after the first successful initialization.
+The `v3.0.0` Windows package wrapped a local Web server. Starting with `v3.0.1`, the personal Windows build is a real native desktop client. The enterprise B/S server remains a separate artifact.
 
-## Development
+## Native desktop capabilities
 
-Requirements: JDK 17+, Maven 3.8+, Node.js 20, and npm.
+- Native database navigator, SQL tabs, result grids, exact cancellation, transactions, and CSV export.
+- Column, primary-key, DDL, and JDBC foreign-key ER metadata; ER diagrams export to PNG.
+- SQL safety review with explicit confirmation for destructive statements.
+- AI SQL generation, explanation, repair, optimization, and security review. AI output is never executed automatically.
+- DeepSeek, Alibaba Cloud Model Studio, OpenAI, GLM, Volcengine/Doubao, local Ollama, and custom OpenAI-compatible endpoints.
+- AES-256-GCM protection for database secrets and AI keys in the local state store.
 
-```bash
-cd backend
-mvn spring-boot:run
+AI settings are available from `AI → Provider / API Key Settings`. HTTPS is required except for loopback-hosted local models.
+
+## Build
+
+Native Windows package, using JDK 21 with `jpackage`:
+
+```powershell
+.\package-desktop.ps1 -Version 3.0.1
 ```
 
+Enterprise server:
+
 ```bash
-cd frontend
-npm ci
-npm run dev
+bash package-server.sh 3.0.1
 ```
 
 Quality gates:
 
 ```bash
+mvn -B -ntp -pl desktop -am clean verify
+mvn -B -ntp -pl backend -am clean verify
+```
+
+```bash
 cd frontend
+npm ci
 npm run lint
 npm run typecheck
 npm run test
 npm run build
 ```
 
-```bash
-cd backend
-mvn -B clean verify
-```
+The Windows packaging script builds the native app image, launches the real EXE in smoke-test mode, and verifies that no browser, WebView, or local HTTP server is started.
 
-## Docker deployment
+## Docker enterprise deployment
 
 ```bash
 cp .env.example .env
-# Replace every placeholder and set the real HTTPS origin.
+# Replace all placeholders and configure the real HTTPS origin.
 docker compose config
 docker compose up -d
 ```
 
-Compose defaults to `prod + enterprise`, binds only `127.0.0.1:8080`, runs as non-root UID/GID `10001`, uses a read-only root filesystem, and persists `/app/data` and `/home/lyradb/.lyradb`. Missing encryption, database, or CORS settings fail startup. An empty enterprise user database additionally requires bootstrap-admin variables; remove them after initialization.
-
-Keep `LYRADB_COOKIE_SECURE=true` behind an HTTPS reverse proxy. Loopback-only HTTP testing requires explicit `LYRADB_COOKIE_SECURE=false` and an exact HTTP `CORS_ALLOWED_ORIGINS`.
-
-## Packaging
-
-```bash
-bash package-server.sh 3.0.0
-bash package-desktop.sh 3.0.0
-```
-
-PowerShell equivalents are available at the repository root. Packaging uses `npm ci`, runs frontend lint/typecheck/tests/build, and then runs `mvn clean verify`; it stops on any failed command.
-
-## Mobile security
-
-Release mobile clients accept HTTPS only. Android allows an explicit HTTP endpoint only in debug builds. Server URLs are ordinary configuration stored in platform preferences; credentials are not stored there. Authentication stays in the system WebView cookie store, and Blob exports use bounded native save bridges.
-
-Android is built in PR CI. iOS and HarmonyOS still require Xcode and DevEco Studio build and device verification.
-
-## Documentation
-
-- [Configuration](wiki/配置说明.md)
-- [Development guide](wiki/开发指南.md)
-- [Mobile clients](wiki/移动端.md)
-- [Architecture](wiki/系统架构.md)
+The Compose template uses `prod + enterprise`, binds only to `127.0.0.1:8080`, runs as non-root UID/GID `10001`, and requires explicit bootstrap administrator and encryption settings.
 
 ## License
 

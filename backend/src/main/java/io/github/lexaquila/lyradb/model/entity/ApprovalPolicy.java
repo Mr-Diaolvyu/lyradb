@@ -3,7 +3,7 @@ package io.github.lexaquila.lyradb.model.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
-import org.hibernate.annotations.GenericGenerator;
+import org.hibernate.annotations.UuidGenerator;
 
 /**
  * 审批策略（工作空间级，覆盖全局默认）
@@ -16,8 +16,8 @@ import org.hibernate.annotations.GenericGenerator;
 public class ApprovalPolicy {
 
     @Id
-    @GeneratedValue(generator = "uuid2")
-    @GenericGenerator(name = "uuid2", strategy = "org.hibernate.id.UUIDGenerator")
+    @GeneratedValue
+    @UuidGenerator
     @Column(length = 36)
     private String id;
 

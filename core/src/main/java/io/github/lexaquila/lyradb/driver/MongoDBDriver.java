@@ -6,6 +6,8 @@ import io.github.lexaquila.lyradb.model.dto.TreeNode;
 import io.github.lexaquila.lyradb.model.entity.DriverInfo;
 
 import java.lang.reflect.Method;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /**
@@ -31,6 +33,8 @@ import java.util.*;
  * </ul>
  */
 public class MongoDBDriver extends AbstractNoSqlDriver {
+    private static final System.Logger LOGGER =
+            System.getLogger(MongoDBDriver.class.getName());
 
     public MongoDBDriver(DriverInfo driverInfo, ClassLoader driverClassLoader) {
         super(driverInfo, driverClassLoader);
@@ -42,13 +46,9 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
         try {
             client = (AutoCloseableMongoClient) connect(params);
             // 通过反射调用MongoClient的ping命令
-            Class<?> clientClass = client.client.getClass();
-            Method getDatabase = clientClass.getMethod("getDatabase", String.class);
+            Method getDatabase = client.clientClass.getMethod("getDatabase", String.class);
             Object adminDb = getDatabase.invoke(client.client, "admin");
-            Method ping = adminDb.getClass().getMethod("runCommand", Map.class);
-            Map<String, Object> pingCmd = new HashMap<>();
-            pingCmd.put("ping", 1);
-            ping.invoke(adminDb, pingCmd);
+            runCommand(adminDb, Map.of("ping", 1));
             return true;
         } catch (Exception e) {
             return false;
@@ -69,35 +69,10 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
         boolean ssl = getBooleanParam(params, "ssl", false);
 
         // 使用反射创建MongoClient实例（驱动在隔离的ClassLoader中）
-        // MongoClientSettings → applyToClusterSettings → hosts
         Class<?> settingsClass = Class.forName("com.mongodb.MongoClientSettings", true, driverClassLoader);
         Object settingsBuilder = settingsClass.getMethod("builder").invoke(null);
-
-        // 设置ServerAddress
-        Class<?> serverAddressClass = Class.forName("com.mongodb.ServerAddress", true, driverClassLoader);
-        Object serverAddress = serverAddressClass
-                .getConstructor(String.class, int.class)
-                .newInstance(host, port);
-
-        // 设置host
-        Method applyToClusterSettings = settingsBuilder.getClass()
-                .getMethod("applyToClusterSettings",
-                        Class.forName("com.mongodb.MongoClientSettings$Builder", true, driverClassLoader));
-
-        // 使用简化的反射方式：直接通过MongoClient URI创建
-        StringBuilder uriBuilder = new StringBuilder("mongodb://");
-        if (username != null && !username.isEmpty()) {
-            uriBuilder.append(username).append(":").append(password != null ? password : "").append("@");
-        }
-        uriBuilder.append(host).append(":").append(port);
-        if (authSource != null && !authSource.isEmpty()) {
-            uriBuilder.append("/?authSource=").append(authSource);
-        }
-        if (ssl) {
-            uriBuilder.append(authSource != null ? "&ssl=true" : "/?ssl=true");
-        }
-
-        String connectionString = uriBuilder.toString();
+        String connectionString = buildConnectionString(
+                host, port, username, password, authSource, ssl);
 
         // 通过ConnectionString创建
         Class<?> connStringClass = Class.forName("com.mongodb.ConnectionString", true, driverClassLoader);
@@ -125,6 +100,73 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
         if (connection instanceof AutoCloseableMongoClient) {
             ((AutoCloseableMongoClient) connection).close();
         }
+    }
+
+    /**
+     * 构造 MongoDB URI。凭据和查询参数必须按 URI 组件编码，防止特殊字符
+     * 改写主机或连接选项。
+     */
+    static String buildConnectionString(String host, int port,
+            String username, String password, String authSource, boolean ssl) {
+        if (host == null || host.isBlank()) {
+            throw new IllegalArgumentException("MongoDB 主机不能为空");
+        }
+        if (port < 1 || port > 65_535) {
+            throw new IllegalArgumentException("MongoDB 端口超出有效范围");
+        }
+
+        String normalizedHost = host.trim();
+        if (normalizedHost.indexOf('/') >= 0 || normalizedHost.indexOf('?') >= 0
+                || normalizedHost.indexOf('#') >= 0 || normalizedHost.indexOf('@') >= 0) {
+            throw new IllegalArgumentException("MongoDB 主机包含非法 URI 字符");
+        }
+        boolean startsBracket = normalizedHost.startsWith("[");
+        boolean endsBracket = normalizedHost.endsWith("]");
+        if (startsBracket != endsBracket) {
+            throw new IllegalArgumentException("MongoDB IPv6 主机括号不完整");
+        }
+        if (normalizedHost.indexOf(':') >= 0 && !startsBracket) {
+            normalizedHost = "[" + normalizedHost + "]";
+        }
+
+        StringBuilder uri = new StringBuilder("mongodb://");
+        if (username != null && !username.isEmpty()) {
+            uri.append(encodeUriComponent(username))
+                    .append(':')
+                    .append(encodeUriComponent(password == null ? "" : password))
+                    .append('@');
+        }
+        uri.append(normalizedHost).append(':').append(port).append('/');
+
+        List<String> options = new ArrayList<>();
+        if (authSource != null && !authSource.isEmpty()) {
+            options.add("authSource=" + encodeUriComponent(authSource));
+        }
+        if (ssl) {
+            options.add("ssl=true");
+        }
+        if (!options.isEmpty()) {
+            uri.append('?').append(String.join("&", options));
+        }
+        return uri.toString();
+    }
+
+    private static String encodeUriComponent(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8)
+                .replace("+", "%20");
+    }
+
+    private Object runCommand(Object database, Map<String, Object> command)
+            throws Exception {
+        Class<?> bsonClass = Class.forName(
+                "org.bson.conversions.Bson", true, driverClassLoader);
+        Class<?> documentClass = Class.forName(
+                "org.bson.Document", true, driverClassLoader);
+        Object document = documentClass.getConstructor(Map.class).newInstance(command);
+        Class<?> databaseClass = Class.forName(
+                "com.mongodb.client.MongoDatabase", true, driverClassLoader);
+        Method runCommand = databaseClass.getMethod("runCommand", bsonClass);
+        return runCommand.invoke(database, document);
     }
 
     @Override
@@ -191,13 +233,22 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
         List<TreeNode> nodes = new ArrayList<>();
 
         Method listDatabaseNames = client.getClass().getMethod("listDatabaseNames");
-        Iterable<String> dbNames = (Iterable<String>) listDatabaseNames.invoke(client);
-
-        for (String dbName : dbNames) {
-            TreeNode node = TreeNode.of(dbName, dbName, "DATABASE", dbName);
-            node.setIconType("database");
-            node.setHasChildren(true);
-            nodes.add(node);
+        Object databaseNames = listDatabaseNames.invoke(client);
+        Method iterator = databaseNames.getClass().getMethod("iterator");
+        Object cursor = iterator.invoke(databaseNames);
+        try {
+            Method hasNext = cursor.getClass().getMethod("hasNext");
+            Method next = cursor.getClass().getMethod("next");
+            while ((Boolean) hasNext.invoke(cursor)) {
+                String dbName = String.valueOf(next.invoke(cursor));
+                TreeNode node = TreeNode.of(
+                        dbName, dbName, "DATABASE", dbName);
+                node.setIconType("database");
+                node.setHasChildren(true);
+                nodes.add(node);
+            }
+        } finally {
+            closeMongoCursor(cursor);
         }
 
         return nodes;
@@ -213,33 +264,44 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
         Object database = getDatabase.invoke(client, dbName);
 
         Method listCollectionNames = database.getClass().getMethod("listCollectionNames");
-        Iterable<String> collectionNames = (Iterable<String>) listCollectionNames.invoke(database);
+        Object collectionNames = listCollectionNames.invoke(database);
+        Method iterator = collectionNames.getClass().getMethod("iterator");
+        Object cursor = iterator.invoke(collectionNames);
+        try {
+            Method hasNext = cursor.getClass().getMethod("hasNext");
+            Method next = cursor.getClass().getMethod("next");
+            while ((Boolean) hasNext.invoke(cursor)) {
+                String collName = String.valueOf(next.invoke(cursor));
+                if (!collName.startsWith("system.")) {
+                    TreeNode node = TreeNode.of(
+                            dbName + "/" + collName,
+                            collName,
+                            "COLLECTION",
+                            dbName + "/" + collName);
+                    node.setIconType("collection");
+                    node.setHasChildren(true);
 
-        for (String collName : collectionNames) {
-            if (!collName.startsWith("system.")) {
-                TreeNode node = TreeNode.of(
-                        dbName + "/" + collName,
-                        collName,
-                        "COLLECTION",
-                        dbName + "/" + collName);
-                node.setIconType("collection");
-                node.setHasChildren(true);
-
-                // 获取Collection统计信息
-                try {
-                    Map<String, Object> stats = getCollectionStats(client, dbName, collName);
-                    if (stats != null) {
-                        node.getProperties().put("count", stats.get("count"));
-                        node.getProperties().put("size", stats.get("size"));
-                        node.getProperties().put("storageSize", stats.get("storageSize"));
-                        node.getProperties().put("nindexes", stats.get("nindexes"));
+                    try {
+                        Map<String, Object> stats =
+                                getCollectionStats(client, dbName, collName);
+                        if (stats != null) {
+                            node.getProperties().put(
+                                    "count", stats.get("count"));
+                            node.getProperties().put(
+                                    "size", stats.get("size"));
+                            node.getProperties().put(
+                                    "storageSize", stats.get("storageSize"));
+                            node.getProperties().put(
+                                    "nindexes", stats.get("nindexes"));
+                        }
+                    } catch (Exception exception) {
+                        // 统计信息获取失败不影响列表展示。
                     }
-                } catch (Exception e) {
-                    // 统计信息获取失败不影响列表展示
+                    nodes.add(node);
                 }
-
-                nodes.add(node);
             }
+        } finally {
+            closeMongoCursor(cursor);
         }
 
         return nodes;
@@ -251,11 +313,7 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
     private Map<String, Object> getCollectionStats(Object client, String dbName, String collName) throws Exception {
         Method getDatabase = client.getClass().getMethod("getDatabase", String.class);
         Object database = getDatabase.invoke(client, dbName);
-
-        Method runCommand = database.getClass().getMethod("runCommand", Map.class);
-        Map<String, Object> collStats = new HashMap<>();
-        collStats.put("collStats", collName);
-        Object result = runCommand.invoke(database, collStats);
+        Object result = runCommand(database, Map.of("collStats", collName));
 
         Map<String, Object> stats = new LinkedHashMap<>();
         if (result != null) {
@@ -293,34 +351,40 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
         Method iterator = indexesIterable.getClass().getMethod("iterator");
         Object cursor = iterator.invoke(indexesIterable);
 
-        Method hasNext = cursor.getClass().getMethod("hasNext");
-        Method next = cursor.getClass().getMethod("next");
+        try {
+            Method hasNext = cursor.getClass().getMethod("hasNext");
+            Method next = cursor.getClass().getMethod("next");
 
-        while ((Boolean) hasNext.invoke(cursor)) {
-            Object indexDoc = next.invoke(cursor);
-            if (indexDoc != null) {
-                Method get = indexDoc.getClass().getMethod("get", Object.class);
-                Object nameVal = get.invoke(indexDoc, "name");
-                String indexName = nameVal != null ? nameVal.toString() : "unknown";
+            while ((Boolean) hasNext.invoke(cursor)) {
+                Object indexDoc = next.invoke(cursor);
+                if (indexDoc != null) {
+                    Method get = indexDoc.getClass().getMethod("get", Object.class);
+                    Object nameVal = get.invoke(indexDoc, "name");
+                    String indexName = nameVal != null
+                            ? nameVal.toString() : "unknown";
 
-                TreeNode node = TreeNode.of(
-                        path + "#" + indexName,
-                        indexName,
-                        "INDEX",
-                        path + "#" + indexName);
-                node.setIconType("index");
-                node.setHasChildren(false);
+                    TreeNode node = TreeNode.of(
+                            path + "#" + indexName,
+                            indexName,
+                            "INDEX",
+                            path + "#" + indexName);
+                    node.setIconType("index");
+                    node.setHasChildren(false);
 
-                // 索引属性
-                Object keys = get.invoke(indexDoc, "key");
-                Object unique = get.invoke(indexDoc, "unique");
-                Object sparse = get.invoke(indexDoc, "sparse");
-                node.getProperties().put("keys", keys != null ? keys.toString() : "");
-                node.getProperties().put("unique", unique != null ? unique : false);
-                node.getProperties().put("sparse", sparse != null ? sparse : false);
-
-                nodes.add(node);
+                    Object keys = get.invoke(indexDoc, "key");
+                    Object unique = get.invoke(indexDoc, "unique");
+                    Object sparse = get.invoke(indexDoc, "sparse");
+                    node.getProperties().put(
+                            "keys", keys != null ? keys.toString() : "");
+                    node.getProperties().put(
+                            "unique", unique != null ? unique : false);
+                    node.getProperties().put(
+                            "sparse", sparse != null ? sparse : false);
+                    nodes.add(node);
+                }
             }
+        } finally {
+            closeMongoCursor(cursor);
         }
 
         return nodes;
@@ -358,17 +422,20 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
         Object cursor = iterator.invoke(limited);
 
         Set<String> fieldNames = new LinkedHashSet<>();
-        Method hasNext = cursor.getClass().getMethod("hasNext");
-        Method next = cursor.getClass().getMethod("next");
+        try {
+            Method hasNext = cursor.getClass().getMethod("hasNext");
+            Method next = cursor.getClass().getMethod("next");
 
-        while ((Boolean) hasNext.invoke(cursor)) {
-            Object doc = next.invoke(cursor);
-            // 获取文档的keySet
-            if (doc != null) {
-                Method keySet = doc.getClass().getMethod("keySet");
-                Set<String> keys = (Set<String>) keySet.invoke(doc);
-                fieldNames.addAll(keys);
+            while ((Boolean) hasNext.invoke(cursor)) {
+                Object doc = next.invoke(cursor);
+                if (doc != null) {
+                    Method keySet = doc.getClass().getMethod("keySet");
+                    Set<String> keys = (Set<String>) keySet.invoke(doc);
+                    fieldNames.addAll(keys);
+                }
             }
+        } finally {
+            closeMongoCursor(cursor);
         }
 
         // 转换为ColumnMetadata
@@ -428,31 +495,34 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
         Method iterator = findIterable.getClass().getMethod("iterator");
         Object cursor = iterator.invoke(findIterable);
 
-        Method hasNext = cursor.getClass().getMethod("hasNext");
-        Method next = cursor.getClass().getMethod("next");
-
         Set<String> allColumns = new LinkedHashSet<>();
         List<Map<String, Object>> rows = new ArrayList<>();
         int rowCount = 0;
+        try {
+            Method hasNext = cursor.getClass().getMethod("hasNext");
+            Method next = cursor.getClass().getMethod("next");
 
-        while ((Boolean) hasNext.invoke(cursor) && (limit <= 0 || rowCount < limit)) {
-            Object doc = next.invoke(cursor);
-            Map<String, Object> row = new LinkedHashMap<>();
+            while ((Boolean) hasNext.invoke(cursor)
+                    && (limit <= 0 || rowCount < limit)) {
+                Object doc = next.invoke(cursor);
+                Map<String, Object> row = new LinkedHashMap<>();
 
-            if (doc != null) {
-                Method keySet = doc.getClass().getMethod("keySet");
-                Set<String> keys = (Set<String>) keySet.invoke(doc);
+                if (doc != null) {
+                    Method keySet = doc.getClass().getMethod("keySet");
+                    Set<String> keys = (Set<String>) keySet.invoke(doc);
 
-                for (String key : keys) {
-                    Method get = doc.getClass().getMethod("get", Object.class);
-                    Object value = get.invoke(doc, key);
-                    row.put(key, value != null ? value.toString() : null);
-                    allColumns.add(key);
+                    for (String key : keys) {
+                        Method get = doc.getClass().getMethod("get", Object.class);
+                        Object value = get.invoke(doc, key);
+                        row.put(key, value != null ? value.toString() : null);
+                        allColumns.add(key);
+                    }
                 }
+                rows.add(row);
+                rowCount++;
             }
-
-            rows.add(row);
-            rowCount++;
+        } finally {
+            closeMongoCursor(cursor);
         }
 
         for (String col : allColumns) {
@@ -491,6 +561,10 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
 
         Class<?> docClass = Class.forName("org.bson.Document", true, driverClassLoader);
         java.lang.reflect.Constructor<?> docCtor = docClass.getConstructor(Map.class);
+        Class<?> bsonClass = Class.forName(
+                "org.bson.conversions.Bson", true, driverClassLoader);
+        Class<?> mongoCollectionClass = Class.forName(
+                "com.mongodb.client.MongoCollection", true, driverClassLoader);
 
         switch (op) {
             case "update": {
@@ -500,7 +574,8 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
                 Object update = cmd.get("update") != null
                         ? docCtor.newInstance(cmd.get("update"))
                         : docCtor.newInstance(new HashMap<>());
-                Method updateOne = collection.getClass().getMethod("updateOne", Object.class, Object.class);
+                Method updateOne = mongoCollectionClass.getMethod(
+                        "updateOne", bsonClass, bsonClass);
                 Object result = updateOne.invoke(collection, filter, update);
                 return getMongoCount(result, "getModifiedCount");
             }
@@ -508,7 +583,7 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
                 Object document = cmd.get("document") != null
                         ? docCtor.newInstance(cmd.get("document"))
                         : docCtor.newInstance(new HashMap<>());
-                Method insertOne = collection.getClass().getMethod("insertOne", Object.class);
+                Method insertOne = mongoCollectionClass.getMethod("insertOne", Object.class);
                 insertOne.invoke(collection, document);
                 return 1;
             }
@@ -516,7 +591,7 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
                 Object filter = cmd.get("filter") != null
                         ? docCtor.newInstance(normalizeObjectId(cmd.get("filter")))
                         : docCtor.newInstance(new HashMap<>());
-                Method deleteOne = collection.getClass().getMethod("deleteOne", Object.class);
+                Method deleteOne = mongoCollectionClass.getMethod("deleteOne", bsonClass);
                 Object result = deleteOne.invoke(collection, filter);
                 return getMongoCount(result, "getDeletedCount");
             }
@@ -554,6 +629,23 @@ public class MongoDBDriver extends AbstractNoSqlDriver {
             return val instanceof Number ? ((Number) val).intValue() : 0;
         } catch (NoSuchMethodException e) {
             return 0;
+        }
+    }
+
+    /**
+     * MongoCursor 持有服务端游标和网络资源，所有遍历路径都必须显式关闭。
+     */
+    private void closeMongoCursor(Object cursor) {
+        if (cursor == null) {
+            return;
+        }
+        try {
+            Class<?> cursorClass = Class.forName(
+                    "com.mongodb.client.MongoCursor", true, driverClassLoader);
+            cursorClass.getMethod("close").invoke(cursor);
+        } catch (Exception exception) {
+            LOGGER.log(System.Logger.Level.WARNING,
+                    "关闭 MongoDB 游标失败", exception);
         }
     }
 

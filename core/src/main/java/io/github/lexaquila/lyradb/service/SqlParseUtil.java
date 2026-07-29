@@ -296,8 +296,8 @@ public final class SqlParseUtil {
             validateExpression(plain.getWhere(), enterprisePolicy);
             validateExpression(plain.getHaving(), enterprisePolicy);
             validateExpression(plain.getQualify(), enterprisePolicy);
-            if (plain.getGroupBy() != null && plain.getGroupBy().getGroupByExpressions() != null) {
-                validateExpressions(plain.getGroupBy().getGroupByExpressions(), enterprisePolicy);
+            if (plain.getGroupBy() != null && plain.getGroupBy().getGroupByExpressionList() != null) {
+                validateExpressions(plain.getGroupBy().getGroupByExpressionList(), enterprisePolicy);
             }
             if (plain.getOrderByElements() != null) {
                 plain.getOrderByElements().forEach(
@@ -414,9 +414,6 @@ public final class SqlParseUtil {
                     validateExpressions(join.getOnExpressions(), true);
                 }
             }
-            if (update.getSelect() != null) {
-                validateReadOnlySelect(update.getSelect(), true);
-            }
             return;
         }
         if (statement instanceof Insert insert) {
@@ -473,7 +470,12 @@ public final class SqlParseUtil {
                 continue;
             }
             for (int index = 0; index < updateSet.getValues().size(); index++) {
-                validateExpression(updateSet.getValue(index), true);
+                Expression value = updateSet.getValue(index);
+                if (value instanceof Select select) {
+                    validateReadOnlySelect(select, true);
+                } else {
+                    validateExpression(value, true);
+                }
             }
         }
     }
@@ -723,8 +725,8 @@ public final class SqlParseUtil {
             }
         }
         if (plain.getGroupBy() != null
-                && plain.getGroupBy().getGroupByExpressions() != null) {
-            plain.getGroupBy().getGroupByExpressions().forEach(inspect);
+                && plain.getGroupBy().getGroupByExpressionList() != null) {
+            plain.getGroupBy().getGroupByExpressionList().forEach(inspect);
         }
         if (plain.getOrderByElements() != null) {
             plain.getOrderByElements().forEach(

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img"
+     aria-labelledby="title description">
+  <title id="title">LyraDB</title>
+  <desc id="description">蓝色圆角方形中的白色数据库标识</desc>
+  <rect x="32" y="32" width="448" height="448" rx="128" fill="#4f8cff"/>
+  <g fill="none" stroke="#ffffff" stroke-width="28"
+     stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="256" cy="176" rx="128" ry="48"/>
+    <path d="M128 176v160c0 27 57 48 128 48s128-21 128-48V176"/>
+    <path d="M128 256c0 27 57 48 128 48s128-21 128-48"/>
+  </g>
+</svg>

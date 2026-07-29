@@ -2,12 +2,12 @@
 #
 # 1. 复制 .env.example 为 .env，填写所有必填项。
 # 2. 默认仅绑定宿主机回环地址，建议由同机 HTTPS 反向代理对外提供服务。
-# 3. 本文件是企业安全部署模板；个人版请使用 dev/desktop profile 或另行维护配置。
+# 3. 本文件只交付企业 B/S；个人版请使用 GitHub Release 中的原生桌面便携包。
 services:
   lyradb:
     build:
       context: .
-    image: lyradb:${LYRADB_IMAGE_TAG:-3.0.0}
+    image: lyradb:${LYRADB_IMAGE_TAG:-3.0.1}
     user: "10001:10001"
     ports:
       - "127.0.0.1:${LYRADB_PORT:-8080}:8080"

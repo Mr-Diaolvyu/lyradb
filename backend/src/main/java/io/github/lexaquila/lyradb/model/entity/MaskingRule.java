@@ -4,7 +4,7 @@ package io.github.lexaquila.lyradb.model.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
-import org.hibernate.annotations.GenericGenerator;
+import org.hibernate.annotations.UuidGenerator;
 
 import java.time.LocalDateTime;
 
@@ -25,8 +25,8 @@ import java.time.LocalDateTime;
 public class MaskingRule {
 
     @Id
-    @GeneratedValue(generator = "uuid2")
-    @GenericGenerator(name = "uuid2", strategy = "org.hibernate.id.UUIDGenerator")
+    @GeneratedValue
+    @UuidGenerator
     @Column(length = 36)
     private String id;
 

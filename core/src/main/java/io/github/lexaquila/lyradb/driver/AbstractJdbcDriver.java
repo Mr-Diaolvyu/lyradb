@@ -29,6 +29,8 @@ import java.util.*;
  * </ul>
  */
 public abstract class AbstractJdbcDriver implements DatabaseDriver {
+    private static final System.Logger LOGGER =
+            System.getLogger(AbstractJdbcDriver.class.getName());
 
     protected final DriverInfo driverInfo;
     protected final DriverCapability capabilities;
@@ -128,14 +130,32 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
 
     @Override
     public void disconnect(Object connection) {
-        if (connection instanceof Connection) {
-            try {
-                if (!((Connection) connection).isClosed()) {
-                    ((Connection) connection).close();
-                }
-            } catch (SQLException e) {
-                // 忽略关闭错误
+        if (!(connection instanceof Connection jdbc)) {
+            return;
+        }
+
+        try {
+            if (jdbc.isClosed()) {
+                return;
             }
+        } catch (SQLException exception) {
+            LOGGER.log(System.Logger.Level.WARNING,
+                    "检查 JDBC 连接状态失败，仍将尝试回滚并关闭", exception);
+        }
+
+        try {
+            if (!jdbc.getAutoCommit()) {
+                jdbc.rollback();
+            }
+        } catch (SQLException exception) {
+            LOGGER.log(System.Logger.Level.WARNING,
+                    "断开 JDBC 连接前显式回滚失败", exception);
+        }
+
+        try {
+            jdbc.close();
+        } catch (SQLException exception) {
+            LOGGER.log(System.Logger.Level.WARNING, "关闭 JDBC 连接失败", exception);
         }
     }
 
@@ -182,6 +202,24 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
             return getTables(conn, null, null);
         }
 
+        if (!usesCatalogAsNamespace() && !"MAXCOMPUTE".equals(driverInfo.getDbType())) {
+            try (ResultSet schemas = metaData.getSchemas()) {
+                while (schemas.next()) {
+                    String schemaName = schemas.getString("TABLE_SCHEM");
+                    if (schemaName == null || schemaName.isBlank()) {
+                        continue;
+                    }
+                    TreeNode node = TreeNode.of(schemaName, schemaName, "SCHEMA", schemaName);
+                    node.setIconType("schema");
+                    node.setHasChildren(true);
+                    nodes.add(node);
+                }
+            }
+            if (!nodes.isEmpty()) {
+                return nodes;
+            }
+        }
+
         ResultSet rs = metaData.getCatalogs();
         while (rs.next()) {
             String dbName = rs.getString("TABLE_CAT");
@@ -217,7 +255,13 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
      * </p>
      */
     protected List<TreeNode> getSchemaChildren(Connection conn, String parentPath) throws SQLException {
-        List<TreeNode> nodes = new ArrayList<>(getTables(conn, null, parentPath));
+        if (isSqlServer() && !parentPath.contains("/")) {
+            return getCatalogSchemas(conn, parentPath);
+        }
+        MetadataNamespace owner = metadataNamespace(parentPath);
+        String catalog = owner.catalog();
+        String schema = owner.schema();
+        List<TreeNode> nodes = new ArrayList<>(getTables(conn, catalog, schema));
 
         // 追加元数据组节点（能力门控 + 失败不影响表列表）
         if (capabilities.isSupportsProcedures()) {
@@ -239,6 +283,27 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         return node;
     }
 
+    private List<TreeNode> getCatalogSchemas(
+            Connection conn, String catalog) throws SQLException {
+        List<TreeNode> nodes = new ArrayList<>();
+        DatabaseMetaData metaData = conn.getMetaData();
+        try (ResultSet schemas = metaData.getSchemas(catalog, "%")) {
+            while (schemas.next()) {
+                String schemaName = schemas.getString("TABLE_SCHEM");
+                if (schemaName == null || schemaName.isBlank()) {
+                    continue;
+                }
+                String path = catalog + "/" + schemaName;
+                TreeNode node = TreeNode.of(
+                        path, schemaName, "SCHEMA", path);
+                node.setIconType("schema");
+                node.setHasChildren(true);
+                nodes.add(node);
+            }
+        }
+        return nodes;
+    }
+
     /**
      * 列出 schema 下的存储过程
      */
@@ -246,7 +311,9 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         List<TreeNode> nodes = new ArrayList<>();
         try {
             DatabaseMetaData metaData = conn.getMetaData();
-            try (ResultSet rs = metaData.getProcedures(null, schema, "%")) {
+            MetadataNamespace owner = metadataNamespace(schema);
+            try (ResultSet rs = metaData.getProcedures(
+                    owner.catalog(), owner.schema(), "%")) {
                 while (rs.next()) {
                     String name = rs.getString("PROCEDURE_NAME");
                     if (name == null)
@@ -271,7 +338,9 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         List<TreeNode> nodes = new ArrayList<>();
         try {
             DatabaseMetaData metaData = conn.getMetaData();
-            try (ResultSet rs = metaData.getFunctions(null, schema, "%")) {
+            MetadataNamespace owner = metadataNamespace(schema);
+            try (ResultSet rs = metaData.getFunctions(
+                    owner.catalog(), owner.schema(), "%")) {
                 while (rs.next()) {
                     String name = rs.getString("FUNCTION_NAME");
                     if (name == null)
@@ -298,7 +367,9 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         List<TreeNode> nodes = new ArrayList<>();
         try {
             DatabaseMetaData metaData = conn.getMetaData();
-            try (ResultSet rs = metaData.getTables(null, schema, "%", new String[] { "TRIGGER" })) {
+            MetadataNamespace owner = metadataNamespace(schema);
+            try (ResultSet rs = metaData.getTables(
+                    owner.catalog(), owner.schema(), "%", new String[] { "TRIGGER" })) {
                 while (rs.next()) {
                     String name = rs.getString("TABLE_NAME");
                     if (name == null)
@@ -336,11 +407,14 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
             String tableType = rs.getString("TABLE_TYPE");
             String nodeType = "TABLE".equals(tableType) ? "TABLE" : "VIEW";
 
+            String namespace = catalog != null && schema != null
+                    ? catalog + "/" + schema
+                    : schema != null ? schema : catalog;
             TreeNode node = TreeNode.of(
-                    schema != null ? schema + "." + tableName : tableName,
+                    namespace != null ? namespace + "." + tableName : tableName,
                     tableName,
                     nodeType,
-                    schema != null ? schema + "/" + tableName : tableName);
+                    namespace != null ? namespace + "/" + tableName : tableName);
             node.setIconType(nodeType.toLowerCase());
             node.setHasChildren(true);
             nodes.add(node);
@@ -359,7 +433,7 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         // 按 (TABLE_CAT, TABLE_SCHEM) 归属分组收集。catalog 传 null 时，以 catalog 组织库的驱动
         // （如 MySQL/MaxCompute）会忽略 schema 参数并匹配所有库中的同名表，导致列成倍重复。
         Map<String, List<ColumnMetadata>> grouped = new LinkedHashMap<>();
-        ResultSet rs = metaData.getColumns(null, schemaName, tableName, "%");
+        ResultSet rs = metaData.getColumns(metadataCatalog(schemaName), metadataSchema(schemaName), tableName, "%");
         while (rs.next()) {
             ColumnMetadata col = new ColumnMetadata();
             col.setName(rs.getString("COLUMN_NAME"));
@@ -380,7 +454,7 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         List<ColumnMetadata> columns = selectOwnerColumns(grouped, schemaName);
 
         // 获取主键信息
-        rs = metaData.getPrimaryKeys(null, schemaName, tableName);
+        rs = metaData.getPrimaryKeys(metadataCatalog(schemaName), metadataSchema(schemaName), tableName);
         while (rs.next()) {
             String pkCol = rs.getString("COLUMN_NAME");
             for (ColumnMetadata col : columns) {
@@ -401,9 +475,14 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
     private List<ColumnMetadata> selectOwnerColumns(Map<String, List<ColumnMetadata>> grouped, String schemaName) {
         List<ColumnMetadata> selected = null;
         if (schemaName != null) {
+            MetadataNamespace target = metadataNamespace(schemaName);
             for (Map.Entry<String, List<ColumnMetadata>> entry : grouped.entrySet()) {
                 String[] owner = entry.getKey().split("\u0000", -1);
-                if (schemaName.equalsIgnoreCase(owner[0]) || schemaName.equalsIgnoreCase(owner[1])) {
+                boolean catalogMatches = target.catalog() == null
+                        || target.catalog().equalsIgnoreCase(owner[0]);
+                boolean schemaMatches = target.schema() == null
+                        || target.schema().equalsIgnoreCase(owner[1]);
+                if (catalogMatches && schemaMatches) {
                     selected = entry.getValue();
                     break;
                 }
@@ -438,9 +517,12 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
                     ResultSetMetaData metaData = rs.getMetaData();
                     int columnCount = metaData.getColumnCount();
 
-                    // 构建列名
+                    // 构建唯一显示列名，避免 JOIN/别名产生重名列时 Map 覆盖数据。
+                    Map<String, Integer> labelOccurrences = new HashMap<>();
                     for (int i = 1; i <= columnCount; i++) {
-                        result.addColumn(metaData.getColumnLabel(i));
+                        String rawLabel = metaData.getColumnLabel(i);
+                        result.addColumn(disambiguateColumnLabel(
+                                rawLabel, labelOccurrences));
                     }
 
                     // 读取数据行
@@ -475,6 +557,14 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         return result;
     }
 
+    static String disambiguateColumnLabel(String label,
+            Map<String, Integer> occurrences) {
+        String base = label == null || label.isBlank() ? "column" : label;
+        String key = base.toLowerCase(Locale.ROOT);
+        int occurrence = occurrences.merge(key, 1, Integer::sum);
+        return occurrence == 1 ? base : base + " (" + occurrence + ")";
+    }
+
     @Override
     public int executeUpdate(Object connection, String sql) throws Exception {
         Connection conn = (Connection) connection;
@@ -490,18 +580,24 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
     @Override
     public String getTableDDL(Object connection, String schemaName, String tableName) throws Exception {
         Connection conn = (Connection) connection;
+        String quote = identifierQuote(conn.getMetaData());
+        String tableRef = qualifiedIdentifier(schemaName, tableName, quote);
         StringBuilder ddl = new StringBuilder();
 
-        // 获取列信息构建CREATE TABLE
         List<ColumnMetadata> columns = getTableColumns(conn, schemaName, tableName);
+        List<String> pkCols = new ArrayList<>();
+        for (ColumnMetadata column : columns) {
+            if (column.isPrimaryKey()) {
+                pkCols.add(column.getName());
+            }
+        }
 
-        ddl.append("CREATE TABLE ").append(tableName).append(" (\n");
-
+        ddl.append("CREATE TABLE ").append(tableRef).append(" (\n");
         for (int i = 0; i < columns.size(); i++) {
             ColumnMetadata col = columns.get(i);
-            ddl.append("    ").append(col.getName()).append(" ")
-                    .append(col.getTypeName());
-            if (col.getColumnSize() > 0) {
+            ddl.append("    ").append(quoteIdentifier(col.getName(), quote))
+                    .append(" ").append(col.getTypeName());
+            if (shouldAppendColumnSize(col)) {
                 ddl.append("(").append(col.getColumnSize());
                 if (col.getDecimalDigits() > 0) {
                     ddl.append(",").append(col.getDecimalDigits());
@@ -514,45 +610,36 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
             if (col.getDefaultValue() != null) {
                 ddl.append(" DEFAULT ").append(col.getDefaultValue());
             }
-            if (i < columns.size() - 1) {
+            if (i < columns.size() - 1 || !pkCols.isEmpty()) {
                 ddl.append(",");
             }
             ddl.append("\n");
         }
 
-        // 主键
-        List<String> pkCols = new ArrayList<>();
-        for (ColumnMetadata col : columns) {
-            if (col.isPrimaryKey()) {
-                pkCols.add(col.getName());
-            }
-        }
         if (!pkCols.isEmpty()) {
-            ddl.append("    PRIMARY KEY (");
-            ddl.append(String.join(", ", pkCols));
-            ddl.append(")\n");
+            ddl.append("    PRIMARY KEY (")
+                    .append(joinQuoted(pkCols, quote))
+                    .append(")\n");
         }
-
         ddl.append(");");
 
-        // 追加索引定义（来自 DatabaseMetaData.getIndexInfo）
         try {
             String indexDdl = buildIndexDdl(conn, schemaName, tableName);
             if (indexDdl != null && !indexDdl.isEmpty()) {
                 ddl.append("\n").append(indexDdl);
             }
-        } catch (Exception e) {
-            // 部分驱动/权限下无法获取索引，忽略
+        } catch (Exception ignored) {
+            // 部分驱动或权限下无法获取索引，不影响基础 DDL。
         }
 
-        // 追加表注释
         try {
             String tableComment = getTableComment(conn, schemaName, tableName);
             if (tableComment != null && !tableComment.isEmpty()) {
-                ddl.append("\n-- 表注释: ").append(tableComment);
+                ddl.append("\n-- 表注释: ")
+                        .append(tableComment.replace('\r', ' ').replace('\n', ' '));
             }
-        } catch (Exception e) {
-            // 忽略
+        } catch (Exception ignored) {
+            // 注释属于补充信息，失败不影响基础 DDL。
         }
 
         return ddl.toString();
@@ -570,8 +657,9 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         DatabaseMetaData metaData = conn.getMetaData();
         Map<String, List<String>> indexColumns = new LinkedHashMap<>();
         Map<String, Boolean> indexUnique = new HashMap<>();
+        String quote = identifierQuote(metaData);
 
-        try (ResultSet rs = metaData.getIndexInfo(null, schemaName, tableName, false, true)) {
+        try (ResultSet rs = metaData.getIndexInfo(metadataCatalog(schemaName), metadataSchema(schemaName), tableName, false, true)) {
             while (rs.next()) {
                 String indexName = rs.getString("INDEX_NAME");
                 if (indexName == null) {
@@ -592,14 +680,15 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         }
 
         StringBuilder sb = new StringBuilder();
-        String tableRef = schemaName != null ? schemaName + "." + tableName : tableName;
+        String tableRef = qualifiedIdentifier(schemaName, tableName, quote);
         for (Map.Entry<String, List<String>> entry : indexColumns.entrySet()) {
             String indexName = entry.getKey();
             List<String> cols = entry.getValue();
             boolean unique = Boolean.TRUE.equals(indexUnique.get(indexName));
             sb.append("CREATE ").append(unique ? "UNIQUE " : "").append("INDEX ")
-                    .append(indexName).append(" ON ").append(tableRef).append(" (")
-                    .append(String.join(", ", cols)).append(");\n");
+                    .append(quoteIdentifier(indexName, quote)).append(" ON ")
+                    .append(tableRef).append(" (")
+                    .append(joinQuoted(cols, quote)).append(");\n");
         }
         return sb.toString();
     }
@@ -609,12 +698,122 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
      */
     protected String getTableComment(Connection conn, String schemaName, String tableName) throws SQLException {
         DatabaseMetaData metaData = conn.getMetaData();
-        try (ResultSet rs = metaData.getTables(null, schemaName, tableName, null)) {
+        try (ResultSet rs = metaData.getTables(metadataCatalog(schemaName), metadataSchema(schemaName), tableName, null)) {
             if (rs.next()) {
                 return rs.getString("REMARKS");
             }
         }
         return null;
+    }
+
+    private static boolean shouldAppendColumnSize(ColumnMetadata column) {
+        if (column.getTypeName() == null || column.getTypeName().contains("(")
+                || column.getColumnSize() <= 0 || column.getColumnSize() > 65_535) {
+            return false;
+        }
+        final int sqlType;
+        try {
+            sqlType = Integer.parseInt(column.getDataType());
+        } catch (NumberFormatException exception) {
+            return false;
+        }
+        return switch (sqlType) {
+            case Types.CHAR, Types.VARCHAR, Types.NCHAR, Types.NVARCHAR,
+                    Types.BINARY, Types.VARBINARY, Types.DECIMAL, Types.NUMERIC -> true;
+            default -> false;
+        };
+    }
+
+    static String identifierQuote(DatabaseMetaData metaData) {
+        try {
+            String quote = metaData.getIdentifierQuoteString();
+            return quote == null || quote.isBlank() ? "" : quote.trim();
+        } catch (SQLException exception) {
+            return "";
+        }
+    }
+
+    static String quoteIdentifier(String identifier, String quote) {
+        if (identifier == null) {
+            return "";
+        }
+        if (quote == null || quote.isBlank()) {
+            return identifier;
+        }
+        String closing = "[".equals(quote) ? "]" : quote;
+        return quote + identifier.replace(closing, closing + closing) + closing;
+    }
+
+    private static String qualifiedIdentifier(String namespace,
+            String name, String quote) {
+        StringBuilder builder = new StringBuilder();
+        if (namespace != null && !namespace.isBlank()) {
+            for (String part : namespace.split("/")) {
+                if (!part.isBlank()) {
+                    if (builder.length() > 0) {
+                        builder.append('.');
+                    }
+                    builder.append(quoteIdentifier(part, quote));
+                }
+            }
+        }
+        if (builder.length() > 0) {
+            builder.append('.');
+        }
+        return builder.append(quoteIdentifier(name, quote)).toString();
+    }
+
+    private static String joinQuoted(List<String> identifiers, String quote) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < identifiers.size(); i++) {
+            if (i > 0) {
+                builder.append(", ");
+            }
+            builder.append(quoteIdentifier(identifiers.get(i), quote));
+        }
+        return builder.toString();
+    }
+
+    /**
+     * MySQL 与 SQL Server 以 Catalog 作为数据库命名空间；其他通用 JDBC
+     * 驱动优先以 Schema 导航。专用驱动可覆盖此方法。
+     */
+    protected boolean usesCatalogAsNamespace() {
+        return "MYSQL".equalsIgnoreCase(driverInfo.getDbType())
+                || "MSSQL".equalsIgnoreCase(driverInfo.getDbType());
+    }
+
+    private boolean isSqlServer() {
+        return "MSSQL".equalsIgnoreCase(driverInfo.getDbType());
+    }
+
+    private MetadataNamespace metadataNamespace(String namespace) {
+        if (namespace == null || namespace.isBlank()) {
+            return new MetadataNamespace(null, null);
+        }
+        if (isSqlServer()) {
+            int separator = namespace.indexOf('/');
+            if (separator >= 0) {
+                return new MetadataNamespace(
+                        namespace.substring(0, separator),
+                        namespace.substring(separator + 1));
+            }
+            return new MetadataNamespace(namespace, null);
+        }
+        return usesCatalogAsNamespace()
+                ? new MetadataNamespace(namespace, null)
+                : new MetadataNamespace(null, namespace);
+    }
+
+    private String metadataCatalog(String namespace) {
+        return metadataNamespace(namespace).catalog();
+    }
+
+    private String metadataSchema(String namespace) {
+        return metadataNamespace(namespace).schema();
+    }
+
+    private record MetadataNamespace(String catalog, String schema) {
     }
 
     @Override

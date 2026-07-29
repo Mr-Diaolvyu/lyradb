@@ -73,7 +73,7 @@ public class StaticResourceConfig {
                     wrapper.setLoadOnStartup(1);
                     rootContext.addServletMappingDecoded("/", "frontendStatic");
                     rootContext.addWelcomeFile("index.html");
-                    addMimeMappings(rootContext);
+                    StaticResourceConfig.this.addMimeMappings(rootContext);
                     log.info("BS 部署：前端静态资源根上下文已挂载于 /，来源 {}",
                             webRoot.getAbsolutePath());
                 } else {

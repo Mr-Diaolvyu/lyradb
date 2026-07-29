@@ -312,8 +312,8 @@
             "version": "0.6.0",
             "classifier": "http"
         },
-        "connectionUrlTemplate": "jdbc:ch://{host}:{port}/{database}",
-        "defaultPort": 8123,
+        "connectionUrlTemplate": "jdbc:ch:{protocol}://{host}:{port}/{database}",
+        "defaultPort": 8443,
         "capabilities": {
             "supportsTransaction": false,
             "supportsDML": true,
@@ -329,6 +329,23 @@
         },
         "connectionFormFields": [
             {
+                "name": "protocol",
+                "label": "传输协议",
+                "type": "select",
+                "required": true,
+                "defaultValue": "https",
+                "options": [
+                    {
+                        "label": "HTTPS（推荐）",
+                        "value": "https"
+                    },
+                    {
+                        "label": "HTTP（仅本机）",
+                        "value": "http"
+                    }
+                ]
+            },
+            {
                 "name": "host",
                 "label": "主机地址",
                 "type": "text",
@@ -340,7 +357,7 @@
                 "label": "端口",
                 "type": "number",
                 "required": true,
-                "defaultValue": 8123
+                "defaultValue": 8443
             },
             {
                 "name": "database",
