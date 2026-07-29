@@ -3,6 +3,10 @@
     "private": true,
     "version": "3.0.0",
     "type": "module",
+    "engines": {
+        "node": ">=24.15.0",
+        "npm": ">=11.0.0"
+    },
     "scripts": {
         "dev": "vite",
         "typecheck": "vue-tsc -b --pretty false",
@@ -32,6 +36,7 @@
         "@types/node": "^20.11.30",
         "@vitejs/plugin-vue": "^5.0.4",
         "@vue/test-utils": "^2.4.11",
+        "esbuild": "^0.28.1",
         "eslint": "^10.8.0",
         "eslint-plugin-vue": "^10.10.0",
         "jsdom": "^30.0.0",

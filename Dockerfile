@@ -1,6 +1,6 @@
 # LyraDB 服务端镜像：前端质量门禁 → 后端验证 → 最小权限运行时
 
-FROM node:20-alpine AS frontend-build
+FROM node:24-alpine AS frontend-build
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
