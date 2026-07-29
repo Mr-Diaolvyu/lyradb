@@ -22,6 +22,7 @@
         <java.version>17</java.version>
         <main.class>io.github.lexaquila.lyradb.desktop.NativeDesktopApplication</main.class>
         <flatlaf.version>3.7</flatlaf.version>
+        <jpackage.smoke.launcher.args></jpackage.smoke.launcher.args>
     </properties>
 
     <dependencies>
@@ -149,6 +150,7 @@
                                             <arg value="${project.build.finalName}.jar"/>
                                             <arg value="--main-class"/>
                                             <arg value="${main.class}"/>
+                                            <arg line="${jpackage.smoke.launcher.args}"/>
                                             <arg value="--app-version"/>
                                             <arg value="${revision}"/>
                                             <arg value="--vendor"/>
@@ -172,6 +174,19 @@
                     </plugin>
                 </plugins>
             </build>
+        </profile>
+        <profile>
+            <id>desktop-package-windows-smoke-launcher</id>
+            <activation>
+                <os>
+                    <family>Windows</family>
+                </os>
+            </activation>
+            <properties>
+                <jpackage.smoke.launcher.args>
+                    --add-launcher "LyraDBSmoke=${project.basedir}/src/main/launchers/LyraDBSmoke.properties"
+                </jpackage.smoke.launcher.args>
+            </properties>
         </profile>
     </profiles>
 </project>

@@ -12,7 +12,9 @@ $RootPath = $PSScriptRoot
 $DesktopPath = Join-Path $RootPath "desktop"
 $ImagePath = Join-Path $DesktopPath "target\desktop\LyraDB"
 $Executable = Join-Path $ImagePath "LyraDB.exe"
+$SmokeExecutable = Join-Path $ImagePath "LyraDBSmoke.exe"
 $LauncherConfig = Join-Path $ImagePath "app\LyraDB.cfg"
+$SmokeLauncherConfig = Join-Path $ImagePath "app\LyraDBSmoke.cfg"
 $ZipPath = Join-Path $DesktopPath "target\LyraDB-$Version-windows-x64-portable.zip"
 $WorkspacePath = Join-Path $RootPath "数据架构师工作空间"
 $PackageResourcePath = Join-Path $DesktopPath "src\main\jpackage"
@@ -84,14 +86,25 @@ function Assert-NativeLauncher {
     if (-not (Test-Path -LiteralPath $LauncherConfig)) {
         throw "jpackage 启动配置缺失：$LauncherConfig"
     }
+    if (-not (Test-Path -LiteralPath $SmokeExecutable)) {
+        throw "jpackage 自动化冒烟启动器缺失：$SmokeExecutable"
+    }
+    if (-not (Test-Path -LiteralPath $SmokeLauncherConfig)) {
+        throw "jpackage 自动化冒烟启动配置缺失：$SmokeLauncherConfig"
+    }
     $launcherText = Get-Content -LiteralPath $LauncherConfig -Raw
+    $smokeLauncherText = Get-Content -LiteralPath $SmokeLauncherConfig -Raw
     if ($launcherText -notmatch
         '(?m)^app\.mainclass=io\.github\.lexaquila\.lyradb\.desktop\.NativeDesktopApplication\r?$') {
         throw "启动器未指向原生桌面入口"
     }
-    if ($launcherText -match
+    if ($smokeLauncherText -notmatch
+        '(?m)^app\.mainclass=io\.github\.lexaquila\.lyradb\.desktop\.NativeDesktopApplication\r?$') {
+        throw "自动化冒烟启动器未指向原生桌面入口"
+    }
+    if ("$launcherText`n$smokeLauncherText" -match
         'LyraDbApplication|spring\.profiles\.active=desktop|server\.port|JarLauncher') {
-        throw "启动器仍包含旧 B/S 桌面包装配置"
+        throw "启动器或自动化冒烟启动器仍包含旧 B/S 桌面包装配置"
     }
 
     Add-Type -AssemblyName System.Drawing
@@ -206,9 +219,11 @@ function Test-NativeDesktop {
 
     try {
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-        $startInfo.FileName = $Executable
+        $startInfo.FileName = $SmokeExecutable
         $startInfo.UseShellExecute = $false
         $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
         $startInfo.Arguments = (
             "`"--smoke-test=$markerPath`" `"--data-dir=$dataPath`""
         )
@@ -216,11 +231,11 @@ function Test-NativeDesktop {
         $process.StartInfo = $startInfo
         try {
             if (-not $process.Start()) {
-                throw "无法启动原生 LyraDB.exe"
+                throw "无法启动 jpackage 自动化冒烟 EXE"
             }
-            # GitHub Windows Hosted Runner 的 Defender 可能显著拖慢首次启动；
-            # 仍然坚持启动真实 EXE，只放宽冷启动等待时间。
-            if (-not $process.WaitForExit(180000)) {
+            $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+            $stderrTask = $process.StandardError.ReadToEndAsync()
+            if (-not $process.WaitForExit(120000)) {
                 $markerState = if (Test-Path -LiteralPath $markerPath) {
                     Get-Content -LiteralPath $markerPath -Raw
                 } else {
@@ -228,10 +243,16 @@ function Test-NativeDesktop {
                 }
                 $process.Kill()
                 $process.WaitForExit()
-                throw "原生 LyraDB.exe 冒烟测试超时（180 秒）：$markerState"
+                throw (
+                    "jpackage 自动化冒烟 EXE 超时（120 秒）：$markerState`n" +
+                    "stdout: $($stdoutTask.Result)`nstderr: $($stderrTask.Result)"
+                )
             }
             if ($process.ExitCode -ne 0) {
-                throw "原生 LyraDB.exe 冒烟测试失败，退出码：$($process.ExitCode)"
+                throw (
+                    "jpackage 自动化冒烟 EXE 失败，退出码：$($process.ExitCode)`n" +
+                    "stdout: $($stdoutTask.Result)`nstderr: $($stderrTask.Result)"
+                )
             }
         } finally {
             $process.Dispose()
@@ -256,6 +277,18 @@ function Test-NativeDesktop {
         if (Test-Path -LiteralPath $smokePath) {
             Remove-Item -LiteralPath $smokePath -Recurse -Force
         }
+    }
+}
+
+function Remove-AutomationSmokeLauncher {
+    foreach ($path in @($SmokeExecutable, $SmokeLauncherConfig)) {
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            Remove-Item -LiteralPath $path -Force
+        }
+    }
+    if ((Test-Path -LiteralPath $SmokeExecutable) -or
+        (Test-Path -LiteralPath $SmokeLauncherConfig)) {
+        throw "无法从最终便携包移除自动化冒烟启动器"
     }
 }
 
@@ -287,6 +320,7 @@ Write-Host "==> [4/5] 执行真实 EXE 原生架构冒烟测试"
 Test-NativeDesktop
 
 Write-Host "==> [5/5] 生成 Windows x64 便携包"
+Remove-AutomationSmokeLauncher
 if (Test-Path -LiteralPath $ZipPath) {
     Remove-Item -LiteralPath $ZipPath -Force
 }
