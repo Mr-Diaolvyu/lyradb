@@ -104,6 +104,154 @@ jobs:
         working-directory: backend
         run: mvn -B -ntp -Pdesktop clean verify "-Drevision=${{ steps.version.outputs.version }}"
 
+      - name: 运行 Windows 便携包冒烟测试
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $executable = [System.IO.Path]::GetFullPath(
+            "backend/target/desktop/LyraDB/LyraDB.exe"
+          )
+          $launcherConfig = [System.IO.Path]::GetFullPath(
+            "backend/target/desktop/LyraDB/app/LyraDB.cfg"
+          )
+          if (-not (Test-Path -LiteralPath $executable)) {
+            throw "jpackage 产物缺失：$executable"
+          }
+          if (-not (Test-Path -LiteralPath $launcherConfig)) {
+            throw "jpackage 启动配置缺失：$launcherConfig"
+          }
+          $launcherText = Get-Content -LiteralPath $launcherConfig -Raw
+          if ($launcherText -notmatch '(?m)^app\.mainjar=') {
+            throw "jpackage 启动配置未声明主 JAR"
+          }
+          if ($launcherText -match
+              '(?m)^app\.mainclass=io\.github\.lexaquila\.lyradb\.LyraDbApplication') {
+            throw "jpackage 错误地绕过了 Spring Boot JarLauncher"
+          }
+
+          $mainJar = [System.IO.Path]::GetFullPath(
+            "backend/target/desktop/LyraDB/app/" +
+            "lyradb-backend-${{ steps.version.outputs.version }}.jar"
+          )
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($mainJar)
+          try {
+            $manifestEntry = $archive.GetEntry("META-INF/MANIFEST.MF")
+            if (-not $manifestEntry) {
+              throw "主 JAR 缺少 MANIFEST.MF"
+            }
+            $reader = [System.IO.StreamReader]::new($manifestEntry.Open())
+            try {
+              $manifest = $reader.ReadToEnd()
+            } finally {
+              $reader.Dispose()
+            }
+          } finally {
+            $archive.Dispose()
+          }
+          if ($manifest -notmatch
+              '(?m)^Main-Class: org\.springframework\.boot\.loader\.launch\.JarLauncher\r?$') {
+            throw "主 JAR Manifest 未使用 Spring Boot JarLauncher"
+          }
+
+          $workspace = [System.IO.Path]::GetFullPath("数据架构师工作空间")
+          New-Item -ItemType Directory -Path $workspace -Force | Out-Null
+          $smokePath = [System.IO.Path]::GetFullPath(
+            (Join-Path $workspace "release-desktop-smoke-${{ github.run_id }}")
+          )
+          if (-not $smokePath.StartsWith(
+              $workspace + [System.IO.Path]::DirectorySeparatorChar,
+              [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "拒绝使用工作区外的冒烟测试目录：$smokePath"
+          }
+          if (Test-Path -LiteralPath $smokePath) {
+            Remove-Item -LiteralPath $smokePath -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $smokePath | Out-Null
+
+          $listener = [System.Net.Sockets.TcpListener]::new(
+            [System.Net.IPAddress]::Loopback, 0
+          )
+          $listener.Start()
+          try {
+            $port = $listener.LocalEndpoint.Port
+          } finally {
+            $listener.Stop()
+          }
+
+          $env:LYRADB_H2_PATH = Join-Path $smokePath "data/lyradb"
+          $env:LYRADB_DESKTOP_KEY_PATH = Join-Path $smokePath "master.key"
+          $env:LOGGING_FILE_NAME = Join-Path $smokePath "lyradb.log"
+          $process = $null
+          try {
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $executable
+            $startInfo.Arguments = (
+              "--server.port=$port --app.desktop.tray-enabled=false"
+            )
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $startInfo
+            if (-not $process.Start()) {
+              throw "无法启动 LyraDB.exe"
+            }
+
+            $ready = $false
+            $deadline = (Get-Date).AddSeconds(90)
+            do {
+              $process.Refresh()
+              if ($process.HasExited) {
+                $process.WaitForExit()
+                throw "LyraDB.exe 提前退出，退出码：$($process.ExitCode)"
+              }
+              try {
+                $response = Invoke-WebRequest `
+                  -Uri "http://127.0.0.1:$port/api/app/info" `
+                  -UseBasicParsing `
+                  -TimeoutSec 3
+                if ($response.StatusCode -eq 200) {
+                  $ready = $true
+                  break
+                }
+              } catch {
+                # 服务启动期间连接失败属于预期，继续轮询。
+              }
+              Start-Sleep -Seconds 1
+            } while ((Get-Date) -lt $deadline)
+
+            if (-not $ready) {
+              throw "LyraDB.exe 在 90 秒内未通过 HTTP 就绪检查"
+            }
+            Write-Output "Windows 便携包启动验证通过：127.0.0.1:$port"
+          } catch {
+            $logPath = Join-Path $smokePath "lyradb.log"
+            if (Test-Path -LiteralPath $logPath) {
+              Get-Content -LiteralPath $logPath -Tail 200
+            }
+            throw
+          } finally {
+            if ($process -and -not $process.HasExited) {
+              $process.Kill()
+              $process.WaitForExit()
+            }
+            if ($process) {
+              $process.Dispose()
+            }
+            for ($attempt = 1;
+                 $attempt -le 10 -and (Test-Path -LiteralPath $smokePath);
+                 $attempt++) {
+              try {
+                Remove-Item -LiteralPath $smokePath -Recurse -Force -ErrorAction Stop
+              } catch {
+                if ($attempt -eq 10) {
+                  throw
+                }
+                Start-Sleep -Milliseconds 500
+              }
+            }
+          }
+
       - name: 生成 CycloneDX SBOM
         shell: pwsh
         run: |

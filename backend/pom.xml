@@ -270,10 +270,12 @@
                                             <arg value="${project.build.directory}/desktop"/>
                                             <arg value="--name"/>
                                             <arg value="LyraDB"/>
+                                            <!--
+                                                不覆盖 Main-Class：Spring Boot 可执行 JAR 必须由
+                                                Manifest 中的 JarLauncher 加载 BOOT-INF/classes。
+                                            -->
                                             <arg value="--main-jar"/>
                                             <arg value="${project.build.finalName}.jar"/>
-                                            <arg value="--main-class"/>
-                                            <arg value="io.github.lexaquila.lyradb.LyraDbApplication"/>
                                             <arg value="--app-version"/>
                                             <arg value="${revision}"/>
                                             <arg value="--java-options"/>
@@ -330,10 +332,12 @@
                                             <arg value="${project.build.directory}/desktop"/>
                                             <arg value="--name"/>
                                             <arg value="LyraDB"/>
+                                            <!--
+                                                不覆盖 Main-Class：Spring Boot 可执行 JAR 必须由
+                                                Manifest 中的 JarLauncher 加载 BOOT-INF/classes。
+                                            -->
                                             <arg value="--main-jar"/>
                                             <arg value="${project.build.finalName}.jar"/>
-                                            <arg value="--main-class"/>
-                                            <arg value="io.github.lexaquila.lyradb.LyraDbApplication"/>
                                             <arg value="--app-version"/>
                                             <arg value="${revision}"/>
                                             <arg value="--vendor"/>
