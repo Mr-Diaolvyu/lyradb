@@ -100,6 +100,7 @@ jobs:
           Copy-Item -Path "frontend/dist/*" -Destination $static -Recurse -Force
 
       - name: 后端测试并生成 jpackage 应用镜像
+        timeout-minutes: 15
         working-directory: backend
         run: mvn -B -ntp -Pdesktop clean verify "-Drevision=${{ steps.version.outputs.version }}"
 
