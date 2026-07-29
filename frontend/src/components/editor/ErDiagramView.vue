@@ -76,6 +76,7 @@ import { metadataApi } from '@/api/metadata'
 import { useUiStore } from '@/stores/ui'
 import { useConnectionStore } from '@/stores/connection'
 import type { ErDiagram } from '@/types/metadata'
+import { saveBlob } from '@/utils/download'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
@@ -220,21 +221,16 @@ function generateSvg(): string {
 }
 
 function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
+  return saveBlob(blob, filename)
 }
 
-function handleExport(format: string) {
+async function handleExport(format: string) {
   if (!er.value?.tables.length) return
   const svg = generateSvg()
   const base = `er_${connectionName.value || 'diagram'}_${Date.now()}`
 
   if (format === 'svg') {
-    downloadBlob(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), `${base}.svg`)
+    await downloadBlob(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), `${base}.svg`)
     ElMessage.success('SVG 导出成功')
     return
   }
@@ -253,9 +249,9 @@ function handleExport(format: string) {
     }
     ctx.scale(2, 2)
     ctx.drawImage(img, 0, 0)
-    canvas.toBlob((blob) => {
+    canvas.toBlob(async (blob) => {
       if (blob) {
-        downloadBlob(blob, `${base}.png`)
+        await downloadBlob(blob, `${base}.png`)
         ElMessage.success('PNG 导出成功')
       } else {
         ElMessage.error('PNG 生成失败')

@@ -179,6 +179,7 @@ import SqlHistory from '@/components/editor/SqlHistory.vue'
 import ExplainTreeView from '@/components/editor/ExplainTreeView.vue'
 import ChartView from '@/components/editor/ChartView.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import { saveBlob } from '@/utils/download'
 
 const editorStore = useEditorStore()
 const uiStore = useUiStore()
@@ -565,12 +566,7 @@ async function handleExport(format: string) {
 
     const ext = format === 'excel' ? 'xlsx' : format
     const filename = `query_result_${Date.now()}.${ext}`
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.click()
-    URL.revokeObjectURL(url)
+    await saveBlob(blob, filename)
     ElMessage.success(`${format.toUpperCase()} 导出成功`)
   } catch (e: any) {
     ElMessage.error('导出失败: ' + (e.message || '未知错误'))

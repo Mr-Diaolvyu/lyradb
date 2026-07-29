@@ -258,6 +258,7 @@ import { ArrowLeft, Check, CircleCheckFilled } from '@element-plus/icons-vue'
 import { ElMessage, type FormInstance } from 'element-plus'
 import { useConnectionStore } from '@/stores/connection'
 import { driverApi } from '@/api/driver'
+import { buildDesktopWebSocketUrl } from '@/utils/desktopAccess'
 import type { FormField } from '@/types/driver'
 import type { ConnectionDTO } from '@/types/connection'
 import DatabaseIcon from '@/components/common/DatabaseIcon.vue'
@@ -397,7 +398,7 @@ async function downloadDriver() {
   downloadMessage.value = '正在解析 Maven 依赖...'
 
   // 通过 WebSocket 接收实时下载进度
-  const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ws/drivers`
+  const wsUrl = buildDesktopWebSocketUrl('/api/ws/drivers')
   let ws: WebSocket | null = null
   try {
     ws = new WebSocket(wsUrl)

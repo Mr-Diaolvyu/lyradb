@@ -22,7 +22,7 @@ public class AiProviderConfig {
     @Column(length = 36)
     private String id;
 
-    @Column(name = "workspace_id", length = 36)
+    @Column(name = "workspace_id", nullable = false, length = 36)
     private String workspaceId;
 
     /** bailian/glm/doubao/deepseek/gpt/custom */

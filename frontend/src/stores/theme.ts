@@ -4,7 +4,6 @@
  */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { VxeUI } from 'vxe-pc-ui'
 
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type AccentPreset = 'navy' | 'emerald' | 'amber' | 'violet'
@@ -18,6 +17,19 @@ export const useThemeStore = defineStore('theme', () => {
     const density = ref<Density>('comfortable')
 
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    let vxeThemeEnabled = false
+    let vxeModulePromise: Promise<typeof import('vxe-pc-ui')> | null = null
+
+    async function applyVxeTheme() {
+        if (!vxeThemeEnabled) return
+        try {
+            vxeModulePromise ??= import('vxe-pc-ui')
+            const { VxeUI } = await vxeModulePromise
+            VxeUI.setTheme(isDark.value ? 'dark' : 'light')
+        } catch {
+            // 表格主题是非关键增强；动态依赖加载失败不应阻断应用主题。
+        }
+    }
 
     function applyTheme() {
         isDark.value = mode.value === 'dark' || (mode.value === 'system' && mq.matches)
@@ -25,8 +37,8 @@ export const useThemeStore = defineStore('theme', () => {
         el.setAttribute('data-theme', isDark.value ? 'dark' : 'light')
         // Element Plus 暗色变量依赖 html.dark 类（dark/css-vars.css）
         el.classList.toggle('dark', isDark.value)
-        // vxe-table 主题联动
-        VxeUI.setTheme(isDark.value ? 'dark' : 'light')
+        // 只有 personal 探测完成并调用 initTheme 后才加载重型 VXE 运行时。
+        void applyVxeTheme()
     }
 
     function setMode(m: ThemeMode) {
@@ -71,6 +83,7 @@ export const useThemeStore = defineStore('theme', () => {
         })
         document.documentElement.setAttribute('data-accent', accent.value)
         document.documentElement.setAttribute('data-density', density.value)
+        vxeThemeEnabled = true
         applyTheme()
     }
 

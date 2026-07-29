@@ -57,6 +57,10 @@ const sideOpen = ref(false)
 
 const pendingCount = ref(0)
 async function loadPending() {
+  if (!auth.canApprove) {
+    pendingCount.value = 0
+    return
+  }
   try {
     const list = await entApi.approvalsPending()
     pendingCount.value = list.length
@@ -70,8 +74,10 @@ const menus = computed(() => {
     { name: 'query', to: '/query', label: '企业查询', icon: DocumentCopy },
     { name: 'ai', to: '/ai', label: 'AI 助手', icon: ChatLineRound },
     { name: 'approvals', to: '/approvals', label: '审批中心', icon: Bell, badge: pendingCount.value || undefined },
-    { name: 'audit', to: '/audit', label: '操作审计', icon: List },
   ]
+  if (auth.canAudit) {
+    arr.push({ name: 'audit', to: '/audit', label: '操作审计', icon: List } as any)
+  }
   if (auth.isAdmin) {
     arr.push({ name: 'admin', to: '/admin', label: '管理', icon: Setting } as any)
   }
@@ -79,7 +85,12 @@ const menus = computed(() => {
 })
 
 async function onWs(id: string) {
-  try { await auth.switchWorkspace(id) } catch {}
+  try {
+    await auth.switchWorkspace(id)
+    await loadPending()
+  } catch {
+    pendingCount.value = 0
+  }
 }
 
 function roleLabel(r: string) {

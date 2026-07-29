@@ -1,3 +1,4 @@
+
 package io.github.lexaquila.lyradb.controller;
 
 import io.github.lexaquila.lyradb.service.GrantService;
@@ -27,6 +28,6 @@ public class GrantController {
     public List<Map<String, Object>> mine() {
         String uid = securityUtil.currentUserId();
         if (uid == null) throw new RuntimeException("未登录");
-        return grantService.listMine(uid);
+        return grantService.listMine(uid, securityUtil.requireCurrentWorkspace());
     }
 }

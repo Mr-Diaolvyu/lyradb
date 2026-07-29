@@ -13,15 +13,18 @@
 
     <groupId>io.github.lexaquila</groupId>
     <artifactId>lyradb-backend</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>${revision}</version>
     <name>LyraDB Backend</name>
     <description>LyraDB 天琴智库 - 轻量 AI 通用数据库管理工具 - 后端</description>
 
     <properties>
+        <!-- CI 通过 -Drevision=<tag> 覆盖，作为后端包与桌面包的单一版本源。 -->
+        <revision>3.0.0</revision>
         <java.version>17</java.version>
         <maven-resolver.version>1.9.18</maven-resolver.version>
         <jasypt.version>3.0.5</jasypt.version>
         <h2.version>2.2.224</h2.version>
+        <jsqlparser.version>5.3</jsqlparser.version>
     </properties>
 
     <dependencies>
@@ -35,6 +38,19 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!-- 数据库结构迁移：生产环境不再依赖 Hibernate 自动建表 -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+
+        <!-- SQL AST：企业授权、审批和脱敏必须基于完整语法树并失败关闭 -->
+        <dependency>
+            <groupId>com.github.jsqlparser</groupId>
+            <artifactId>jsqlparser</artifactId>
+            <version>${jsqlparser.version}</version>
         </dependency>
 
         <!-- Spring Boot Validation -->
@@ -168,6 +184,13 @@
                         </exclude>
                     </excludes>
                 </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>build-info</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -246,11 +269,13 @@
                                             <arg value="--main-class"/>
                                             <arg value="io.github.lexaquila.lyradb.LyraDbApplication"/>
                                             <arg value="--app-version"/>
-                                            <arg value="1.0.0"/>
+                                            <arg value="${revision}"/>
                                             <arg value="--java-options"/>
                                             <arg value="-Xmx512m"/>
                                             <arg value="--java-options"/>
                                             <arg value="-Dapp.desktop.tray-enabled=true"/>
+                                            <arg value="--java-options"/>
+                                            <arg value="-Dspring.profiles.active=desktop"/>
                                             <arg value="--verbose"/>
                                         </exec>
                                     </target>
@@ -265,7 +290,7 @@
         <!--
             Windows MSI 安装包：mvn -Pdesktop-msi package
             前置：安装 WiX Toolset（https://wixtoolset.org）并设 WiX 环境变量；frontend/dist 已嵌入 static。
-            产物：target/desktop/LyraDB-1.0.0.msi
+            产物：target/desktop/LyraDB-${revision}.msi
         -->
         <profile>
             <id>desktop-msi</id>
@@ -298,7 +323,7 @@
                                             <arg value="--main-class"/>
                                             <arg value="io.github.lexaquila.lyradb.LyraDbApplication"/>
                                             <arg value="--app-version"/>
-                                            <arg value="1.0.0"/>
+                                            <arg value="${revision}"/>
                                             <arg value="--vendor"/>
                                             <arg value="LyraDB"/>
                                             <arg value="--win-menu"/>
@@ -307,6 +332,8 @@
                                             <arg value="-Xmx512m"/>
                                             <arg value="--java-options"/>
                                             <arg value="-Dapp.desktop.tray-enabled=true"/>
+                                            <arg value="--java-options"/>
+                                            <arg value="-Dspring.profiles.active=desktop"/>
                                         </exec>
                                     </target>
                                 </configuration>

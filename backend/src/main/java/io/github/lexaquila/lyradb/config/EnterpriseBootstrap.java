@@ -1,3 +1,4 @@
+
 package io.github.lexaquila.lyradb.config;
 
 import io.github.lexaquila.lyradb.model.entity.User;
@@ -15,9 +16,10 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * 企业版启动引导：edition=enterprise 时，若无用户则创建默认管理员与默认工作空间。
+ * 企业版首次启动引导。
  *
- * <p>默认账号 admin/admin（首次登录后请立即改密）。</p>
+ * <p>系统不再创建任何默认口令。数据库中没有用户时，必须显式提供
+ * LYRADB_BOOTSTRAP_ADMIN_USERNAME 与 LYRADB_BOOTSTRAP_ADMIN_PASSWORD。</p>
  */
 @Component
 public class EnterpriseBootstrap {
@@ -30,7 +32,7 @@ public class EnterpriseBootstrap {
     private final UserService userService;
 
     public EnterpriseBootstrap(AppProperties appProperties, UserRepository userRepository,
-                              WorkspaceRepository workspaceRepository, UserService userService) {
+                               WorkspaceRepository workspaceRepository, UserService userService) {
         this.appProperties = appProperties;
         this.userRepository = userRepository;
         this.workspaceRepository = workspaceRepository;
@@ -43,30 +45,53 @@ public class EnterpriseBootstrap {
         if (!"enterprise".equalsIgnoreCase(appProperties.getEdition())) {
             return;
         }
-        // 幂等：确保默认工作空间存在
-        Workspace ws = workspaceRepository.findAll().stream().findFirst().orElse(null);
-        if (ws == null) {
-            ws = new Workspace();
-            ws.setName("默认工作空间");
-            ws.setDescription("系统引导创建的默认工作空间");
-            ws = workspaceRepository.save(ws);
+
+        if (userRepository.count() > 0) {
+            int migrated = userService.ensureLegacyMemberships();
+            if (migrated > 0) {
+                log.warn("已把 {} 条旧用户-工作空间关系迁入作用域角色表，请复核最小权限", migrated);
+            } else {
+                log.info("企业版用户数据已存在，跳过首次启动管理员创建");
+            }
+            return;
         }
 
-        // 幂等：确保 admin 用户存在
-        User admin = userRepository.findByUsername("admin").orElse(null);
-        if (admin == null) {
-            admin = userService.create(
-                    "admin", "admin", "管理员", "admin@lexaquila.local",
-                    List.of("PLATFORM_ADMIN", "DS_ADMIN", "STEWARD"));
+        AppProperties.Enterprise config = appProperties.getEnterprise();
+        String username = config == null ? null : trimToNull(config.getBootstrapAdminUsername());
+        String password = config == null ? null : trimToNull(config.getBootstrapAdminPassword());
+        if (username == null || password == null) {
+            throw new IllegalStateException(
+                    "企业版首次启动拒绝使用默认账号：请设置 LYRADB_BOOTSTRAP_ADMIN_USERNAME "
+                            + "与 LYRADB_BOOTSTRAP_ADMIN_PASSWORD");
         }
-        // 幂等：确保 admin 属于默认工作空间
-        final String wsId = ws.getId();
-        final String wsName = ws.getName();
-        if (admin.getWorkspaces() == null || admin.getWorkspaces().stream().noneMatch(w -> w.getId().equals(wsId))) {
-            userService.assignWorkspace(admin.getUsername(), wsId);
-            log.warn("企业版引导：admin/admin（请立即改密），默认工作空间 {}", wsName);
-        } else {
-            log.info("企业版：admin 与默认工作空间已就绪");
+        UserService.validatePassword(username, password);
+
+        Workspace workspace = workspaceRepository.findAll().stream().findFirst().orElseGet(() -> {
+            Workspace created = new Workspace();
+            created.setName("默认工作空间");
+            created.setDescription("系统首次启动创建的默认工作空间");
+            return workspaceRepository.save(created);
+        });
+
+        User admin = userService.create(
+                username,
+                password,
+                config.getBootstrapAdminDisplayName(),
+                config.getBootstrapAdminEmail(),
+                List.of("PLATFORM_ADMIN", "DS_ADMIN", "STEWARD"));
+        userService.assignWorkspace(admin.getUsername(), workspace.getId(),
+                List.of("DS_ADMIN", "STEWARD"));
+        if (workspace.getOwnerId() == null) {
+            workspace.setOwnerId(admin.getId());
+            workspaceRepository.save(workspace);
         }
+        log.warn("企业版首次启动管理员 {} 已安全创建，请妥善保管配置凭据并及时轮换", username);
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 }

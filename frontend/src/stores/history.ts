@@ -33,7 +33,6 @@ export const useHistoryStore = defineStore('history', () => {
                 })
             }
         } catch (e) {
-            console.error('加载历史失败:', e)
             items.value = []
         } finally {
             loading.value = false
@@ -69,7 +68,6 @@ export const useHistoryStore = defineStore('history', () => {
             const it = items.value.find(i => i.id === id)
             if (it) it.favorite = !it.favorite
         } catch (e) {
-            console.error('切换收藏失败:', e)
         }
     }
 

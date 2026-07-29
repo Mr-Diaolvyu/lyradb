@@ -1,31 +1,52 @@
-# LyraDB 一键部署（BS 服务端）
-# 用法：
-#   1. 设置凭据加密密钥（必填）：echo "JASYPT_PASSWORD=你的强密钥" > .env
-#   2. 启动：docker compose up -d
-#   3. 浏览器访问 http://<host>:8080 （企业版默认账号 admin/admin，请立即改密）
+# LyraDB 企业版安全默认部署。
+#
+# 1. 复制 .env.example 为 .env，填写所有必填项。
+# 2. 默认仅绑定宿主机回环地址，建议由同机 HTTPS 反向代理对外提供服务。
+# 3. 本文件是企业安全部署模板；个人版请使用 dev/desktop profile 或另行维护配置。
 services:
   lyradb:
-    build: .
-    image: lyradb:latest
-    container_name: lyradb
+    build:
+      context: .
+    image: lyradb:${LYRADB_IMAGE_TAG:-3.0.0}
+    user: "10001:10001"
     ports:
-      - "8080:8080"
+      - "127.0.0.1:${LYRADB_PORT:-8080}:8080"
     environment:
       SPRING_PROFILES_ACTIVE: prod
-      # 发行版：personal | enterprise
-      LYRADB_EDITION: ${LYRADB_EDITION:-personal}
-      # 凭据加密密钥（prod 强制要求，缺失则启动失败）
+      LYRADB_EDITION: ${LYRADB_EDITION:-enterprise}
+
+      # 加密、元数据库口令与 CORS 始终必填。
       JASYPT_PASSWORD: ${JASYPT_PASSWORD:?请在 .env 中设置 JASYPT_PASSWORD}
-      # 首次启动自动建表；表结构稳定后可改为 validate
-      SPRING_JPA_HIBERNATE_DDL_AUTO: ${LYRADB_DDL_AUTO:-update}
-      # CORS 白名单（前端与后端同源部署时保持默认即可）
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
+      LYRADB_DB_PASSWORD: ${LYRADB_DB_PASSWORD:?请在 .env 中设置 LYRADB_DB_PASSWORD}
+
+      # 仅企业空用户库首次启动必填；初始化成功后应从 .env/容器环境移除。
+      # 应用会在空库且变量缺失时失败关闭，已初始化实例允许传空。
+      LYRADB_BOOTSTRAP_ADMIN_USERNAME: ${LYRADB_BOOTSTRAP_ADMIN_USERNAME:-}
+      LYRADB_BOOTSTRAP_ADMIN_PASSWORD: ${LYRADB_BOOTSTRAP_ADMIN_PASSWORD:-}
+      LYRADB_BOOTSTRAP_ADMIN_DISPLAY_NAME: ${LYRADB_BOOTSTRAP_ADMIN_DISPLAY_NAME:-平台管理员}
+      LYRADB_BOOTSTRAP_ADMIN_EMAIL: ${LYRADB_BOOTSTRAP_ADMIN_EMAIL:-}
+
+      # 反向代理使用 HTTPS 时保持 true；仅本机 HTTP 验证时才显式设为 false。
+      LYRADB_COOKIE_SECURE: ${LYRADB_COOKIE_SECURE:-true}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?请设置浏览器访问来源，例如 https://db.example.com}
+
+      # 默认禁止 Webhook 与自定义 AI 出站；按精确主机白名单显式开放。
+      LYRADB_WEBHOOK_ALLOWED_HOSTS: ${LYRADB_WEBHOOK_ALLOWED_HOSTS:-}
+      LYRADB_AI_ALLOWED_HOSTS: ${LYRADB_AI_ALLOWED_HOSTS:-}
     volumes:
-      # H2 元数据库（连接配置/查询历史/审计等）
       - lyradb-data:/app/data
-      # 动态下载的数据库驱动缓存
-      - lyradb-drivers:/root/.lyradb
+      - lyradb-drivers:/home/lyradb/.lyradb
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m,uid=10001,gid=10001
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    init: true
     restart: unless-stopped
+    stop_grace_period: 30s
 
 volumes:
   lyradb-data:

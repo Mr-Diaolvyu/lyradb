@@ -21,6 +21,12 @@ public class BackgroundTask {
     /** 任务 ID（UUID） */
     private String id;
 
+    /** 任务所有者用户名；用于服务端隔离，不接受客户端传入。 */
+    private String ownerUsername;
+
+    /** 提交任务时选择的工作空间。 */
+    private String workspaceId;
+
     /** 连接 ID */
     private String connectionId;
 

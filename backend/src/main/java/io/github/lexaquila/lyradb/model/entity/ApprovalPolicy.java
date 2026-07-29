@@ -1,3 +1,4 @@
+
 package io.github.lexaquila.lyradb.model.entity;
 
 import jakarta.persistence.*;
@@ -8,7 +9,9 @@ import org.hibernate.annotations.GenericGenerator;
  * 审批策略（工作空间级，覆盖全局默认）
  */
 @Entity
-@Table(name = "ent_approval_policy")
+@Table(name = "ent_approval_policy", uniqueConstraints = @UniqueConstraint(
+        name = "uk_approval_policy_workspace",
+        columnNames = "workspace_id"))
 @Data
 public class ApprovalPolicy {
 
@@ -18,7 +21,7 @@ public class ApprovalPolicy {
     @Column(length = 36)
     private String id;
 
-    @Column(name = "workspace_id", length = 36)
+    @Column(name = "workspace_id", nullable = false, length = 36)
     private String workspaceId;
 
     /** 用户决策：任何导出都要审批 */
@@ -39,10 +42,10 @@ public class ApprovalPolicy {
     private String sensitiveTables;
 
     /** 默认审批角色 */
-    @Column(name = "approver_role", length = 32)
+    @Column(name = "approver_role", nullable = false, length = 32)
     private String approverRole = "STEWARD";
 
     /** 是否需要双人审批（高风险场景：迁移/敏感表） */
-    @Column(name = "require_two_approvers")
+    @Column(name = "require_two_approvers", nullable = false)
     private boolean requireTwoApprovers = false;
 }

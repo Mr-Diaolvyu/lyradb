@@ -1,5 +1,7 @@
+
 package io.github.lexaquila.lyradb.model.entity;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.GenericGenerator;
@@ -29,6 +31,16 @@ public class ReportSchedule {
     /** 订阅名称 */
     @Column(length = 100, nullable = false)
     private String name;
+
+    /** 服务端写入的所有者，客户端不可伪造。 */
+    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
+    @Column(name = "owner_username", nullable = false, length = 100)
+    private String ownerUsername;
+
+    /** 创建时选择的工作空间，客户端不可伪造。 */
+    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
+    @Column(name = "workspace_id", nullable = false, length = 36)
+    private String workspaceId;
 
     /** 连接 ID */
     @Column(name = "connection_id", length = 36, nullable = false)

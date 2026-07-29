@@ -6,7 +6,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 
 public interface ReportScheduleRepository extends JpaRepository<ReportSchedule, String> {
-    List<ReportSchedule> findAllByOrderByCreatedAtDesc();
+    List<ReportSchedule> findByOwnerUsernameAndWorkspaceIdOrderByCreatedAtDesc(
+            String ownerUsername, String workspaceId);
 
     List<ReportSchedule> findByEnabledTrue();
 }

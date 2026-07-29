@@ -2,23 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- 结果导出经 DownloadManager 下载到公共目录；Android 13+ 下载完成通知需此权限 -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- 生物识别快速解锁（BiometricPrompt） -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
-    <!-- 开发期允许明文 HTTP 指向自托管服务端；生产务必 HTTPS -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="LyraDB"
-        android:usesCleartextTraffic="true"
+        android:usesCleartextTraffic="${usesCleartextTraffic}"
         android:theme="@style/Theme.Material3.DayNight">
 
-        <!-- WebView 外壳主界面 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -29,7 +21,6 @@
             </intent-filter>
         </activity>
 
-        <!-- 服务端地址配置页 -->
         <activity
             android:name=".ServerConfigActivity"
             android:exported="false"

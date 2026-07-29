@@ -6,6 +6,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { ElNotification } from 'element-plus'
 import { taskApi } from '@/api/task'
+import { buildDesktopWebSocketUrl } from '@/utils/desktopAccess'
 import type { BackgroundTask, TaskUpdateMessage } from '@/types/task'
 import type { QueryResult } from '@/types/metadata'
 
@@ -28,14 +29,13 @@ export const useTaskStore = defineStore('tasks', () => {
         try {
             tasks.value = await taskApi.list()
         } catch (e) {
-            console.warn('拉取后台任务列表失败:', e)
         }
     }
 
     /** 建立 /ws/tasks 订阅（幂等） */
     function connectWs() {
         if (ws) return
-        const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ws/tasks`
+        const wsUrl = buildDesktopWebSocketUrl('/api/ws/tasks')
         try {
             ws = new WebSocket(wsUrl)
         } catch {

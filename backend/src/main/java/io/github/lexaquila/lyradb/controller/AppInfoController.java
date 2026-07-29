@@ -1,6 +1,8 @@
 package io.github.lexaquila.lyradb.controller;
 
 import io.github.lexaquila.lyradb.config.AppProperties;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.info.BuildProperties;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -15,17 +17,21 @@ import java.util.Map;
 public class AppInfoController {
 
     private final AppProperties appProperties;
+    private final BuildProperties buildProperties;
 
-    public AppInfoController(AppProperties appProperties) {
+    public AppInfoController(AppProperties appProperties,
+                             ObjectProvider<BuildProperties> buildPropertiesProvider) {
         this.appProperties = appProperties;
+        this.buildProperties = buildPropertiesProvider.getIfAvailable();
     }
 
     @GetMapping("/info")
     public Map<String, Object> info() {
         String edition = appProperties.getEdition() == null ? "personal" : appProperties.getEdition().toLowerCase();
+        String version = buildProperties == null ? appProperties.getVersion() : buildProperties.getVersion();
         return Map.of(
                 "edition", edition,
-                "version", "3.0.0",
+                "version", version,
                 "authRequired", "enterprise".equals(edition)
         );
     }

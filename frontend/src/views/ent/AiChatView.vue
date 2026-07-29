@@ -92,7 +92,8 @@ async function send() {
 }
 
 function goApprove(sql: string) {
-  router.push({ name: 'approvals', query: { sql } })
+  // 危险 SQL 由查询接口按 SQL 精确自动送审；使用 history state 避免 SQL 暴露在 URL。
+  router.push({ name: 'query', query: { source: source.value }, state: { sql } })
 }
 </script>
 

@@ -1,9 +1,6 @@
 import SwiftUI
 
-/// 服务端地址配置页。
-///
-/// 首次启动或切换服务端时进入。填写 BS 服务端地址（个人自托管或企业），
-/// 校验 /api/app/info 可达后回调进入 WebView 主界面。
+/// 首次启动或切换服务端时进入。发布构建只接受 HTTPS 服务端。
 struct ServerConfigView: View {
     var onEnter: (String) -> Void
 
@@ -22,7 +19,7 @@ struct ServerConfigView: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
 
-                TextField("服务端地址，如 http://192.168.1.10:8080", text: $serverURL)
+                TextField("HTTPS origin 或 /api（最终加载根 /）", text: $serverURL)
                     .textFieldStyle(.roundedBorder)
                     .keyboardType(.URL)
                     .autocapitalization(.none)
@@ -47,7 +44,7 @@ struct ServerConfigView: View {
                 }
                 .buttonStyle(.borderedProminent)
 
-                Text("说明：手机端为 BS 封装客户端，所有数据库连接与查询均由所连服务端完成。可连接个人自托管服务或企业 BS 服务。")
+                Text("发布版仅连接 HTTPS 服务端。数据库凭据与会话由服务端和 WebKit Cookie 管理，本地偏好仅保存服务端地址与应用锁开关。")
                     .font(.caption2)
                     .foregroundColor(.secondary)
                     .padding(.top, 24)
@@ -56,34 +53,27 @@ struct ServerConfigView: View {
         }
     }
 
-    private func normalize(_ raw: String) -> String {
-        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !s.isEmpty else { return "" }
-        if !s.hasPrefix("http://") && !s.hasPrefix("https://") {
-            s = "http://" + s
-        }
-        while s.hasSuffix("/") { s.removeLast() }
-        return s
+    private func validatedURL() -> URL? {
+        ServerURLPolicy.canonicalAppURL(serverURL)
     }
 
     private func enter() {
-        let url = normalize(serverURL)
-        guard !url.isEmpty else {
-            status = "请先填写服务端地址"
+        guard let url = validatedURL() else {
+            status = "请输入 HTTPS origin 或 origin/api，不要包含账号、查询或片段"
             return
         }
-        onEnter(url)
+        onEnter(url.absoluteString)
     }
 
     private func testConnection() {
-        let url = normalize(serverURL)
-        guard !url.isEmpty else {
-            status = "请先填写服务端地址"
+        guard let url = validatedURL() else {
+            status = "请输入 HTTPS origin 或 origin/api，不要包含账号、查询或片段"
             return
         }
         testing = true
         status = "连接中…"
-        checkServer(base: url) { result in
+        serverURL = url.absoluteString
+        checkServer(appURL: url) { result in
             DispatchQueue.main.async {
                 status = result
                 testing = false
@@ -91,19 +81,31 @@ struct ServerConfigView: View {
         }
     }
 
-    private func checkServer(base: String, completion: @escaping (String) -> Void) {
-        guard let u = URL(string: base + "/api/app/info") else {
+    private func checkServer(appURL: URL, completion: @escaping (String) -> Void) {
+        guard let url = ServerURLPolicy.appInfoURL(for: appURL) else {
             completion("地址格式不正确")
             return
         }
-        var req = URLRequest(url: u)
-        req.timeoutInterval = 8
-        URLSession.shared.dataTask(with: req) { data, response, error in
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 8
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpShouldSetCookies = false
+        let session = URLSession(
+            configuration: configuration,
+            delegate: NoRedirectDelegate(),
+            delegateQueue: nil
+        )
+        session.dataTask(with: request) { data, response, error in
+            defer { session.finishTasksAndInvalidate() }
             if let error = error {
                 completion("无法连接：\(error.localizedDescription)")
                 return
             }
-            if let http = response as? HTTPURLResponse, http.statusCode == 200, let data = data,
+            if let http = response as? HTTPURLResponse,
+               http.statusCode == 200,
+               http.url?.scheme?.lowercased() == "https",
+               let data = data,
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 let edition = json["edition"] as? String ?? "?"
                 let auth = json["authRequired"] as? Bool ?? false
@@ -114,5 +116,18 @@ struct ServerConfigView: View {
                 completion("连接失败：HTTP \(code)")
             }
         }.resume()
+    }
+}
+
+/// 连通性探测不跟随重定向，防止用户配置的地址把探测请求带往其他源。
+private final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }

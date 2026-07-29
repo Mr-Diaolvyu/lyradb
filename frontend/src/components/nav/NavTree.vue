@@ -191,7 +191,6 @@ async function doSearch(keyword: string) {
   try {
     searchResults.value = await metadataApi.searchNodes(connId, keyword)
   } catch (e: any) {
-    console.error('搜索失败:', e)
     searchResults.value = []
   } finally {
     searchLoading.value = false
@@ -367,7 +366,6 @@ async function loadColumns(node: Node) {
     const cols = await metadataApi.getTableColumns(connectionId, schema, tableName)
     uiStore.setColumns(cols)
   } catch (e: any) {
-    console.error('加载列信息失败:', e)
     uiStore.setColumns([])
   } finally {
     uiStore.columnsLoading = false
@@ -386,7 +384,6 @@ async function loadDdl(node: Node) {
     const ddlText = await metadataApi.getTableDDL(connectionId, schema, tableName)
     uiStore.setDdl(ddlText)
   } catch (e: any) {
-    console.error('加载DDL失败:', e)
     uiStore.setDdl('')
   } finally {
     uiStore.ddlLoading = false

@@ -18,14 +18,14 @@
           </el-tag>
         </div>
         <div class="grant-meta">
-          <div><b>可访问表:</b> {{ g.allowedTables || '全部' }}</div>
+          <div><b>可访问表:</b> {{ g.allowedTables?.trim() || '未授权任何表' }}</div>
           <div v-if="g.blockedTables"><b>黑名单:</b> {{ g.blockedTables }}</div>
           <div><b>行数上限:</b> {{ g.maxRowsPerQuery }}</div>
           <div><b>导出需审批:</b> {{ g.exportApprovedOnly ? '是' : '否' }}</div>
         </div>
         <div class="grant-actions">
           <el-button size="small" type="primary" @click="goQuery(g.grantedSourceName)">去查询</el-button>
-          <el-button size="small" @click="goApprove">申请导出</el-button>
+          <el-button size="small" @click="goApprove(g.grantedSourceName)">申请导出</el-button>
         </div>
       </div>
     </div>
@@ -53,8 +53,9 @@ onMounted(load)
 function goQuery(name: string) {
   router.push({ name: 'query', query: { source: name } })
 }
-function goApprove() {
-  router.push({ name: 'approvals' })
+function goApprove(name: string) {
+  // 导出审批必须绑定具体 SQL，先进入查询页填写并确认查询。
+  router.push({ name: 'query', query: { source: name } })
 }
 </script>
 

@@ -11,6 +11,8 @@ import type { BackgroundTask } from '@/types/task'
 import { useUiStore } from '@/stores/ui'
 import { useTaskStore } from '@/stores/tasks'
 import { useConnectionStore } from '@/stores/connection'
+import { LatestRequestGate } from '@/utils/requestControl'
+import { buildReviewFindingsMessage } from '@/utils/reviewFindings'
 
 /** Tab 类型 */
 export type TabType = 'sql' | 'table-detail'
@@ -51,6 +53,8 @@ export const useEditorStore = defineStore('editor', () => {
     // === State ===
     const tabs = ref<Tab[]>([])
     const activeTabId = ref<string | null>(null)
+    /** 每个标签页的请求代次；取消或新请求会使旧响应失效。 */
+    const requestGate = new LatestRequestGate()
 
     // === Getters ===
     const activeTab = computed(() =>
@@ -135,7 +139,6 @@ export const useEditorStore = defineStore('editor', () => {
             if (targetTab) {
                 targetTab.loading = false
             }
-            console.error('加载表详情失败:', e)
         }
 
         return id
@@ -143,6 +146,7 @@ export const useEditorStore = defineStore('editor', () => {
 
     /** 关闭 Tab */
     function closeTab(id: string) {
+        requestGate.invalidate(id)
         const idx = tabs.value.findIndex(t => t.id === id)
         if (idx >= 0) {
             tabs.value.splice(idx, 1)
@@ -164,19 +168,14 @@ export const useEditorStore = defineStore('editor', () => {
 
     /** 弹出 SQL 审核拦截确认框，确认"仍要执行"返回 true */
     async function confirmReviewFindings(findings: SqlReviewFinding[]): Promise<boolean> {
-        const severityLabel: Record<string, string> = { HIGH: '高危', MEDIUM: '中危', LOW: '提醒' }
-        const lines = findings
-            .map(f => `<li><b>[${severityLabel[f.severity] || f.severity}]</b> ${f.message}</li>`)
-            .join('')
         try {
             await ElMessageBox.confirm(
-                `<div>SQL 审核命中以下规则：<ul style="margin:8px 0 0 18px;padding:0">${lines}</ul></div>`,
+                buildReviewFindingsMessage(findings),
                 'SQL 审核拦截',
                 {
                     confirmButtonText: '仍要执行',
                     cancelButtonText: '取消',
                     type: 'warning',
-                    dangerouslyUseHTMLString: true,
                     confirmButtonClass: 'el-button--danger',
                 }
             )
@@ -189,28 +188,32 @@ export const useEditorStore = defineStore('editor', () => {
     /** 执行 SQL（仅 SQL Tab）；命中审核拦截时弹确认框，确认后携 force 重发 */
     async function executeSql(tabId: string, force = false) {
         const tab = tabs.value.find(t => t.id === tabId)
-        if (!tab || tab.type !== 'sql' || !tab.sql.trim()) return
+        if (!tab || tab.type !== 'sql' || !tab.sql.trim() || tab.loading) return
 
+        const requestVersion = requestGate.begin(tabId)
         tab.loading = true
         tab.error = null
         tab.isExplain = false
         try {
             const uiStore = useUiStore()
             const result = await queryApi.executeQuery(tab.connectionId, tab.sql, uiStore.currentDatabase || undefined, force)
+            if (!requestGate.isCurrent(tabId, requestVersion)) return
             if (result.reviewBlocked && result.reviewFindings?.length) {
                 tab.loading = false
-                if (await confirmReviewFindings(result.reviewFindings)) {
+                const confirmed = await confirmReviewFindings(result.reviewFindings)
+                if (confirmed && requestGate.isCurrent(tabId, requestVersion)) {
                     return executeSql(tabId, true)
                 }
-                tab.result = null
+                if (requestGate.isCurrent(tabId, requestVersion)) tab.result = null
                 return
             }
             tab.result = result
         } catch (e: any) {
+            if (!requestGate.isCurrent(tabId, requestVersion)) return
             tab.error = e.message || '执行失败'
             tab.result = null
         } finally {
-            tab.loading = false
+            if (requestGate.isCurrent(tabId, requestVersion)) tab.loading = false
         }
     }
 
@@ -218,18 +221,22 @@ export const useEditorStore = defineStore('editor', () => {
     async function cancelQuery(tabId: string) {
         const tab = tabs.value.find(t => t.id === tabId)
         if (!tab || tab.type !== 'sql' || !tab.loading) return
+        // 先使在途响应失效，避免取消与完成同时发生时旧结果回写。
+        requestGate.invalidate(tabId)
+        tab.loading = false
         try {
             await queryApi.cancelQuery(tab.connectionId)
-        } catch (e: any) {
-            console.warn('取消查询失败:', e)
+        } catch {
+            ElMessage.warning('取消请求未被服务端确认')
         }
     }
 
     /** 执行 EXPLAIN（执行计划），仅 SQL Tab */
     async function explainSql(tabId: string) {
         const tab = tabs.value.find(t => t.id === tabId)
-        if (!tab || tab.type !== 'sql' || !tab.sql.trim()) return
+        if (!tab || tab.type !== 'sql' || !tab.sql.trim() || tab.loading) return
 
+        const requestVersion = requestGate.begin(tabId)
         const baseSql = tab.sql.trim().replace(/;$/, '')
         // 已是 EXPLAIN 则不重复前缀
         const explainSqlText = /^EXPLAIN\b/i.test(baseSql) ? baseSql : `EXPLAIN ${baseSql}`
@@ -238,14 +245,17 @@ export const useEditorStore = defineStore('editor', () => {
         tab.error = null
         try {
             const uiStore = useUiStore()
-            tab.result = await queryApi.executeQuery(tab.connectionId, explainSqlText, uiStore.currentDatabase || undefined)
+            const result = await queryApi.executeQuery(tab.connectionId, explainSqlText, uiStore.currentDatabase || undefined)
+            if (!requestGate.isCurrent(tabId, requestVersion)) return
+            tab.result = result
             tab.isExplain = true
             uiStore.setBottomPanelTab('results')
         } catch (e: any) {
+            if (!requestGate.isCurrent(tabId, requestVersion)) return
             tab.error = e.message || '执行计划失败'
             tab.result = null
         } finally {
-            tab.loading = false
+            if (requestGate.isCurrent(tabId, requestVersion)) tab.loading = false
         }
     }
 

@@ -82,7 +82,6 @@ export const useUiStore = defineStore('ui', () => {
         try {
             capabilities.value = await metadataApi.getCapabilities(connectionId)
         } catch (e: any) {
-            console.error('加载能力描述失败:', e)
             capabilities.value = null
         }
     }
@@ -127,7 +126,6 @@ export const useUiStore = defineStore('ui', () => {
                 currentDatabase.value = list.length > 0 ? list[0] : null
             }
         } catch (e: any) {
-            console.error('加载数据库列表失败:', e)
             databases.value = []
         }
     }

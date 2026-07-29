@@ -1,66 +1,86 @@
-# 贡献指南 · Contributing to LyraDB
+# 贡献指南
 
-感谢你对 **LyraDB（天琴智库）** 的关注！无论是报告缺陷、提出想法还是提交代码，我们都非常欢迎。
+感谢参与 LyraDB。缺陷、需求和代码修改都应尽量给出可复现信息，并保持单个 PR 聚焦一个主题。
 
-## 📋 参与方式
+## 开发环境
 
-- **报告缺陷**：通过 [Issues](https://github.com/Mr-Diaolvyu/lyradb/issues) 提交 Bug，请使用 Bug 模板并尽量附上复现步骤、环境信息和日志。
-- **功能建议**：同样在 Issues 中使用「功能请求」模板描述你的场景与期望。
-- **提交代码**：Fork 仓库 → 新建分支 → 提交 Pull Request（见下文流程）。
+| 工具 | 版本 |
+| --- | --- |
+| JDK | 17+；桌面打包需带 jpackage 的 JDK 21 |
+| Maven | 3.8+ |
+| Node.js | 20 |
+| npm | 随 Node.js 20，必须使用仓库锁文件 |
 
-## 🛠️ 开发环境
-
-| 组件 | 版本要求 |
-|------|----------|
-| JDK | 17+ |
-| Maven | 3.6+ |
-| Node.js | 18+ / npm |
+后端：
 
 ```bash
-# 后端
 cd backend
-mvn spring-boot:run          # 默认 http://localhost:8080/api
-
-# 前端
-cd frontend
-npm install
-npm run dev                  # 默认 http://localhost:5173
+mvn spring-boot:run
 ```
 
-发行版通过环境变量 `LYRADB_EDITION` 切换：`personal`（默认，无认证）/ `enterprise`（RBAC/审批/审计）。更多配置见 [wiki/配置说明.md](wiki/配置说明.md)。
+前端：
 
-## 🌿 分支与提交规范
+```bash
+cd frontend
+npm ci
+npm run dev
+```
 
-- 从 `main` 切出功能分支，命名建议：`feat/xxx`、`fix/xxx`、`docs/xxx`、`refactor/xxx`。
-- 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)：
+本地默认是 `dev + personal`，仅用于回环地址开发。不要把 dev 默认密钥用于共享或生产环境；生产/Compose 默认使用 enterprise，并要求显式配置密钥、H2 密码和 CORS 来源；企业空用户库首次启动还必须提供初始管理员变量，初始化后应移除。
 
-  ```
-  <type>: <简要描述>
+## 分支与提交
 
-  常用 type：feat / fix / docs / refactor / test / chore
-  例：feat: 新增 ClickHouse 分区信息展示
-  ```
+- 从最新 `main` 创建分支，建议使用 `feat/`、`fix/`、`docs/`、`refactor/`、`test/` 前缀。
+- 提交信息遵循 Conventional Commits，例如 `fix: 阻止旧查询响应覆盖新结果`。
+- 不提交 `.env`、数据库文件、动态驱动缓存、构建产物或真实凭据。
+- 不使用 `git add .` 盲目暂存；先复核变更文件。
 
-- 一个 PR 聚焦一件事，保持提交历史清晰。
+## 提交前检查
 
-## 🔀 Pull Request 流程
+```bash
+cd frontend
+npm run lint
+npm run typecheck
+npm run test
+npm run build
+```
 
-1. Fork 本仓库并克隆到本地。
-2. 基于最新 `main` 创建分支：`git checkout -b feat/your-feature`。
-3. 完成修改，确保后端 `mvn -o compile` 通过、前端可正常构建。
-4. 若改动涉及接口 / 结构 / 配置，请同步更新 `wiki/` 下对应文档。
-5. 推送分支并发起 PR，填写 PR 模板，关联相关 Issue（如 `Closes #123`）。
+```bash
+cd backend
+mvn -B -ntp clean verify
+```
 
-## ✅ 代码风格
+如果改动 Android 外壳，还应执行：
 
-- **后端**：遵循现有包结构（`config` / `controller` / `driver` / `model` / `repository` / `service`），注释使用简体中文，与周边代码保持一致。
-- **前端**：TypeScript + Vue 3 组合式 API，组件与 Store 命名沿用现有约定。
-- **安全**：涉及数据库元数据拼接时，务必对标识符做校验 / 转义，防止 SQL 注入。
+```bash
+cd mobile/android
+gradle --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
+```
 
-## 📄 许可证
+iOS 和 HarmonyOS 改动必须分别在 Xcode / DevEco Studio 编译；无法使用目标工具链时，应在 PR 中明确列为未验证项，不能声称已通过。
 
-提交代码即表示你同意你的贡献以 [Apache License 2.0](LICENSE) 授权发布。
+## Pull Request 要求
 
----
+PR 描述至少包含：
 
-有任何疑问，欢迎在 Issues 中交流。感谢你的贡献！ 🎉
+- 问题与根因；
+- 行为变化和兼容性影响；
+- 实际执行的测试及结果；
+- 未能验证的工具链/环境；
+- 涉及配置、接口、迁移或用户流程时同步更新的文档。
+
+PR CI 会执行前端质量门禁、后端 `clean verify`、Compose 配置校验和 Android Debug 构建。不要通过 `-DskipTests`、降低 lint 级别或吞掉命令退出码绕过门禁。
+
+## 安全规则
+
+- 不记录密码、Cookie、令牌、完整连接串或 Axios 原始错误对象。
+- 企业角色与资源归属必须在后端校验；前端隐藏按钮不是授权。
+- 所有写请求保留 CSRF 保护，登录前先获取 `/auth/csrf`。
+- 审批必须绑定最终 SQL、格式、数据源和数据库；不能审批一种操作后执行另一种。
+- 外部 AI 与 Webhook 必须通过服务端主机白名单，默认空即禁用。
+- 新数据库结构通过 Flyway 迁移，生产不使用 Hibernate `ddl-auto=update`。
+- 新依赖应说明用途、许可证与供应链风险，并保持 lockfile / Maven 版本可复现。
+
+## 许可证
+
+提交代码即表示同意按 [Apache License 2.0](LICENSE) 发布贡献。

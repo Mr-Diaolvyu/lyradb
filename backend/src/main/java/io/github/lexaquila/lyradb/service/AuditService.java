@@ -1,22 +1,27 @@
+
+
 package io.github.lexaquila.lyradb.service;
 
 import io.github.lexaquila.lyradb.config.AppProperties;
 import io.github.lexaquila.lyradb.model.entity.AuditLog;
+import io.github.lexaquila.lyradb.model.entity.User;
 import io.github.lexaquila.lyradb.repository.AuditLogRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 /**
- * 操作审计服务（企业版，append-only）
+ * 企业版追加式审计服务。
  *
- * <p>记录查询/导出/迁移/管理员操作；失败不影响主流程。
- * 支持 {@code app.audit.maskSql} 脱敏：仅存 SQL 哈希，不存明文。</p>
+ * <p>SQL 默认只保留 SHA-256，管理动作通过 action 字段保留结构化名称。
+ * 审计写入失败会显式抛错，不再静默形成审计空洞。</p>
  */
 @Service
 public class AuditService {
@@ -27,44 +32,101 @@ public class AuditService {
     private final SecurityUtil securityUtil;
     private final AppProperties appProperties;
 
-    public AuditService(AuditLogRepository repository, SecurityUtil securityUtil, AppProperties appProperties) {
+    public AuditService(AuditLogRepository repository, SecurityUtil securityUtil,
+                        AppProperties appProperties) {
         this.repository = repository;
         this.securityUtil = securityUtil;
         this.appProperties = appProperties;
     }
 
-    /** 记录一条审计（不抛异常） */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(String workspaceId, String userId, String username, String role,
                        String dataSourceId, String grantedSourceName, String dbType,
                        String operationType, String sql, long affectedRows, long resultRows,
                        long elapsedMs, boolean success, String error) {
+        persist(workspaceId, userId, username, role, dataSourceId, grantedSourceName, dbType,
+                operationType, operationType, sql, affectedRows, resultRows, elapsedMs,
+                success, error, null);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void record(String workspaceId, String userId, String username, String role,
+                       String dataSourceId, String grantedSourceName, String dbType,
+                       String operationType, String action, String sql,
+                       long affectedRows, long resultRows, long elapsedMs,
+                       boolean success, String error, String approvalRequestId) {
+        persist(workspaceId, userId, username, role, dataSourceId, grantedSourceName, dbType,
+                operationType, action, sql, affectedRows, resultRows, elapsedMs,
+                success, error, approvalRequestId);
+    }
+
+    private void persist(String workspaceId, String userId, String username, String role,
+                         String dataSourceId, String grantedSourceName, String dbType,
+                         String operationType, String action, String sql,
+                         long affectedRows, long resultRows, long elapsedMs,
+                         boolean success, String error, String approvalRequestId) {
         try {
-            AuditLog a = new AuditLog();
-            a.setWorkspaceId(workspaceId);
-            a.setUserId(userId);
-            a.setUsername(username);
-            a.setRole(role);
-            a.setDataSourceId(dataSourceId);
-            a.setGrantedSourceName(grantedSourceName);
-            a.setDbType(dbType);
-            a.setOperationType(operationType);
-            // 脱敏：仅存哈希
-            boolean mask = appProperties.getAudit() != null && appProperties.getAudit().isMaskSql();
-            a.setSqlText(mask ? null : truncate(sql, 10000));
-            a.setSqlHash(sha256(sql));
-            a.setAffectedRows(affectedRows);
-            a.setResultRows(resultRows);
-            a.setElapsedMs(elapsedMs);
-            a.setSuccess(success);
-            if (!success && error != null) a.setErrorMessage(truncate(error, 2000));
-            repository.save(a);
-        } catch (Exception e) {
-            log.warn("审计落库失败: {}", e.getMessage());
+            AuditLog audit = new AuditLog();
+            audit.setWorkspaceId(workspaceId);
+            audit.setUserId(userId);
+            audit.setUsername(username);
+            audit.setRole(role);
+            audit.setDataSourceId(dataSourceId);
+            audit.setGrantedSourceName(grantedSourceName);
+            audit.setDbType(dbType);
+            audit.setOperationType(truncate(operationType, 32));
+            audit.setAction(truncate(action, 64));
+            boolean mask = appProperties.getAudit() == null || appProperties.getAudit().isMaskSql();
+            audit.setSqlText(mask ? null : truncate(sql, 10000));
+            audit.setSqlHash(sha256(sql));
+            audit.setAffectedRows(affectedRows);
+            audit.setResultRows(resultRows);
+            audit.setElapsedMs(elapsedMs);
+            audit.setSuccess(success);
+            audit.setErrorMessage(success ? null : truncate(error, 2000));
+            audit.setApprovalRequestId(approvalRequestId);
+            repository.saveAndFlush(audit);
+        } catch (RuntimeException exception) {
+            log.error("审计落库失败，动作={}，用户={}：{}", action, username, exception.getMessage(), exception);
+            throw new IllegalStateException("审计记录失败，操作结果不可确认", exception);
         }
     }
 
-    public Page<AuditLog> listMine(String userId, Pageable pageable) {
-        return repository.findByUserIdOrderByCreatedAtDesc(userId, pageable);
+    /**
+     * 需要与业务变更原子提交的完整审计记录。调用方应提供外层事务；
+     * 保留 REQUIRED 便于非数据库状态事件独立记录。
+     */
+    @Transactional(propagation = Propagation.REQUIRED)
+    public void recordJoined(String workspaceId, String userId, String username, String role,
+                             String dataSourceId, String grantedSourceName, String dbType,
+                             String operationType, String action, String sql,
+                             long affectedRows, long resultRows, long elapsedMs,
+                             boolean success, String error, String approvalRequestId) {
+        persist(workspaceId, userId, username, role, dataSourceId, grantedSourceName, dbType,
+                operationType, action, sql, affectedRows, resultRows, elapsedMs,
+                success, error, approvalRequestId);
+    }
+
+    /**
+     * 管理与审批写操作审计加入调用方事务；审计失败会标记同一事务回滚。
+     * 无外层事务时仍创建独立事务，适用于仅记录事件的管理动作。
+     */
+    @Transactional(propagation = Propagation.REQUIRED)
+    public void recordCurrent(String workspaceId, String action,
+                              String dataSourceId, String grantedSourceName,
+                              boolean success, String error) {
+        User user = securityUtil.requireCurrentUser();
+        String effectiveRole = securityUtil.effectiveRoles(workspaceId).stream()
+                .findFirst().orElse("ANALYST");
+        persist(workspaceId, user.getId(), user.getUsername(), effectiveRole,
+                dataSourceId, grantedSourceName, null, "ADMIN", action, null,
+                0, 0, 0, success, error, null);
+    }
+
+    public Page<AuditLog> listMine(
+            String userId, String workspaceId, Pageable pageable) {
+        return repository.findByUserIdAndWorkspaceIdOrderByCreatedAtDesc(
+                userId, workspaceId, pageable);
     }
 
     public Page<AuditLog> listByWorkspace(String workspaceId, Pageable pageable) {
@@ -75,21 +137,28 @@ public class AuditService {
         return repository.findAllByOrderByCreatedAtDesc(pageable);
     }
 
-    private static String sha256(String s) {
-        if (s == null) return null;
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] h = md.digest(s.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder();
-            for (byte b : h) sb.append(String.format("%02x", b));
-            return sb.toString();
-        } catch (Exception e) {
+
+    private static String sha256(String value) {
+        if (value == null) {
             return null;
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder result = new StringBuilder();
+            for (byte b : hash) {
+                result.append(String.format("%02x", b));
+            }
+            return result.toString();
+        } catch (Exception exception) {
+            throw new IllegalStateException("无法计算审计哈希", exception);
         }
     }
 
-    private static String truncate(String s, int max) {
-        if (s == null) return null;
-        return s.length() <= max ? s : s.substring(0, max);
+    private static String truncate(String value, int max) {
+        if (value == null) {
+            return null;
+        }
+        return value.length() <= max ? value : value.substring(0, max);
     }
 }

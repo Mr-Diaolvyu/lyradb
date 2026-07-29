@@ -1,5 +1,9 @@
+
+
+
 package io.github.lexaquila.lyradb.model.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.GenericGenerator;
@@ -10,7 +14,10 @@ import java.time.LocalDateTime;
  * 审批申请单（状态机见 审计日志与审批工作流.md）
  */
 @Entity
-@Table(name = "ent_approval_request")
+@Table(name = "ent_approval_request", indexes = {
+        @Index(name = "idx_approval_workspace_status", columnList = "workspace_id,status"),
+        @Index(name = "idx_approval_applicant_created", columnList = "applicant_id,created_at")
+})
 @Data
 public class ApprovalRequest {
 
@@ -20,7 +27,7 @@ public class ApprovalRequest {
     @Column(length = 36)
     private String id;
 
-    @Column(name = "workspace_id", length = 36)
+    @Column(name = "workspace_id", nullable = false, length = 36)
     private String workspaceId;
 
     @Column(name = "applicant_id", nullable = false, length = 36)
@@ -29,25 +36,41 @@ public class ApprovalRequest {
     @Column(name = "applicant_name", length = 100)
     private String applicantName;
 
-    /** EXPORT / DML / MIGRATION / AI_DML */
+    /** EXPORT / DANGEROUS_SQL */
     @Column(name = "operation_type", length = 16)
     private String operationType;
 
     @Column(name = "data_source_id", length = 36)
     private String dataSourceId;
 
+    /** 审批创建时绑定的授权主键，防止删除后用同名授权替换。 */
+    @Column(name = "grant_id", length = 36)
+    private String grantId;
+
     @Column(name = "granted_source_name", length = 100)
     private String grantedSourceName;
 
+    /** 数据源、授权范围和脱敏规则的 SHA-256 安全上下文指纹。 */
+    @JsonIgnore
+    @Column(name = "security_context_hash", length = 64)
+    private String securityContextHash;
+
+    /** AES-GCM 加密后的规范化载荷，不直接序列化给客户端。 */
+    @JsonIgnore
     @Lob
     @Column(name = "payload_json")
     private String payloadJson;
 
+    /** 规范化载荷的 keyed HMAC blind index，用于有界精确检索与去重。 */
+    @JsonIgnore
+    @Column(name = "payload_hash", length = 64)
+    private String payloadHash;
+
     @Column(length = 500)
     private String reason;
 
-    /** DRAFT/PENDING/APPROVED/REJECTED/EXPIRED/CANCELLED/EXECUTING/DONE/FAILED */
-    @Column(length = 16)
+    /** PENDING/APPROVED/REJECTED/EXPIRED/CANCELLED/INVALIDATED/EXECUTING/EXECUTION_UNKNOWN/DONE/FAILED */
+    @Column(length = 24)
     private String status = "DRAFT";
 
     @Column(name = "approver_id", length = 36)

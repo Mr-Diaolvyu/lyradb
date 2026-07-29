@@ -117,8 +117,8 @@
           </el-select>
         </el-form-item>
         <el-form-item label="逻辑名"><el-input v-model="grantCreate.form.grantedSourceName" /></el-form-item>
-        <el-form-item label="允许表"><el-input v-model="grantCreate.form.allowedTables" placeholder="orders_*，逗号分隔，空=全部" /></el-form-item>
-        <el-form-item label="黑名单表"><el-input v-model="grantCreate.form.blockedTables" placeholder="user_secret" /></el-form-item>
+        <el-form-item label="允许表（完整限定名）" required><el-input v-model="grantCreate.form.allowedTables" placeholder="如 sales.orders、prod.sales.orders_*；逗号分隔，空=不授权" /></el-form-item>
+        <el-form-item label="黑名单表"><el-input v-model="grantCreate.form.blockedTables" placeholder="如 sales.user_secret" /></el-form-item>
         <el-form-item label="能力">
           <el-radio-group v-model="grantCreate.form.sqlCapability">
             <el-radio value="READ_ONLY">只读</el-radio><el-radio value="DML_ALLOWED">可写</el-radio>
@@ -252,6 +252,7 @@ async function delDs(id: string) {
 
 async function createGrant() {
   if (!grantCreate.form.dataSourceId || !grantCreate.form.userId || !grantCreate.form.grantedSourceName) { ElMessage.warning('请补全'); return }
+  if (!grantCreate.form.allowedTables.trim()) { ElMessage.warning('必须填写至少一个 schema.table 或 catalog.schema.table（可在表名段使用受控通配）；空值表示不授权任何表'); return }
   grantCreate.busy = true
   try {
     await entApi.adminCreateGrant(grantCreate.form)

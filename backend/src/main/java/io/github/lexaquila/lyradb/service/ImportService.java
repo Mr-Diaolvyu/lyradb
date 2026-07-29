@@ -11,28 +11,32 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
- * 数据导入服务（CSV/JSON 批量 INSERT）
- *
- * <p>
- * 对个人版连接生效：经 {@link ConnectionService} 取活跃连接 → 能力校验（只读拒）→
- * 批量多值 INSERT → 记录查询历史。受驱动能力/连接超时保护。
- * 支持直传行数据与 multipart 文件上传（CSV 首行表头 / JSON 数组）两种入口。
- * </p>
+ * 数据导入服务。JDBC 导入使用 PreparedStatement 与单事务，失败整体回滚；
+ * 文件、行、列和单元格均有服务端硬上限。
  */
 @Service
 public class ImportService {
 
     private static final Logger log = LoggerFactory.getLogger(ImportService.class);
     private static final int BATCH_SIZE = 500;
-
+    private static final int MAX_ROWS = 100_000;
+    private static final int MAX_COLUMNS = 500;
+    private static final int MAX_CELL_CHARS = 1_000_000;
+    private static final long MAX_FILE_BYTES = 20L * 1024 * 1024;
+    private static final Pattern SAFE_IDENTIFIER =
+            Pattern.compile("[\\p{L}_][\\p{L}\\p{N}_$]*");
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final ConnectionService connectionService;
@@ -43,118 +47,173 @@ public class ImportService {
         this.queryHistoryService = queryHistoryService;
     }
 
-    /**
-     * @param connectionId 个人版连接 ID
-     * @param schema       可选
-     * @param table        目标表
-     * @param rows         行数据（每行 col→value）
-     * @return {success, inserted, errors}
-     */
     public Map<String, Object> importRows(String connectionId, String schema, String table,
             List<Map<String, Object>> rows) {
-        Map<String, Object> result = new LinkedHashMap<>();
-        if (rows == null || rows.isEmpty()) {
-            result.put("success", false);
-            result.put("message", "无数据行");
-            return result;
-        }
+        validateInput(schema, table, rows);
         ConnectionService.ActiveConnection active = connectionService.getActiveConnection(connectionId);
         DatabaseDriver driver = active.driver;
         String dbType = driver.getDriverInfo() != null ? driver.getDriverInfo().getDbType() : null;
 
-        // 能力校验
         if (driver.getCapabilities() != null
-                && (driver.getCapabilities().isReadOnly() || !driver.getCapabilities().isSupportsDML())) {
-            result.put("success", false);
-            result.put("message", "该数据库为只读/不支持 DML，无法导入");
-            return result;
+                && (driver.getCapabilities().isReadOnly()
+                || !driver.getCapabilities().isSupportsDML())) {
+            throw new IllegalStateException("该数据库为只读/不支持 DML，无法导入");
         }
 
-        // 列：所有行的键并集（保序）
         Set<String> colSet = new LinkedHashSet<>();
-        for (Map<String, Object> r : rows)
-            colSet.addAll(r.keySet());
+        for (Map<String, Object> row : rows) {
+            colSet.addAll(row.keySet());
+        }
+        if (colSet.isEmpty() || colSet.size() > MAX_COLUMNS) {
+            throw new IllegalArgumentException("导入列数必须在 1-" + MAX_COLUMNS + " 之间");
+        }
         List<String> columns = new ArrayList<>(colSet);
-        String tableRef = (schema != null && !schema.isBlank()) ? schema + "." + table : table;
+        columns.forEach(this::validateIdentifier);
 
-        int inserted = 0;
-        List<String> errors = new ArrayList<>();
-        for (int i = 0; i < rows.size(); i += BATCH_SIZE) {
-            List<Map<String, Object>> batch = rows.subList(i, Math.min(i + BATCH_SIZE, rows.size()));
-            String sql = buildBatchInsert(tableRef, columns, batch);
-            try {
-                int affected = driver.executeUpdate(active.connection, sql);
-                inserted += (affected > 0 ? affected : batch.size());
-            } catch (Exception e) {
-                log.warn("导入批次失败 offset={} : {}", i, e.getMessage());
-                errors.add("批次 " + i + ": " + e.getMessage());
+        int inserted;
+        try (ConnectionService.ActiveConnection.Lease ignored = active.acquire()) {
+            if (!(active.connection instanceof Connection jdbc)) {
+                throw new IllegalStateException("数据导入仅支持具备事务能力的 JDBC 数据库");
             }
+            inserted = importJdbc(jdbc, schema, table, columns, rows);
+        } catch (Exception e) {
+            queryHistoryService.record(connectionId, dbType,
+                    "IMPORT " + table + " (" + rows.size() + " rows)",
+                    0L, 0L, false, e.getClass().getSimpleName());
+            throw new IllegalStateException("导入失败，未提交数据", e);
         }
 
         queryHistoryService.record(connectionId, dbType,
-                "INSERT INTO " + tableRef + " ... (" + rows.size() + " rows)", 0L, (long) inserted, true, null);
-
-        result.put("success", errors.isEmpty());
+                "IMPORT " + table + " (" + rows.size() + " rows)",
+                0L, (long) inserted, true, null);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
         result.put("inserted", inserted);
         result.put("total", rows.size());
-        result.put("errors", errors);
+        result.put("errors", List.of());
         return result;
     }
 
-    /**
-     * multipart 文件导入：解析为行数据后复用 {@link #importRows}
-     *
-     * @param format csv/json，缺省按文件后缀识别（.json → json，其余 → csv）
-     */
     public Map<String, Object> importFile(String connectionId, String schema, String table,
             MultipartFile file, String format) {
-        Map<String, Object> result = new LinkedHashMap<>();
         if (file == null || file.isEmpty()) {
-            result.put("success", false);
-            result.put("message", "文件为空");
-            return result;
+            throw new IllegalArgumentException("文件为空");
+        }
+        if (file.getSize() > MAX_FILE_BYTES) {
+            throw new IllegalArgumentException("导入文件不得超过 20 MiB");
         }
         String fmt = format;
         if (fmt == null || fmt.isBlank()) {
             String name = file.getOriginalFilename();
-            fmt = (name != null && name.toLowerCase().endsWith(".json")) ? "json" : "csv";
+            fmt = name != null && name.toLowerCase().endsWith(".json") ? "json" : "csv";
         }
-        List<Map<String, Object>> rows;
+        if (!"json".equalsIgnoreCase(fmt) && !"csv".equalsIgnoreCase(fmt)) {
+            throw new IllegalArgumentException("format 仅支持 csv/json");
+        }
         try {
-            rows = "json".equalsIgnoreCase(fmt) ? parseJson(file) : parseCsv(file);
+            List<Map<String, Object>> rows = "json".equalsIgnoreCase(fmt)
+                    ? parseJson(file) : parseCsv(file);
+            return importRows(connectionId, schema, table, rows);
+        } catch (IllegalArgumentException e) {
+            throw e;
         } catch (Exception e) {
-            log.warn("导入文件解析失败: {}", e.getMessage());
-            result.put("success", false);
-            result.put("message", "文件解析失败: " + e.getMessage());
-            return result;
+            log.warn("导入文件解析失败: {}", e.getClass().getSimpleName());
+            throw new IllegalArgumentException("文件解析失败");
         }
-        return importRows(connectionId, schema, table, rows);
     }
 
-    /** JSON 数组 → 行数据 */
+    private int importJdbc(Connection jdbc, String schema, String table,
+            List<String> columns, List<Map<String, Object>> rows) throws Exception {
+        boolean originalAutoCommit = jdbc.getAutoCommit();
+        String detectedQuote = jdbc.getMetaData().getIdentifierQuoteString();
+        final String quote = detectedQuote == null || detectedQuote.isBlank()
+                ? "" : detectedQuote;
+        String tableRef = qualify(schema, table, quote);
+        String columnList = columns.stream().map(c -> quote(c, quote))
+                .collect(java.util.stream.Collectors.joining(", "));
+        String placeholders = String.join(", ", java.util.Collections.nCopies(columns.size(), "?"));
+        String sql = "INSERT INTO " + tableRef + " (" + columnList + ") VALUES (" + placeholders + ")";
+
+        try {
+            jdbc.setAutoCommit(false);
+            int inserted = 0;
+            try (PreparedStatement statement = jdbc.prepareStatement(sql)) {
+                int pending = 0;
+                for (Map<String, Object> row : rows) {
+                    for (int index = 0; index < columns.size(); index++) {
+                        Object value = row.get(columns.get(index));
+                        validateCell(value);
+                        statement.setObject(index + 1, value);
+                    }
+                    statement.addBatch();
+                    pending++;
+                    if (pending >= BATCH_SIZE) {
+                        inserted += countBatch(statement.executeBatch(), pending);
+                        pending = 0;
+                    }
+                }
+                if (pending > 0) {
+                    inserted += countBatch(statement.executeBatch(), pending);
+                }
+            }
+            jdbc.commit();
+            return inserted;
+        } catch (Exception e) {
+            try {
+                jdbc.rollback();
+            } catch (Exception rollbackError) {
+                e.addSuppressed(rollbackError);
+            }
+            throw e;
+        } finally {
+            try {
+                jdbc.setAutoCommit(originalAutoCommit);
+            } catch (Exception e) {
+                log.error("恢复连接 autoCommit 失败，连接将被上层关闭");
+                throw e;
+            }
+        }
+    }
+
+    private int countBatch(int[] counts, int expected) {
+        int total = 0;
+        for (int count : counts) {
+            if (count == Statement.EXECUTE_FAILED) {
+                throw new IllegalStateException("批量写入失败");
+            }
+            total += count == Statement.SUCCESS_NO_INFO ? 1 : Math.max(0, count);
+        }
+        return counts.length == 0 ? expected : total;
+    }
+
     private List<Map<String, Object>> parseJson(MultipartFile file) throws Exception {
         try (var in = file.getInputStream()) {
-            return MAPPER.readValue(in, new TypeReference<List<Map<String, Object>>>() {
-            });
+            List<Map<String, Object>> rows = MAPPER.readValue(in,
+                    new TypeReference<List<Map<String, Object>>>() { });
+            ensureRowLimit(rows.size());
+            return rows;
         }
     }
 
-    /** CSV（首行表头）→ 行数据 */
     private List<Map<String, Object>> parseCsv(MultipartFile file) throws Exception {
         List<Map<String, Object>> rows = new ArrayList<>();
-        try (CSVReader reader = new CSVReader(new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
+        try (CSVReader reader = new CSVReader(new InputStreamReader(
+                file.getInputStream(), StandardCharsets.UTF_8))) {
             String[] header = reader.readNext();
-            if (header == null || header.length == 0) {
-                throw new IllegalArgumentException("CSV 缺少表头行");
+            if (header == null || header.length == 0 || header.length > MAX_COLUMNS) {
+                throw new IllegalArgumentException("CSV 表头列数无效");
             }
             String[] line;
             while ((line = reader.readNext()) != null) {
                 if (line.length == 1 && (line[0] == null || line[0].isBlank())) {
-                    continue; // 跳过空行
+                    continue;
                 }
+                ensureRowLimit(rows.size() + 1);
                 Map<String, Object> row = new LinkedHashMap<>();
                 for (int i = 0; i < header.length; i++) {
-                    row.put(header[i].trim(), i < line.length ? line[i] : null);
+                    String value = i < line.length ? line[i] : null;
+                    validateCell(value);
+                    row.put(header[i].trim(), value);
                 }
                 rows.add(row);
             }
@@ -162,30 +221,43 @@ public class ImportService {
         return rows;
     }
 
-    private String buildBatchInsert(String tableRef, List<String> columns, List<Map<String, Object>> batch) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("INSERT INTO ").append(tableRef).append(" (");
-        sb.append(String.join(", ", columns)).append(") VALUES ");
-        for (int i = 0; i < batch.size(); i++) {
-            if (i > 0)
-                sb.append(",");
-            sb.append("(");
-            Map<String, Object> row = batch.get(i);
-            for (int j = 0; j < columns.size(); j++) {
-                if (j > 0)
-                    sb.append(",");
-                sb.append(sqlLiteral(row.get(columns.get(j))));
-            }
-            sb.append(")");
+    private void validateInput(String schema, String table, List<Map<String, Object>> rows) {
+        validateIdentifier(table);
+        if (schema != null && !schema.isBlank()) {
+            validateIdentifier(schema);
         }
-        return sb.toString();
+        if (rows == null || rows.isEmpty()) {
+            throw new IllegalArgumentException("无数据行");
+        }
+        ensureRowLimit(rows.size());
     }
 
-    private String sqlLiteral(Object v) {
-        if (v == null)
-            return "NULL";
-        if (v instanceof Number || v instanceof Boolean)
-            return String.valueOf(v);
-        return "'" + String.valueOf(v).replace("'", "''") + "'";
+    private void ensureRowLimit(int size) {
+        if (size > MAX_ROWS) {
+            throw new IllegalArgumentException("导入行数不得超过 " + MAX_ROWS);
+        }
     }
+
+    private void validateIdentifier(String value) {
+        if (value == null || !SAFE_IDENTIFIER.matcher(value).matches()) {
+            throw new IllegalArgumentException("表名、Schema 和列名只能包含安全标识符字符");
+        }
+    }
+
+    private void validateCell(Object value) {
+        if (value != null && value.toString().length() > MAX_CELL_CHARS) {
+            throw new IllegalArgumentException("单元格内容超过 100 万字符限制");
+        }
+    }
+
+    private String qualify(String schema, String table, String quote) {
+        return schema != null && !schema.isBlank()
+                ? quote(schema, quote) + "." + quote(table, quote)
+                : quote(table, quote);
+    }
+
+    private String quote(String identifier, String quote) {
+        return quote + identifier.replace(quote, quote + quote) + quote;
+    }
+
 }

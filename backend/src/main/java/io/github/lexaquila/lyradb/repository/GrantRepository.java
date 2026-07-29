@@ -7,8 +7,11 @@ import java.util.List;
 import java.util.Optional;
 
 public interface GrantRepository extends JpaRepository<Grant, String> {
-    List<Grant> findByUserIdOrderByCreatedAtDesc(String userId);
+    List<Grant> findByUserIdAndWorkspaceIdOrderByCreatedAtDesc(
+            String userId, String workspaceId);
     List<Grant> findByWorkspaceIdOrderByCreatedAtDesc(String workspaceId);
-    Optional<Grant> findByUserIdAndGrantedSourceName(String userId, String grantedSourceName);
-    Optional<Grant> findByIdAndUserId(String id, String userId);
+    Optional<Grant> findByUserIdAndWorkspaceIdAndGrantedSourceName(
+            String userId, String workspaceId, String grantedSourceName);
+    Optional<Grant> findByIdAndUserIdAndWorkspaceId(
+            String id, String userId, String workspaceId);
 }

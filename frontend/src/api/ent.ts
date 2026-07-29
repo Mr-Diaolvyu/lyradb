@@ -98,7 +98,7 @@ export const entApi = {
     },
 
     // 企业导出（需已批准 approvalRequestId，返回 blob）
-    export(approvalRequestId: string, body: { grantedSourceName: string; sql: string; format?: string; defaultDatabase?: string }): Promise<Blob> {
+    export(approvalRequestId: string, body: { sql: string; format: 'csv' | 'json'; defaultDatabase: string | null }): Promise<Blob> {
         return apiClient.post(`/ent/export?approvalRequestId=${encodeURIComponent(approvalRequestId)}`, body, { responseType: 'blob' })
     },
 
@@ -146,9 +146,6 @@ export const entApi = {
     },
     rejectApproval(id: string, comment?: string): Promise<ApprovalRequest> {
         return apiClient.post(`/approvals/${id}/reject`, { comment })
-    },
-    executeApproval(id: string, result: string, success = true): Promise<ApprovalRequest> {
-        return apiClient.post(`/approvals/${id}/execute`, { result, success })
     },
     cancelApproval(id: string): Promise<ApprovalRequest> {
         return apiClient.delete(`/approvals/${id}`)

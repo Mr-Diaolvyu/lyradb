@@ -10,7 +10,14 @@ import java.time.LocalDateTime;
  * 操作审计日志（append-only）
  */
 @Entity
-@Table(name = "ent_audit_log")
+@Table(name = "ent_audit_log", indexes = {
+        @Index(name = "idx_audit_workspace_created",
+                columnList = "workspace_id,created_at"),
+        @Index(name = "idx_audit_user_created",
+                columnList = "user_id,created_at"),
+        @Index(name = "idx_audit_approval",
+                columnList = "approval_request_id")
+})
 @Data
 public class AuditLog {
 
@@ -42,8 +49,12 @@ public class AuditLog {
     private String dbType;
 
     /** QUERY / EXPORT / UPDATE / DDL / MIGRATION / AI_QUERY / LOGIN / ADMIN */
-    @Column(name = "operation_type", length = 16)
+    @Column(name = "operation_type", length = 32)
     private String operationType;
+
+    /** 细粒度动作，例如 USER_CREATE、APPROVAL_APPROVE。 */
+    @Column(length = 64)
+    private String action;
 
     @Lob
     @Column(name = "sql_text")

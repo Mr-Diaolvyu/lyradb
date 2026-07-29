@@ -398,31 +398,31 @@
                 "options": [
                     {
                         "label": "华东1(杭州)",
-                        "value": "http://service.cn-hangzhou.maxcompute.aliyun.com/api"
+                        "value": "https://service.cn-hangzhou.maxcompute.aliyun.com/api"
                     },
                     {
                         "label": "华东2(上海)",
-                        "value": "http://service.cn-shanghai.maxcompute.aliyun.com/api"
+                        "value": "https://service.cn-shanghai.maxcompute.aliyun.com/api"
                     },
                     {
                         "label": "华北2(北京)",
-                        "value": "http://service.cn-beijing.maxcompute.aliyun.com/api"
+                        "value": "https://service.cn-beijing.maxcompute.aliyun.com/api"
                     },
                     {
                         "label": "华南1(深圳)",
-                        "value": "http://service.cn-shenzhen.maxcompute.aliyun.com/api"
+                        "value": "https://service.cn-shenzhen.maxcompute.aliyun.com/api"
                     },
                     {
                         "label": "西南1(成都)",
-                        "value": "http://service.cn-chengdu.maxcompute.aliyun.com/api"
+                        "value": "https://service.cn-chengdu.maxcompute.aliyun.com/api"
                     },
                     {
                         "label": "中国(香港)",
-                        "value": "http://service.cn-hongkong.maxcompute.aliyun.com/api"
+                        "value": "https://service.cn-hongkong.maxcompute.aliyun.com/api"
                     },
                     {
                         "label": "新加坡",
-                        "value": "http://service.ap-southeast-1.maxcompute.aliyun.com/api"
+                        "value": "https://service.ap-southeast-1.maxcompute.aliyun.com/api"
                     }
                 ]
             },

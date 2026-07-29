@@ -1,0 +1,40 @@
+
+# 桌面发行版只允许本机访问，并由操作系统分配空闲端口。
+server:
+  address: 127.0.0.1
+  port: 0
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        secure: false
+        same-site: strict
+
+spring:
+  datasource:
+    url: jdbc:h2:file:${LYRADB_H2_PATH:${user.home}/.lyradb/data/lyradb};DB_CLOSE_DELAY=-1;MODE=MySQL;AUTO_RECONNECT=TRUE
+    driver-class-name: org.h2.Driver
+    username: ${LYRADB_DB_USER:sa}
+    password: ${LYRADB_DB_PASSWORD:}
+
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+
+  h2:
+    console:
+      enabled: false
+
+# 未显式设置时由 DesktopSecretEnvironmentPostProcessor 生成每安装随机密钥。
+jasypt:
+  encryptor:
+    password: ${JASYPT_PASSWORD:}
+
+app:
+  edition: personal
+  desktop:
+    tray-enabled: true
+  # 桌面页面与 API 同源，不开放跨域来源。
+  cors:
+    allowed-origins: ""
+    allowed-methods: "GET,POST,PUT,DELETE,OPTIONS"
+    allowed-headers: "Content-Type,Accept,X-XSRF-TOKEN,X-LyraDB-Desktop-Token"

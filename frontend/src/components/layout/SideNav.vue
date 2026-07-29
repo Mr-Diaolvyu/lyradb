@@ -43,6 +43,7 @@ import { ElMessage } from 'element-plus'
 import NavTree from '@/components/nav/NavTree.vue'
 import { useUiStore } from '@/stores/ui'
 import { useConnectionStore } from '@/stores/connection'
+import { saveBlob } from '@/utils/download'
 
 const { t } = useI18n()
 
@@ -65,12 +66,7 @@ async function handleExport() {
     }
     const json = JSON.stringify(data, null, 2)
     const blob = new Blob([json], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `db_connections_${Date.now()}.json`
-    a.click()
-    URL.revokeObjectURL(url)
+    await saveBlob(blob, `db_connections_${Date.now()}.json`)
     ElMessage.success(t('sideNav.exported', { count: data.length }))
   } catch (e: any) {
     ElMessage.error(t('sideNav.exportFailed', { msg: e.message || t('common.unknownError') }))

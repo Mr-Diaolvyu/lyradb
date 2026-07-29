@@ -147,7 +147,7 @@ public class ConnectionController {
     }
 
     /**
-     * 导出所有连接配置 (JSON格式，凭证已解密)
+     * 导出所有连接配置（JSON 格式，敏感字段仅返回掩码）
      */
     @PostMapping("/export")
     public ResponseEntity<List<ConnectionDTO>> exportConnections() {

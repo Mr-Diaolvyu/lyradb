@@ -7,9 +7,7 @@ import java.util.List;
 import java.util.Optional;
 
 public interface AiProviderConfigRepository extends JpaRepository<AiProviderConfig, String> {
-    List<AiProviderConfig> findByWorkspaceIdOrWorkspaceIdNullOrderByIsDefaultDescCreatedAtDesc(String workspaceId);
-
-    List<AiProviderConfig> findByEnabledTrueOrderByIsDefaultDescCreatedAtDesc();
-
-    Optional<AiProviderConfig> findByIsDefaultTrueAndEnabledTrue();
+    List<AiProviderConfig> findByWorkspaceIdOrderByIsDefaultDescCreatedAtDesc(String workspaceId);
+    Optional<AiProviderConfig> findByIdAndWorkspaceId(String id, String workspaceId);
+    Optional<AiProviderConfig> findByWorkspaceIdAndIsDefaultTrueAndEnabledTrue(String workspaceId);
 }

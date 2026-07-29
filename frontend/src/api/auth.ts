@@ -9,9 +9,21 @@ export interface AuthUser {
     roles: string[]
     workspaces: { id: string; name: string }[]
     currentWorkspaceId?: string
+    canApprove: boolean
+    effectiveApproverRole: 'STEWARD' | 'DS_ADMIN'
+    canViewWorkspaceAudit: boolean
+}
+
+export interface CsrfToken {
+    token: string
+    headerName: string
+    parameterName: string
 }
 
 export const authApi = {
+    csrf(): Promise<CsrfToken> {
+        return apiClient.get('/auth/csrf')
+    },
     login(username: string, password: string): Promise<AuthUser> {
         return apiClient.post('/auth/login', { username, password })
     },

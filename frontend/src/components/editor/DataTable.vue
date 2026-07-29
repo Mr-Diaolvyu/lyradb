@@ -105,6 +105,8 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { VxeColumn, VxeTable } from 'vxe-table'
+import 'vxe-table/lib/style.css'
 import { Search, EditPen, Key } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useThemeStore } from '@/stores/theme'

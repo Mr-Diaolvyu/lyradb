@@ -34,7 +34,6 @@ export const useConnectionStore = defineStore('connection', () => {
         try {
             connections.value = await connectionApi.list()
         } catch (e) {
-            console.error('加载连接列表失败:', e)
         } finally {
             loading.value = false
         }
@@ -46,7 +45,6 @@ export const useConnectionStore = defineStore('connection', () => {
             drivers.value = await driverApi.getAllDrivers()
             dbTypes.value = await driverApi.getSupportedTypes()
         } catch (e) {
-            console.error('加载驱动配置失败:', e)
         }
     }
 
@@ -99,7 +97,6 @@ export const useConnectionStore = defineStore('connection', () => {
             }
             return result.success
         } catch (e) {
-            console.error('连接失败:', e)
             return false
         }
     }

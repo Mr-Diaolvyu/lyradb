@@ -1,53 +1,43 @@
-# LyraDB 移动端（iOS 外壳）
+# LyraDB iOS 外壳
 
-> 状态：**BS 封装客户端外壳已搭建**（SwiftUI + WKWebView）。
-> 本会话未在 Xcode 中编译验证（本机为 Windows，无 Apple 工具链），需在 macOS + Xcode 中生成工程并运行验证。
-> 目标架构以 `product-discovery/移动端APP规划.md` 为准。
+版本：`3.0.0`。工程采用 SwiftUI + WKWebView，通过 XcodeGen 管理，不提交生成的 `.xcodeproj`。
 
-## 设计要点
+## 已实现
 
-- **BS 封装客户端**：原生外壳（SwiftUI）承载启动/服务端配置，内部 WKWebView 加载 BS 版本前端页面。
-- **不在手机上直连数据库**：所有数据操作由所连 BS 服务端完成，天然支持全部 9 种数据库。
-- **服务端两类来源**：个人自托管 BS 服务（personal）/ 企业 BS 服务（enterprise）。
-- **启动时填写服务端地址即可**，一个 App 覆盖个人与企业两种场景。
-- **外壳职责**：服务端地址管理与连通性校验（URLSession 探测 `/api/app/info`）、WKWebView 容器（JS 启用）、手势返回历史回退。
+- 接受 HTTPS origin 或 origin/api，统一保存并加载 origin 根路径 `/`；
+- `Info.plist` 不包含 `NSAllowsArbitraryLoads`；
+- WKWebView 只允许与配置服务端相同的 scheme、host、port；
+- 非同源 HTTPS 链接交给系统打开，其余协议阻止；
+- 登录会话保留在默认 `WKWebsiteDataStore`，不复制到 UserDefaults；
+- `LocalAuthentication` 应用锁，设备认证不可用或失败时保持锁定；
+- 启用应用锁前先完成一次设备认证；
+- `lyradbDownload` 消息桥校验主 frame 与安全源，再通过系统分享/保存面板导出 Blob；
+- 文件名清洗、Base64 载荷上限、独立临时目录及完成后清理；
+- 连通性探测固定请求同源 /api/app/info，使用临时 URLSession，不存 Cookie 且不跟随重定向。
 
-## 生成工程与运行
+UserDefaults 只保存服务端 URL 与应用锁开关，不保存密码或会话令牌。
 
-源码以 XcodeGen 描述（`project.yml`）管理，避免提交二进制 `.xcodeproj`：
+## 生成工程
 
-1. 安装 XcodeGen：`brew install xcodegen`
-2. 在 `mobile/ios` 目录执行：`xcodegen generate`，生成 `LyraDB.xcodeproj`
-3. Xcode 打开工程 → 配置签名（Team）→ 运行到模拟器/真机。
-4. 首次启动填写 BS 服务端地址 →「测试连接」→「进入」，WKWebView 加载前端后使用。
-5. 切换服务端：右上角菜单。
+在 macOS：
 
-> 也可直接在 Xcode 新建 iOS App 工程，将 `LyraDB/` 下的 Swift 文件加入 target，并采用其中的 `Info.plist`。
+```bash
+brew install xcodegen
+cd mobile/ios
+xcodegen generate
+```
 
-## 文件清单
+随后用 Xcode 打开 `LyraDB.xcodeproj`，设置 Team 与签名，再运行到模拟器或真机。
 
-- `project.yml` — XcodeGen 工程描述（生成 .xcodeproj）。
-- `LyraDB/LyraDBApp.swift` — SwiftUI 入口。
-- `LyraDB/ContentView.swift` — 根视图（按是否已配置服务端分流）。
-- `LyraDB/ServerConfigView.swift` — 服务端地址配置页（填写 + 连通性校验 + 持久化）。
-- `LyraDB/MainView.swift` — WKWebView 外壳主界面 + WebView 封装。
-- `LyraDB/Prefs.swift` — 服务端地址本地持久化（UserDefaults）。
-- `LyraDB/Info.plist` — 应用配置 + ATS 例外（开发期允许自托管 HTTP）。
+## 验证状态
 
-## 后续增强（可选）
+当前开发环境为 Windows，无法执行 Xcode 编译。源码已做静态加固，但发布前必须在 macOS 验证：
 
-- 生物识别快登（LocalAuthentication / Keychain）。
-- 服务端地址存 Keychain。
-- 文件下载（结果导出）适配、ATS 收紧为指定域名例外。
+- Swift 5.9 编译与 iOS 16 最低版本；
+- HTTPS 证书、跨源跳转与 WSS；
+- Face ID / Touch ID / 设备密码成功、取消与不可用分支；
+- CSV/JSON 分享保存及用户取消；
+- iPad popover 与临时文件清理；
+- 清除站点数据后旧会话失效。
 
-## 三端外壳的对应关系
-
-| 能力 | Android | 鸿蒙 NEXT | iOS |
-|------|---------|-----------|-----|
-| WebView 容器 | WebView | ArkWeb（Web 组件） | WKWebView |
-| UI 体系 | AppCompat View | ArkUI | SwiftUI |
-| 本地存储 | SharedPreferences | @ohos.data.preferences | UserDefaults |
-| 安全密钥 | Keystore | HUKS | Keychain |
-| 生物识别 | BiometricPrompt | @ohos.userIAM.userAuth | LocalAuthentication |
-
-前端与后端内核完全复用，仅外壳各自实现。
+项目暂未包含正式 AppIcon 资产；发布前应补充完整 Asset Catalog，并在 `project.yml` 中恢复相应 AppIcon 设置。

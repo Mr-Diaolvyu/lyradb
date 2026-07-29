@@ -3,39 +3,105 @@
  */
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import ElementPlus from 'element-plus'
+import {
+    ElAlert,
+    ElBadge,
+    ElButton,
+    ElButtonGroup,
+    ElCheckbox,
+    ElCheckboxGroup,
+    ElCollapse,
+    ElCollapseItem,
+    ElConfigProvider,
+    ElDialog,
+    ElDivider,
+    ElDrawer,
+    ElDropdown,
+    ElDropdownItem,
+    ElDropdownMenu,
+    ElEmpty,
+    ElForm,
+    ElFormItem,
+    ElIcon,
+    ElInput,
+    ElInputNumber,
+    ElLoading,
+    ElOption,
+    ElPagination,
+    ElPopover,
+    ElRadio,
+    ElRadioButton,
+    ElRadioGroup,
+    ElSelect,
+    ElSwitch,
+    ElTable,
+    ElTableColumn,
+    ElTabPane,
+    ElTabs,
+    ElTag,
+    ElTooltip,
+    ElTree,
+} from 'element-plus'
 import 'element-plus/dist/index.css'
 // 暗色主题变量（由 html.dark 类激活，见 stores/theme.ts）
 import 'element-plus/theme-chalk/dark/css-vars.css'
-import * as ElementPlusIconsVue from '@element-plus/icons-vue'
-
-// Vxe-table 注册
-import VxeUIAll from 'vxe-pc-ui'
-import 'vxe-pc-ui/lib/style.css'
-import VxeUITable from 'vxe-table'
-import 'vxe-table/lib/style.css'
 
 import App from './App.vue'
 import router from './router'
 import { i18n } from './i18n'
+import { captureDesktopSessionProof } from './utils/desktopAccess'
 import './styles/global.css'
 import './styles/tokens.css'
 
+captureDesktopSessionProof()
+
 const app = createApp(App)
 
-// 注册Element Plus图标
-for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
-    app.component(key, component)
-}
+// 只注册项目实际使用的 Element Plus 组件；图标均由各视图局部导入。
+const elementPlugins = [
+    ElAlert,
+    ElBadge,
+    ElButton,
+    ElButtonGroup,
+    ElCheckbox,
+    ElCheckboxGroup,
+    ElCollapse,
+    ElCollapseItem,
+    ElConfigProvider,
+    ElDialog,
+    ElDivider,
+    ElDrawer,
+    ElDropdown,
+    ElDropdownItem,
+    ElDropdownMenu,
+    ElEmpty,
+    ElForm,
+    ElFormItem,
+    ElIcon,
+    ElInput,
+    ElInputNumber,
+    ElLoading,
+    ElOption,
+    ElPagination,
+    ElPopover,
+    ElRadio,
+    ElRadioButton,
+    ElRadioGroup,
+    ElSelect,
+    ElSwitch,
+    ElTable,
+    ElTableColumn,
+    ElTabPane,
+    ElTabs,
+    ElTag,
+    ElTooltip,
+    ElTree,
+]
+for (const plugin of elementPlugins) app.use(plugin)
 
 app.use(createPinia())
 app.use(router)
-app.use(ElementPlus)
 app.use(i18n)
-
-// 注册 Vxe-table
-app.use(VxeUIAll)
-app.use(VxeUITable)
 
 app.mount('#app')
 

@@ -1,34 +1,62 @@
 #!/usr/bin/env bash
-# 桌面打包一键脚本（PRD F10）：构建前端 → 嵌入静态资源 → jpackage 生成应用镜像
-# 用法：在项目根目录运行  bash package-desktop.sh
-# 产物：backend/target/desktop/LyraDB （自带精简 JRE 的可运行应用镜像）
-set -euo pipefail
+# 桌面应用镜像打包：前端质量门禁 → 后端测试 → jpackage。
+set -Eeuo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 FRONTEND="$ROOT/frontend"
 BACKEND="$ROOT/backend"
 STATIC="$BACKEND/src/main/resources/static"
+IMAGE="$BACKEND/target/desktop/LyraDB"
+VERSION="${1:-3.0.0}"
 
-export JAVA_HOME="${JAVA_HOME:-/d/jdk-21.0.9}"
-export PATH="$JAVA_HOME/bin:$PATH"
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "版本号必须使用 X.Y.Z 格式，实际：$VERSION" >&2
+  exit 1
+fi
 
-echo "==> [1/4] 构建前端 (Vue)"
-cd "$FRONTEND"
-npm install
+for command_name in npm mvn jpackage; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "缺少命令：$command_name" >&2
+    exit 1
+  fi
+done
+
+echo "==> [1/4] 校验并构建前端"
+pushd "$FRONTEND" >/dev/null
+npm ci
+npm run lint
+npm run typecheck
+npm run test
 npm run build
+popd >/dev/null
 
-echo "==> [2/4] 嵌入前端到后端 static 资源"
-rm -rf "$STATIC"
-mkdir -p "$STATIC"
-cp -r "$FRONTEND/dist/"* "$STATIC/"
+if [[ ! -d "$FRONTEND/dist" ]]; then
+  echo "前端构建产物缺失：$FRONTEND/dist" >&2
+  exit 1
+fi
 
-echo "==> [3/4] 构建后端 fat jar 并 jpackage 打包"
-cd "$BACKEND"
-mvn -q -Pdesktop package
+echo "==> [2/4] 嵌入前端静态资源"
+case "$STATIC" in
+  "$BACKEND"/src/main/resources/*) ;;
+  *)
+    echo "拒绝清理意外路径：$STATIC" >&2
+    exit 1
+    ;;
+esac
+rm -rf -- "$STATIC"
+mkdir -p -- "$STATIC"
+cp -R -- "$FRONTEND/dist/." "$STATIC/"
+
+echo "==> [3/4] 验证后端并生成桌面应用镜像"
+pushd "$BACKEND" >/dev/null
+mvn -B -q -Pdesktop clean verify "-Drevision=$VERSION"
+popd >/dev/null
+
+if [[ ! -x "$IMAGE/bin/LyraDB" && ! -f "$IMAGE/LyraDB.exe" ]]; then
+  echo "jpackage 产物缺失：$IMAGE" >&2
+  echo "请确认 Maven 使用的 JDK 包含 jpackage。" >&2
+  exit 1
+fi
 
 echo "==> [4/4] 完成"
-echo "产物: $BACKEND/target/desktop/LyraDB"
-echo "运行: $BACKEND/target/desktop/LyraDB/bin/LyraDB   (Windows: LyraDB.exe)"
-echo ""
-echo "如需生成安装包(msi/dmg/deb)：在 pom.xml 的 desktop profile 中将 --type app-image"
-echo "改为 --type msi（需安装 WiX Toolset）/ dmg / deb 后重新执行。"
+echo "应用镜像：$IMAGE"

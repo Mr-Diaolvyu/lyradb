@@ -1,6 +1,11 @@
+
 package io.github.lexaquila.lyradb.driver;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.lexaquila.lyradb.config.AppProperties;
+import io.github.lexaquila.lyradb.model.entity.User;
+import io.github.lexaquila.lyradb.repository.UserRepository;
+import io.github.lexaquila.lyradb.repository.WorkspaceMembershipRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.socket.CloseStatus;
@@ -9,7 +14,11 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
+import java.security.Principal;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,9 +37,27 @@ public class DriverDownloadWebSocketHandler extends TextWebSocketHandler {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final Set<WebSocketSession> sessions = ConcurrentHashMap.newKeySet();
+    private final AppProperties appProperties;
+    private final UserRepository userRepository;
+    private final WorkspaceMembershipRepository membershipRepository;
+
+    public DriverDownloadWebSocketHandler(
+            AppProperties appProperties,
+            UserRepository userRepository,
+            WorkspaceMembershipRepository membershipRepository) {
+        this.appProperties = appProperties;
+        this.userRepository = userRepository;
+        this.membershipRepository = membershipRepository;
+    }
 
     @Override
-    public void afterConnectionEstablished(WebSocketSession session) {
+    public void afterConnectionEstablished(WebSocketSession session) throws Exception {
+        if ("enterprise".equalsIgnoreCase(appProperties.getEdition())
+                && !canObserveEnterpriseDownloads(session)) {
+            session.close(CloseStatus.POLICY_VIOLATION.withReason(
+                    "当前工作空间需要 DS_ADMIN 角色"));
+            return;
+        }
         sessions.add(session);
         log.info("驱动进度 WebSocket 已连接: {}", session.getId());
     }
@@ -39,6 +66,41 @@ public class DriverDownloadWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         sessions.remove(session);
         log.info("驱动进度 WebSocket 已关闭: {} ({})", session.getId(), status);
+    }
+
+    private boolean canObserveEnterpriseDownloads(WebSocketSession session) {
+        Principal principal = session.getPrincipal();
+        Object selected = session.getAttributes().get("currentWorkspaceId");
+        if (principal == null || principal.getName() == null
+                || selected == null || selected.toString().isBlank()) {
+            return false;
+        }
+        User user = userRepository.findByUsername(principal.getName()).orElse(null);
+        if (user == null || !user.isEnabled()) {
+            return false;
+        }
+        List<String> platformRoles = user.getRoles();
+        if (platformRoles != null && platformRoles.stream()
+                .filter(java.util.Objects::nonNull)
+                .map(role -> role.trim().toUpperCase(Locale.ROOT))
+                .anyMatch("PLATFORM_ADMIN"::equals)) {
+            return true;
+        }
+        return membershipRepository.findByUserIdAndWorkspaceId(
+                        user.getId(), selected.toString())
+                .map(membership -> hasRole(
+                        membership.getRolesCsv(), "DS_ADMIN"))
+                .orElse(false);
+    }
+
+    private static boolean hasRole(String rolesCsv, String expected) {
+        if (rolesCsv == null || rolesCsv.isBlank()) {
+            return false;
+        }
+        return Arrays.stream(rolesCsv.split(","))
+                .map(String::trim)
+                .map(role -> role.toUpperCase(Locale.ROOT))
+                .anyMatch(expected::equals);
     }
 
     /**

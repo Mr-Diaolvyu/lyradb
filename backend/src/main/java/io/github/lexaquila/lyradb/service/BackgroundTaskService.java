@@ -2,10 +2,10 @@ package io.github.lexaquila.lyradb.service;
 
 import io.github.lexaquila.lyradb.model.dto.BackgroundTask;
 import io.github.lexaquila.lyradb.model.dto.QueryResult;
-
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayDeque;
@@ -21,42 +21,27 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 /**
- * 后台查询任务服务（迭代二 E1）
+ * 后台查询任务服务。
  *
- * <p>
- * 长查询转入后台线程池执行（4 并发），任务与结果均驻留内存：
- * </p>
- * <ul>
- * <li>任务注册表上限 {@value #MAX_TASKS} 个，超限先淘汰最早的已终态任务</li>
- * <li>结果暂存区上限 {@value #MAX_RESULTS} 个，先进先出淘汰（淘汰后不可回看）</li>
- * <li>状态变更通过 {@code /ws/tasks} WebSocket 广播（RUNNING/DONE/ERROR/CANCELLED）</li>
- * </ul>
- *
- * <p>
- * 执行复用 {@link QueryService#executeQuery}，SQL 审核、历史记录逻辑与前台一致；
- * 命中审核拦截且未 force 时任务直接置为 ERROR（前端应先走确认流再提交）。
- * </p>
+ * <p>任务、结果、取消和通知均绑定提交者与工作空间，调用方无法枚举、
+ * 获取或取消其他用户的任务。</p>
  */
 @Service
 public class BackgroundTaskService {
 
     private static final Logger log = LoggerFactory.getLogger(BackgroundTaskService.class);
-
     private static final int MAX_TASKS = 50;
     private static final int MAX_RESULTS = 20;
 
     private final QueryService queryService;
     private final TaskWebSocketHandler taskWebSocketHandler;
-
     private final ExecutorService executor = Executors.newFixedThreadPool(4, r -> {
         Thread t = new Thread(r, "bg-query");
         t.setDaemon(true);
         return t;
     });
-
     private final Map<String, BackgroundTask> tasks = new ConcurrentHashMap<>();
     private final Map<String, QueryResult> results = new ConcurrentHashMap<>();
-    /** 结果暂存的 FIFO 淘汰队列（仅存任务 ID） */
     private final Deque<String> resultOrder = new ArrayDeque<>();
 
     public BackgroundTaskService(QueryService queryService, TaskWebSocketHandler taskWebSocketHandler) {
@@ -64,18 +49,17 @@ public class BackgroundTaskService {
         this.taskWebSocketHandler = taskWebSocketHandler;
     }
 
-    /**
-     * 提交后台查询任务
-     *
-     * @param force 已经过前端"仍要执行"确认（审核拦截逃生门），与前台语义一致
-     * @return 新任务（RUNNING 态）
-     */
-    public BackgroundTask submit(String connectionId, String connectionName,
-            String sql, String defaultDatabase, boolean force) {
+    public synchronized BackgroundTask submit(String ownerUsername, String workspaceId, String connectionId,
+            String connectionName, String sql, String defaultDatabase, boolean force) {
+        if (ownerUsername == null || ownerUsername.isBlank()) {
+            throw new AccessDeniedException("必须登录后才能提交后台任务");
+        }
         evictTasksIfNeeded();
 
         BackgroundTask task = new BackgroundTask();
         task.setId(UUID.randomUUID().toString());
+        task.setOwnerUsername(ownerUsername);
+        task.setWorkspaceId(workspaceId);
         task.setConnectionId(connectionId);
         task.setConnectionName(connectionName);
         task.setSql(sql);
@@ -83,69 +67,71 @@ public class BackgroundTaskService {
 
         Future<?> future = executor.submit(() -> run(task, defaultDatabase, force));
         task.setFuture(future);
-        log.info("后台任务已提交: {} (connectionId={})", task.getId(), connectionId);
+        log.info("后台任务已提交: {} (owner={}, connectionId={})",
+                task.getId(), ownerUsername, connectionId);
         return task;
     }
 
-    /** 任务列表（按提交时间倒序） */
-    public List<BackgroundTask> list() {
-        List<BackgroundTask> list = new ArrayList<>(tasks.values());
+    public List<BackgroundTask> list(String ownerUsername, String workspaceId) {
+        List<BackgroundTask> list = new ArrayList<>();
+        for (BackgroundTask task : tasks.values()) {
+            if (belongsTo(task, ownerUsername, workspaceId)) {
+                list.add(task);
+            }
+        }
         list.sort(Comparator.comparing(BackgroundTask::getSubmittedAt).reversed());
         return list;
     }
 
-    /** 回取任务结果（DONE 且未被暂存区淘汰时可用） */
-    public QueryResult getResult(String taskId) {
-        BackgroundTask task = tasks.get(taskId);
-        if (task == null) {
-            throw new RuntimeException("任务不存在: " + taskId);
-        }
-        QueryResult result = results.get(taskId);
+    public QueryResult getResult(String taskId, String ownerUsername, String workspaceId) {
+        BackgroundTask task = requireOwned(taskId, ownerUsername, workspaceId);
+        QueryResult result = results.get(task.getId());
         if (result == null) {
-            throw new RuntimeException("结果已失效（暂存区已淘汰），请重新执行");
+            throw new IllegalStateException("结果已失效（暂存区已淘汰），请重新执行");
         }
         return result;
     }
 
-    /** 取消运行中任务：中断线程 + 尝试 Statement.cancel */
-    public boolean cancel(String taskId) {
-        BackgroundTask task = tasks.get(taskId);
-        if (task == null || !"RUNNING".equals(task.getStatus())) {
-            return false;
+    public boolean cancel(String taskId, String ownerUsername, String workspaceId) {
+        BackgroundTask task = requireOwned(taskId, ownerUsername, workspaceId);
+        synchronized (task) {
+            if (!"RUNNING".equals(task.getStatus())) {
+                return false;
+            }
+            // 先落 CANCELLED，避免中断线程抢先把任务改成 ERROR。
+            task.setStatus("CANCELLED");
+            task.setFinishedAt(java.time.LocalDateTime.now());
+            task.setErrorMessage("已取消");
         }
         if (task.getFuture() != null) {
             task.getFuture().cancel(true);
         }
-        try {
-            queryService.cancelQuery(task.getConnectionId());
-        } catch (Exception e) {
-            log.warn("取消后台任务的语句失败: {}", e.getMessage());
-        }
-        finish(task, "CANCELLED", null, "已取消");
+        queryService.cancelExecution(task.getId());
+        taskWebSocketHandler.sendTaskUpdate(task.getOwnerUsername(), task.getWorkspaceId(),
+                task.getId(), "CANCELLED", 0, task.getElapsedMs(), "已取消");
+        log.info("后台任务终态: {} -> CANCELLED", task.getId());
         return true;
     }
 
-    /** 删除任务记录（终态任务），连带清理暂存结果 */
-    public void remove(String taskId) {
-        BackgroundTask task = tasks.get(taskId);
-        if (task != null && "RUNNING".equals(task.getStatus())) {
-            throw new RuntimeException("任务运行中，请先取消");
+    public void remove(String taskId, String ownerUsername, String workspaceId) {
+        BackgroundTask task = requireOwned(taskId, ownerUsername, workspaceId);
+        if ("RUNNING".equals(task.getStatus())) {
+            throw new IllegalStateException("任务运行中，请先取消");
         }
-        tasks.remove(taskId);
-        synchronized (resultOrder) {
-            results.remove(taskId);
-            resultOrder.remove(taskId);
-        }
+        removeInternal(taskId);
     }
 
     private void run(BackgroundTask task, String defaultDatabase, boolean force) {
         long start = System.currentTimeMillis();
         try {
-            QueryResult result = queryService.executeQuery(
-                    task.getConnectionId(), task.getSql(), defaultDatabase, force);
+            QueryResult result = queryService.executeQuery(task.getConnectionId(), task.getSql(),
+                    defaultDatabase, force, task.getId());
             task.setElapsedMs(System.currentTimeMillis() - start);
+            if ("CANCELLED".equals(task.getStatus())) {
+                return;
+            }
             if (result.isReviewBlocked()) {
-                finish(task, "ERROR", null, "命中SQL审核拦截，请在编辑器中确认后重新提交");
+                finish(task, "ERROR", null, "命中 SQL 审核拦截，请在编辑器中确认后重新提交");
                 return;
             }
             stashResult(task.getId(), result);
@@ -154,20 +140,50 @@ public class BackgroundTaskService {
             finish(task, "DONE", result, null);
         } catch (Exception e) {
             task.setElapsedMs(System.currentTimeMillis() - start);
-            // 取消触发的中断不覆盖 CANCELLED 态
             if (!"CANCELLED".equals(task.getStatus())) {
-                finish(task, "ERROR", null, e.getMessage());
+                finish(task, "ERROR", null, "后台查询执行失败");
+                log.warn("后台任务执行失败: {} - {}", task.getId(), e.getClass().getSimpleName());
             }
         }
     }
 
     private void finish(BackgroundTask task, String status, QueryResult result, String message) {
-        task.setStatus(status);
-        task.setFinishedAt(java.time.LocalDateTime.now());
-        task.setErrorMessage(message);
-        taskWebSocketHandler.sendTaskUpdate(task.getId(), status,
-                result != null ? result.getTotalRows() : 0, task.getElapsedMs(), message);
+        synchronized (task) {
+            if (isTerminal(task.getStatus()) && !"RUNNING".equals(status)) {
+                return;
+            }
+            task.setStatus(status);
+            task.setFinishedAt(java.time.LocalDateTime.now());
+            task.setErrorMessage(message);
+        }
+        taskWebSocketHandler.sendTaskUpdate(task.getOwnerUsername(), task.getWorkspaceId(),
+                task.getId(), status, result != null ? result.getTotalRows() : 0,
+                task.getElapsedMs(), message);
         log.info("后台任务终态: {} -> {}", task.getId(), status);
+    }
+
+    private BackgroundTask requireOwned(String taskId, String ownerUsername, String workspaceId) {
+        BackgroundTask task = tasks.get(taskId);
+        if (task == null) {
+            throw new IllegalArgumentException("任务不存在");
+        }
+        if (!belongsTo(task, ownerUsername, workspaceId)) {
+            throw new AccessDeniedException("无权访问该任务");
+        }
+        return task;
+    }
+
+    private boolean belongsTo(BackgroundTask task, String ownerUsername, String workspaceId) {
+        if (ownerUsername == null || !ownerUsername.equals(task.getOwnerUsername())) {
+            return false;
+        }
+        String taskWorkspace = task.getWorkspaceId();
+        return taskWorkspace != null && !taskWorkspace.isBlank()
+                && taskWorkspace.equals(workspaceId);
+    }
+
+    private boolean isTerminal(String status) {
+        return "DONE".equals(status) || "ERROR".equals(status) || "CANCELLED".equals(status);
     }
 
     private void stashResult(String taskId, QueryResult result) {
@@ -185,7 +201,6 @@ public class BackgroundTaskService {
         }
     }
 
-    /** 任务注册表超限时淘汰最早的终态任务 */
     private void evictTasksIfNeeded() {
         if (tasks.size() < MAX_TASKS) {
             return;
@@ -193,7 +208,18 @@ public class BackgroundTaskService {
         tasks.values().stream()
                 .filter(t -> !"RUNNING".equals(t.getStatus()))
                 .min(Comparator.comparing(BackgroundTask::getSubmittedAt))
-                .ifPresent(t -> remove(t.getId()));
+                .ifPresent(t -> removeInternal(t.getId()));
+        if (tasks.size() >= MAX_TASKS) {
+            throw new IllegalStateException("后台任务已达到上限，请等待运行中任务完成");
+        }
+    }
+
+    private void removeInternal(String taskId) {
+        tasks.remove(taskId);
+        synchronized (resultOrder) {
+            results.remove(taskId);
+            resultOrder.remove(taskId);
+        }
     }
 
     @PreDestroy

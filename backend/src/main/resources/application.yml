@@ -10,46 +10,61 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
 
-  # JSON serialization
   jackson:
     serialization:
       write-dates-as-timestamps: false
     default-property-inclusion: non_null
 
+  # 结构变更只能通过 Flyway；Hibernate 仅验证实体与数据库是否一致。
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
+    validate-on-migrate: true
+    clean-disabled: true
+
   jpa:
     show-sql: false
+    hibernate:
+      ddl-auto: validate
     properties:
       hibernate:
         format_sql: true
 
-  # 文件上传（导入 CSV/JSON）大小限制
   servlet:
     multipart:
       max-file-size: 50MB
       max-request-size: 50MB
 
-# Jasypt 加密算法（公共；密钥由各 profile 提供，保持 PBEWithMD5AndDES 以兼容已存数据）
+# 仅用于读取历史 Jasypt 密文；新凭证由 CredentialService 使用 AES-256-GCM 写入。
 jasypt:
   encryptor:
     algorithm: PBEWithMD5AndDES
     iv-generator-classname: org.jasypt.iv.NoIvGenerator
 
-# 自定义应用配置
 app:
-  # 发行版：personal | enterprise
+  version: ${LYRADB_VERSION:3.0.0}
   edition: ${LYRADB_EDITION:personal}
-  # Driver cache directory
   driver-cache-dir: ${user.home}/.lyradb/drivers
-  # Max connections per database
   max-connections-per-db: 10
-  # Query result limits
   max-query-rows: 10000
-  # Per-SQL execution timeout (seconds), 0 = unlimited
   query-timeout-seconds: 60
 
-  # 审计配置
   audit:
-    mask-sql: false
+    mask-sql: ${LYRADB_AUDIT_MASK_SQL:true}
+
+  # 默认拒绝任意出站目标；多项用逗号分隔，支持精确主机和 *.example.com。
+  outbound:
+    webhook-allowed-hosts: ${LYRADB_WEBHOOK_ALLOWED_HOSTS:}
+    ai-allowed-hosts: ${LYRADB_AI_ALLOWED_HOSTS:}
+
+  enterprise:
+    bootstrap-admin-username: ${LYRADB_BOOTSTRAP_ADMIN_USERNAME:}
+    bootstrap-admin-password: ${LYRADB_BOOTSTRAP_ADMIN_PASSWORD:}
+    bootstrap-admin-display-name: ${LYRADB_BOOTSTRAP_ADMIN_DISPLAY_NAME:平台管理员}
+    bootstrap-admin-email: ${LYRADB_BOOTSTRAP_ADMIN_EMAIL:}
+    cookie-secure: ${LYRADB_COOKIE_SECURE:false}
 
 logging:
   level:

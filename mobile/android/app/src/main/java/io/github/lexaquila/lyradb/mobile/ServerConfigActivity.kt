@@ -14,14 +14,8 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-/**
- * 服务端地址配置页（原生）。
- *
- * <p>首次启动或切换服务端时进入。用户填写 BS 服务端地址（个人自托管或企业），
- * 校验其 {@code /api/app/info} 可达后持久化，随后进入 WebView 主界面加载该地址。</p>
- */
+/** 配置并校验 LyraDB BS 服务端地址。发布版仅接受 HTTPS。 */
 class ServerConfigActivity : AppCompatActivity() {
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_server_config)
@@ -30,58 +24,59 @@ class ServerConfigActivity : AppCompatActivity() {
         val status = findViewById<TextView>(R.id.textStatus)
         val btnTest = findViewById<Button>(R.id.btnTest)
         val btnEnter = findViewById<Button>(R.id.btnEnter)
-
-        // 回填已保存地址
         PrefsManager.getServerUrl(this)?.let { input.setText(it) }
 
         btnTest.setOnClickListener {
-            val url = normalize(input.text.toString())
-            if (url.isEmpty()) {
-                status.text = "请先填写服务端地址"
+            val appUrl = canonicalUrl(input.text.toString())
+            if (appUrl == null) {
+                status.text = invalidAddressMessage()
                 return@setOnClickListener
             }
+            input.setText(appUrl)
             status.text = "连接中…"
             btnTest.isEnabled = false
             lifecycleScope.launch {
-                val result = checkServer(url)
+                val result = checkServer(appUrl)
                 status.text = result
                 btnTest.isEnabled = true
             }
         }
 
         btnEnter.setOnClickListener {
-            val url = normalize(input.text.toString())
-            if (url.isEmpty()) {
-                status.text = "请先填写服务端地址"
+            val appUrl = canonicalUrl(input.text.toString())
+            if (appUrl == null) {
+                status.text = invalidAddressMessage()
                 return@setOnClickListener
             }
-            PrefsManager.setServerUrl(this, url)
+            PrefsManager.setServerUrl(this, appUrl)
             startActivity(Intent(this, MainActivity::class.java))
             finish()
         }
     }
 
-    /** 规范化地址：补全 http 前缀、去除结尾斜杠 */
-    private fun normalize(raw: String): String {
-        var s = raw.trim()
-        if (s.isEmpty()) return ""
-        if (!s.startsWith("http://") && !s.startsWith("https://")) {
-            s = "http://$s"
-        }
-        return s.trimEnd('/')
-    }
+    private fun canonicalUrl(raw: String): String? =
+            ServerUrlPolicy.canonicalAppUrl(raw, BuildConfig.DEBUG)
 
-    /** 探测服务端 /api/app/info，返回可读结果 */
-    private suspend fun checkServer(base: String): String = withContext(Dispatchers.IO) {
-        var conn: HttpURLConnection? = null
+    private fun invalidAddressMessage(): String =
+            if (BuildConfig.DEBUG) {
+                "请输入 origin 或 origin/api；HTTP 仅用于 debug 调试"
+            } else {
+                "请输入不含账号、查询或片段的 HTTPS origin（可带 /api）"
+            }
+
+    private suspend fun checkServer(appUrl: String): String = withContext(Dispatchers.IO) {
+        var connection: HttpURLConnection? = null
         try {
-            conn = URL("$base/api/app/info").openConnection() as HttpURLConnection
-            conn.connectTimeout = 8000
-            conn.readTimeout = 8000
-            conn.requestMethod = "GET"
-            val code = conn.responseCode
+            val infoUrl = ServerUrlPolicy.appInfoUrl(appUrl)
+                    ?: return@withContext "地址格式不正确"
+            connection = URL(infoUrl).openConnection() as HttpURLConnection
+            connection.connectTimeout = 8000
+            connection.readTimeout = 8000
+            connection.instanceFollowRedirects = false
+            connection.requestMethod = "GET"
+            val code = connection.responseCode
             if (code == 200) {
-                val body = conn.inputStream.bufferedReader().readText()
+                val body = connection.inputStream.bufferedReader().readText()
                 val json = JSONObject(body)
                 val edition = json.optString("edition", "?")
                 val auth = json.optBoolean("authRequired", false)
@@ -93,7 +88,7 @@ class ServerConfigActivity : AppCompatActivity() {
         } catch (e: Exception) {
             "无法连接：${e.message ?: e.javaClass.simpleName}"
         } finally {
-            conn?.disconnect()
+            connection?.disconnect()
         }
     }
 }

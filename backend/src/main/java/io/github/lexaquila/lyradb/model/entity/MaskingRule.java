@@ -1,3 +1,5 @@
+
+
 package io.github.lexaquila.lyradb.model.entity;
 
 import jakarta.persistence.*;
@@ -15,7 +17,10 @@ import java.time.LocalDateTime;
  * </p>
  */
 @Entity
-@Table(name = "ent_masking_rule")
+@Table(name = "ent_masking_rule", indexes = {
+        @Index(name = "idx_masking_workspace_source_enabled",
+                columnList = "workspace_id,data_source_id,enabled")
+})
 @Data
 public class MaskingRule {
 
@@ -25,7 +30,11 @@ public class MaskingRule {
     @Column(length = 36)
     private String id;
 
-    /** 目标数据源 ID（空 = 全局规则） */
+    /** 工作空间作用域。 */
+    @Column(name = "workspace_id", nullable = false, length = 36)
+    private String workspaceId;
+
+    /** 目标数据源 ID（空 = 当前工作空间全局规则）。 */
     @Column(name = "data_source_id", length = 36)
     private String dataSourceId;
 
@@ -45,7 +54,7 @@ public class MaskingRule {
     @Column(length = 200)
     private String remark;
 
-    @Column
+    @Column(nullable = false)
     private boolean enabled = true;
 
     @Column(name = "created_at")

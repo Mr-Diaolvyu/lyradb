@@ -1,122 +1,103 @@
 # LyraDB
 
-> Light as a lyre, master of all databases — a **lightweight, AI-powered** universal database management tool.
+> Light as a lyre, master of all databases — a lightweight, AI-powered database management tool.
 
 [![Java](https://img.shields.io/badge/Java-17-orange)]()
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.5-brightgreen)]()
 [![Vue](https://img.shields.io/badge/Vue-3.4-42b883)]()
+[![Version](https://img.shields.io/badge/version-3.0.0-334155)]()
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue)]()
 
 [简体中文](README.md) | **English**
 
-LyraDB treats **MySQL, PostgreSQL, Oracle, SQL Server, ClickHouse, SQLite, MongoDB, Redis, and MaxCompute** as first-class citizens, letting you connect, query and manage them all from a single interface. Lighter than DBeaver, more open than Navicat — efficient on the desktop for individuals, collaborative on the web for teams, all from one codebase with two deployment modes.
+LyraDB provides one workspace for MySQL, PostgreSQL, Oracle, SQL Server, ClickHouse, SQLite, MongoDB, Redis, and MaxCompute. It combines SQL editing, AI assistance, ER diagrams, import/export, and enterprise governance.
 
----
+## Capabilities
 
-## ✨ Key Features
+| Capability | Description |
+| --- | --- |
+| Multiple data sources | On-demand drivers for relational, document, OLAP, and cloud warehouse sources |
+| SQL workbench | Monaco editor, completion, tabs, execution plans, and result export |
+| AI assistance | Natural-language SQL; custom AI and webhook egress are denied until hosts are allowlisted |
+| Enterprise governance | Workspace-scoped RBAC, grants, SQL-bound approvals, audit, and one-time exports |
+| Multiple clients | Browser, jpackage desktop app, and Android / HarmonyOS / iOS WebView shells |
+| Reproducible delivery | Lockfile installs, tests, PR CI, version checks, SBOMs, checksums, and provenance attestations |
 
-| Feature | Description |
-|---------|-------------|
-| 🗄️ Multi-DB first-class support | Relational / document / OLAP coverage; drivers downloaded on demand; adding a database takes just one line of config |
-| ✏️ SQL editor | Built on Monaco Editor — syntax highlighting, autocomplete, multi-tab, automatic dialect detection |
-| 🤖 AI-assisted queries | Natural language to SQL (NL2SQL), configurable across multiple AI providers |
-| 📊 ER diagrams | Auto-generated entity-relationship diagrams (Vue Flow) |
-| 📤 Import & export | Supports CSV / Excel / SQL formats |
-| 🔐 SSH tunneling | Bastion-host port forwarding for secure access to intranet databases |
-| 🏢 Enterprise RBAC | User management, data-source authorization, approval workflows, operation auditing |
-| 📱 Mobile | Android / HarmonyOS NEXT / iOS client (native shell + WebView wrapping the BS frontend) |
-| 🖥️ Desktop packaging | jpackage builds app-image / MSI installers bundled with a trimmed JRE |
+## Runtime modes
 
-## 🧱 Tech Stack
+| Scenario | Default edition | Purpose |
+| --- | --- | --- |
+| Local development / desktop profile | `personal` | Single-user local use |
+| `prod` profile / Docker Compose | `enterprise` | Authentication, RBAC, approvals, and audit |
 
-**Backend**: Spring Boot 3.2.5 (Java 17) · Spring Data JPA + H2 (embedded storage for connection configs) · Spring Security · Jasypt (credential encryption) · Maven Resolver (dynamic driver download) · Apache MINA SSHD
+Production has no default administrator password. On an empty enterprise database,
+`LYRADB_BOOTSTRAP_ADMIN_USERNAME` and `LYRADB_BOOTSTRAP_ADMIN_PASSWORD` are required. The password must be 12–128 characters, contain uppercase and lowercase letters, a number, and a special character, and must not contain the username. Remove both bootstrap variables from the runtime environment after the first successful initialization.
 
-**Frontend**: Vue 3.4 + TypeScript · Vite 5 · Element Plus · Monaco Editor · VXE Table · Pinia · Vue Router · Vue Flow
+## Development
 
-**Mobile**: Kotlin (Android) / ArkTS (HarmonyOS NEXT) / Swift (iOS) · Native shell + WebView wrapping the BS frontend, connecting to self-hosted or enterprise BS services
-
-## 📦 Editions
-
-| Edition | Environment variable | Description |
-|---------|----------------------|-------------|
-| Personal | `LYRADB_EDITION=personal` (default) | No authentication, single-user desktop experience |
-| Enterprise | `LYRADB_EDITION=enterprise` | Multi-user login, RBAC, approvals, auditing |
-
-## 🚀 Getting Started
-
-### Requirements
-
-- JDK 17+
-- Maven 3.6+
-- Node.js 18+ / npm
-
-### Run the backend
+Requirements: JDK 17+, Maven 3.8+, Node.js 20, and npm.
 
 ```bash
 cd backend
 mvn spring-boot:run
-# Defaults to http://localhost:8080/api
 ```
-
-### Run the frontend
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
-# Defaults to http://localhost:5173
 ```
 
-### Desktop packaging
+Quality gates:
 
 ```bash
-bash package-desktop.sh
-# Output: backend/target/desktop/LyraDB
+cd frontend
+npm run lint
+npm run typecheck
+npm run test
+npm run build
 ```
 
-## 🗂️ Project Structure
-
-```
-lyradb/
-├── backend/             # Spring Boot backend (io.github.lexaquila.lyradb)
-│   └── src/main/java/io/github/lexaquila/lyradb/
-│       ├── config/      # Security, CORS, WebSocket, bootstrap
-│       ├── controller/  # REST controllers
-│       ├── driver/      # Multi-database driver management
-│       ├── model/       # Entities & DTOs
-│       ├── repository/  # JPA repositories
-│       └── service/     # Business service layer
-├── frontend/            # Vue 3 frontend
-├── mobile/android/      # Android mobile client (native shell + WebView)
-├── mobile/harmony/      # HarmonyOS NEXT mobile client (ArkTS + ArkWeb)
-├── mobile/ios/          # iOS mobile client (SwiftUI + WKWebView)
-└── wiki/                # Project wiki
+```bash
+cd backend
+mvn -B clean verify
 ```
 
-## ⚙️ Configuration
+## Docker deployment
 
-Key environment variables:
+```bash
+cp .env.example .env
+# Replace every placeholder and set the real HTTPS origin.
+docker compose config
+docker compose up -d
+```
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LYRADB_EDITION` | `personal` | Edition: personal / enterprise |
-| `LYRADB_H2_PATH` | `./data/lyradb` | Path to the H2 file storing connection configs |
-| `JASYPT_PASSWORD` | (built-in default in dev) | Credential-encryption secret; **must be set explicitly in production** |
+Compose defaults to `prod + enterprise`, binds only `127.0.0.1:8080`, runs as non-root UID/GID `10001`, uses a read-only root filesystem, and persists `/app/data` and `/home/lyradb/.lyradb`. Missing encryption, database, or CORS settings fail startup. An empty enterprise user database additionally requires bootstrap-admin variables; remove them after initialization.
 
-> See [wiki/配置说明.md](wiki/配置说明.md) for details.
+Keep `LYRADB_COOKIE_SECURE=true` behind an HTTPS reverse proxy. Loopback-only HTTP testing requires explicit `LYRADB_COOKIE_SECURE=false` and an exact HTTP `CORS_ALLOWED_ORIGINS`.
 
-## 📖 Documentation
+## Packaging
 
-Full documentation lives in [`wiki/`](wiki/): system architecture, backend modules, frontend modules, API reference, development guide, mobile, and configuration.
+```bash
+bash package-server.sh 3.0.0
+bash package-desktop.sh 3.0.0
+```
 
-## 🤝 Contributing
+PowerShell equivalents are available at the repository root. Packaging uses `npm ci`, runs frontend lint/typecheck/tests/build, and then runs `mvn clean verify`; it stops on any failed command.
 
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request.
+## Mobile security
 
-## 👤 Author
+Release mobile clients accept HTTPS only. Android allows an explicit HTTP endpoint only in debug builds. Server URLs are ordinary configuration stored in platform preferences; credentials are not stored there. Authentication stays in the system WebView cookie store, and Blob exports use bounded native save bridges.
 
-**lexaquila** — a personal open-source project.
+Android is built in PR CI. iOS and HarmonyOS still require Xcode and DevEco Studio build and device verification.
 
-## 📄 License
+## Documentation
 
-Released under the [Apache License 2.0](LICENSE). The license permits free use, modification and commercial use (with a patent grant); you must retain the copyright and license notices.
+- [Configuration](wiki/配置说明.md)
+- [Development guide](wiki/开发指南.md)
+- [Mobile clients](wiki/移动端.md)
+- [Architecture](wiki/系统架构.md)
+
+## License
+
+Released under the [Apache License 2.0](LICENSE).

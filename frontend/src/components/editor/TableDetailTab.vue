@@ -133,6 +133,7 @@ import { CopyDocument, DocumentCopy, Search, Download } from '@element-plus/icon
 import { ElMessage } from 'element-plus'
 import type { ColumnMetadata } from '@/types/metadata'
 import { useEditorStore, type TableDetailTab } from '@/stores/editor'
+import { saveBlob } from '@/utils/download'
 
 const props = defineProps<{
   tab: TableDetailTab
@@ -193,7 +194,7 @@ function genSelect() {
   editorStore.updateSql(tabId, sql)
 }
 
-function exportCsv() {
+async function exportCsv() {
   const headers = ['name', 'type', 'size', 'nullable', 'default', 'key', 'extra', 'remarks']
   const rows = columns.value.map(c => [
     c.name,
@@ -210,12 +211,7 @@ function exportCsv() {
     .join('\n')
   const bom = '\uFEFF'
   const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${tableName.value}_columns.csv`
-  a.click()
-  URL.revokeObjectURL(url)
+  await saveBlob(blob, `${tableName.value}_columns.csv`)
   ElMessage.success('CSV 已导出')
 }
 </script>

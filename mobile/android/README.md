@@ -1,52 +1,50 @@
-# LyraDB 移动端（Android 外壳）
+# LyraDB Android 外壳
 
-> 状态：**BS 封装客户端外壳已实现**（原生外壳 + WebView 加载 BS 前端）。
-> 本会话未在 Android Studio 中编译验证（本机无 Android 工具链），导入后需 Sync + 运行验证。
-> 目标架构以 `product-discovery/移动端APP规划.md` 为准。
+版本：`3.0.0`。这是 Kotlin + Android WebView 的 BS 客户端，数据库访问与授权均由远端 LyraDB 服务端完成。
 
-## 设计要点
+## 已实现
 
-- **BS 封装客户端**：原生外壳（Kotlin + AppCompat View 体系）承载启动/服务端配置/系统集成，内部 WebView 加载 BS 版本前端页面。
-- **不在手机上直连数据库**：所有数据操作由所连 BS 服务端完成，天然支持全部 9 种数据库。
-- **服务端两类来源**：
-  - **个人自托管 BS 服务**（personal）：用户自部署（本机 Docker / 家庭服务器 / 小云主机），凭据归用户、无管理员/租户。
-  - **企业 BS 服务**（enterprise）：团队部署，受 RBAC / 审批 / 审计治理。
-- **启动时填写服务端地址即可**，一个 App 覆盖个人与企业两种场景。
-- **外壳职责**：服务端地址管理与连通性校验、WebView 容器（JS/DOMStorage/Cookie 持久化）、结果导出下载、返回键历史回退。
+- 发布构建只接受 HTTPS；debug 构建可显式填写 HTTP 调试地址；
+- 接受 origin 或 origin/api，统一保存并加载 origin 根路径 `/`；精确校验 scheme、host、port；
+- 禁止混合内容、文件/内容协议访问与第三方 Cookie；
+- 使用 HttpOnly 会话 Cookie，不把密码或令牌写入 SharedPreferences；
+- `BiometricPrompt` / 设备凭据应用锁，能力异常或认证失败时保持锁定；
+- Blob 导出经 `LyraDBAndroid` 最小桥写入 MediaStore Downloads；
+- 文件名清洗、Base64 载荷上限、退出登录清 Cookie 与缓存；
+- release Manifest 禁止明文流量，debug Manifest 仅为本机调试放开。
 
-## 接口复用
+SharedPreferences 只保存服务端 URL 和应用锁开关，它们不是凭据，因此没有伪装成 Keystore 加密存储。
 
-移动端 UI 完全复用 BS 前端（Vue 3），前端通过 HTTP(S)/WS(S) 调 BS 服务端 `/api/*`，与浏览器访问完全一致。外壳仅在配置页探测 `/api/app/info` 判断 edition 与可达性，不直接调业务 API。
+## 导入与运行
 
-## 服务端地址配置
+1. Android Studio 打开 `mobile/android`。
+2. 使用 JDK 17，Sync Gradle。
+3. 运行 Debug 构建。
+4. 填写服务端 origin（也兼容已带 `/api`），客户端加载根 `/` 前端并探测 `/api/app/info`。
 
-- **模拟器**：`http://10.0.2.2:8080`（Android 模拟器访问宿主机 BS 服务）
-- **真机**：填写 BS 服务实际地址（如 `http://192.168.1.10:8080`），生产环境要求 HTTPS
+Android 模拟器访问宿主机开发服务可显式填写：
 
-## 导入步骤
+```text
+http://10.0.2.2:8080/
+```
 
-1. Android Studio → Open → 选 `mobile/android` 根目录。
-2. Sync Gradle（联网下载 AppCompat / Material / WebKit / 协程依赖）。
-3. 运行到模拟器/真机。
-4. 首次启动填写 BS 服务端地址（个人自托管或企业）→「测试连接」→「进入」，WebView 加载前端后使用。
-5. 切换服务端 / 退出登录：右上角菜单。
+该地址只适用于 debug。release 必须使用具备有效证书的 HTTPS 地址。
 
-## 文件清单
+## 自动化
 
-- `app/build.gradle.kts` — 依赖（AppCompat / Material / WebKit / 协程）。
-- `app/src/main/AndroidManifest.xml` — 权限（网络 / 下载 / 通知）+ 两个 Activity 注册。
-- `.../mobile/MainActivity.kt` — WebView 外壳主界面（JS/Cookie/下载/返回键/菜单）。
-- `.../mobile/ServerConfigActivity.kt` — 服务端地址配置页（填写 + 连通性校验 + 持久化）。
-- `.../mobile/PrefsManager.kt` — 服务端地址本地持久化。
-- `.../res/layout/activity_server_config.xml` — 配置页布局。
+仓库 PR CI 使用 Gradle 8.2.1 执行：
 
-## 后续增强（可选）
+```bash
+gradle --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
+```
 
-- 生物识别快登（`BiometricPrompt` + Android Keystore）。
-- 服务端地址加密存储（现用 SharedPreferences 明文，可升级为 EncryptedSharedPreferences）。
-- 原生桥接（JavascriptInterface）暴露生物识别/安全存储给前端。
-- 推送通知、证书校验/错误页/离线提示。
+项目当前未提交 Gradle Wrapper，因此本地优先通过 Android Studio Sync；后续应补充并校验 Wrapper checksum。
 
-## 鸿蒙 NEXT（ArkTS）说明
+## 发布前真机检查
 
-鸿蒙端外壳逻辑等价：用 ArkWeb（Web 组件）替代 Android WebView、ArkUI 替代 AppCompat View、HUKS 替代 Keystore、@ohos.userIAM 替代 BiometricPrompt。前端与后端内核完全复用，仅外壳各自实现。工程见 `mobile/harmony`，需在 DevEco Studio 中打开。
+- release 包拒绝 HTTP 与跨源导航；
+- 设备认证取消/不可用时不会进入 WebView；
+- CSV/JSON Blob 能保存到下载目录；
+- 超大文件给出限制提示；
+- 清缓存后旧企业会话失效；
+- release 签名、目标 SDK 权限与系统下载通知正常。

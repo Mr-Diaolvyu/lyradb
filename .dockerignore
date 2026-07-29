@@ -1,14 +1,19 @@
-# Docker 构建上下文裁剪：仅保留 frontend/ 与 backend/ 源码
+# Docker 构建上下文只保留前后端源码与锁文件。
 .git
 .github
 .qoder
 .vscode
+.idea
+.env
+.env.*
 **/node_modules
 **/dist
 **/target
+**/.gradle
 backend/data
 mobile
 wiki
 product-discovery
 数据架构师工作空间
 *.md
+*.log

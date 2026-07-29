@@ -17,14 +17,13 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>3.0.0</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>3</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
-    <!-- 生物识别解锁（Face ID）用途声明 -->
     <key>NSFaceIDUsageDescription</key>
-    <string>用于启动时快速解锁 LyraDB</string>
+    <string>用于启动时通过设备认证解锁 LyraDB</string>
     <key>UILaunchScreen</key>
     <dict/>
     <key>UISupportedInterfaceOrientations</key>
@@ -33,11 +32,5 @@
         <string>UIInterfaceOrientationLandscapeLeft</string>
         <string>UIInterfaceOrientationLandscapeRight</string>
     </array>
-    <!-- 开发期允许明文 HTTP 指向自托管服务端；生产务必 HTTPS -->
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <true/>
-    </dict>
 </dict>
 </plist>

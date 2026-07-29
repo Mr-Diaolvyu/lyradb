@@ -1,6 +1,4 @@
-# 发行工作流：推送 v* 标签时自动构建并发布
-#   - LyraDB-<ver>-windows-x64-portable.zip  Windows 免安装便携包（解压双击 LyraDB.exe 即用）
-#   - lyradb-backend-<ver>.jar               服务端 fat jar（java -jar 启动，内嵌前端）
+# 标签发布：构建任务只读仓库；发布任务单独获得 contents: write。
 name: Release
 
 on:
@@ -9,62 +7,217 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release-windows:
+  build-windows:
+    name: 构建 Windows 便携包
     runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: 安装 Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: 安装 JDK 21（含 jpackage）
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.7.1
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
 
-      - name: 构建前端
+      - name: 校验标签与各端版本一致
+        id: version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "发布标签必须是 v主版本.次版本.修订号，实际：${{ github.ref_name }}"
+          }
+
+          $versions = [ordered]@{}
+          $versions["frontend"] = (Get-Content frontend/package.json -Raw | ConvertFrom-Json).version
+          $versions["backend"] = ([xml](Get-Content backend/pom.xml -Raw)).project.properties.revision
+          $androidText = Get-Content mobile/android/app/build.gradle.kts -Raw
+          $versions["android"] = [regex]::Match(
+            $androidText,
+            'versionName\s*=\s*"([^"]+)"'
+          ).Groups[1].Value
+          $iosPlist = [xml](Get-Content mobile/ios/LyraDB/Info.plist -Raw)
+          $iosEntries = $iosPlist.plist.dict.ChildNodes
+          for ($index = 0; $index -lt $iosEntries.Count - 1; $index++) {
+            if ($iosEntries[$index].Name -eq "key" -and
+                $iosEntries[$index].InnerText -eq "CFBundleShortVersionString") {
+              $versions["ios"] = $iosEntries[$index + 1].InnerText
+              break
+            }
+          }
+          $versions["harmony"] = (Get-Content mobile/harmony/AppScope/app.json5 -Raw |
+            ConvertFrom-Json).app.versionName
+
+          foreach ($entry in $versions.GetEnumerator()) {
+            if ($entry.Value -ne $version) {
+              throw "版本不一致：$($entry.Key)=$($entry.Value)，标签=$version"
+            }
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: 安装前端锁定依赖
+        working-directory: frontend
+        run: npm ci
+
+      - name: 前端质量门禁
         working-directory: frontend
         run: |
-          npm ci
+          npm run lint
+          npm run typecheck
+          npm run test
           npm run build
 
-      - name: 嵌入前端到后端 static 资源
+      - name: 嵌入前端静态资源
         shell: pwsh
         run: |
-          $static = "backend/src/main/resources/static"
-          if (Test-Path $static) { Remove-Item -Recurse -Force $static }
-          New-Item -ItemType Directory -Path $static | Out-Null
-          Copy-Item -Recurse -Force frontend/dist/* $static
-
-      - name: 构建 fat jar 并 jpackage 生成应用镜像
-        working-directory: backend
-        run: mvn -B -q -Pdesktop clean package -DskipTests
-
-      - name: 压缩便携 zip
-        shell: pwsh
-        run: |
-          $ver = "${{ github.ref_name }}".TrimStart("v")
-          $zip = "backend/target/LyraDB-$ver-windows-x64-portable.zip"
-          if (-not (Test-Path "backend/target/desktop/LyraDB/LyraDB.exe")) {
-            throw "jpackage 产物缺失：backend/target/desktop/LyraDB/LyraDB.exe"
+          $static = [System.IO.Path]::GetFullPath("backend/src/main/resources/static")
+          $expected = [System.IO.Path]::GetFullPath("backend/src/main/resources")
+          if (-not $static.StartsWith($expected, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "拒绝清理意外路径：$static"
           }
-          Compress-Archive -Path backend/target/desktop/LyraDB -DestinationPath $zip -CompressionLevel Optimal
-          Write-Host "便携包: $zip"
+          if (Test-Path -LiteralPath $static) {
+            Remove-Item -LiteralPath $static -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $static | Out-Null
+          Copy-Item -Path "frontend/dist/*" -Destination $static -Recurse -Force
 
-      - name: 发布 GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: 后端测试并生成 jpackage 应用镜像
+        working-directory: backend
+        run: mvn -B -ntp -Pdesktop clean verify "-Drevision=${{ steps.version.outputs.version }}"
+
+      - name: 生成 CycloneDX SBOM
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $metadata = [System.IO.Path]::GetFullPath("release-metadata")
+          New-Item -ItemType Directory -Path $metadata | Out-Null
+
+          Push-Location frontend
+          try {
+            npm sbom --sbom-format cyclonedx |
+              Set-Content -Encoding utf8 (Join-Path $metadata "lyradb-frontend-$version.cdx.json")
+            if ($LASTEXITCODE -ne 0) {
+              throw "前端 SBOM 生成失败，退出码：$LASTEXITCODE"
+            }
+          } finally {
+            Pop-Location
+          }
+
+          Push-Location backend
+          try {
+            mvn -B -ntp org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom `
+              "-Drevision=$version" `
+              "-DoutputFormat=json" `
+              "-DoutputName=bom" `
+              "-DincludeTestScope=false"
+            if ($LASTEXITCODE -ne 0) {
+              throw "后端 SBOM 生成失败，退出码：$LASTEXITCODE"
+            }
+          } finally {
+            Pop-Location
+          }
+          Copy-Item -LiteralPath "backend/target/bom.json" `
+            -Destination (Join-Path $metadata "lyradb-backend-$version.cdx.json")
+
+          Get-ChildItem -LiteralPath $metadata -Filter "*.json" | ForEach-Object {
+            Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json | Out-Null
+          }
+
+      - name: 生成便携包与校验和
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $image = "backend/target/desktop/LyraDB"
+          $executable = Join-Path $image "LyraDB.exe"
+          $jar = "backend/target/lyradb-backend-$version.jar"
+          $zip = "backend/target/LyraDB-$version-windows-x64-portable.zip"
+          if (-not (Test-Path -LiteralPath $executable)) {
+            throw "jpackage 产物缺失：$executable"
+          }
+          if (-not (Test-Path -LiteralPath $jar)) {
+            throw "服务端产物缺失：$jar"
+          }
+          Compress-Archive -Path $image -DestinationPath $zip -CompressionLevel Optimal
+
+          $stage = [System.IO.Path]::GetFullPath("release-assets")
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item -LiteralPath $zip, $jar -Destination $stage
+          Copy-Item -Path "release-metadata/*.cdx.json" -Destination $stage
+
+          $checksums = Get-ChildItem -LiteralPath $stage -File |
+            Sort-Object Name |
+            ForEach-Object {
+              $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+              "$hash  $($_.Name)"
+            }
+          $checksums | Set-Content -Encoding ascii (Join-Path $stage "SHA256SUMS.txt")
+
+      - name: 上传待发布产物
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-assets
+          if-no-files-found: error
+          retention-days: 7
+          path: release-assets/*
+
+  attest:
+    name: 生成制品来源证明
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: 下载已验证产物
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: 生成 Sigstore/SLSA 来源证明
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: release-assets/*
+
+  publish:
+    name: 发布 GitHub Release
+    needs: [build-windows, attest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 下载已验证产物
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: 发布
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.3.2
         with:
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
-            backend/target/LyraDB-*-windows-x64-portable.zip
-            backend/target/lyradb-backend-*.jar
+            release-assets/LyraDB-*-windows-x64-portable.zip
+            release-assets/lyradb-backend-*.jar
+            release-assets/lyradb-*.cdx.json
+            release-assets/SHA256SUMS.txt

@@ -6,27 +6,8 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LyraDB 天琴智库 · 轻量 AI 数据库管理工具</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
-        rel="stylesheet" />
-    <!-- 首帧前恢复主题偏好，避免暗色用户闪白（V7） -->
-    <script>
-        (function () {
-            try {
-                var mode = localStorage.getItem('theme') || 'system';
-                var dark = mode === 'dark' || (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-                var el = document.documentElement;
-                el.setAttribute('data-theme', dark ? 'dark' : 'light');
-                if (dark) el.classList.add('dark');
-                var accent = localStorage.getItem('accent');
-                if (accent) el.setAttribute('data-accent', accent);
-                var density = localStorage.getItem('density');
-                if (density) el.setAttribute('data-density', density);
-            } catch (e) { /* ignore */ }
-        })();
-    </script>
+    <!-- 首帧前从同源脚本恢复主题偏好，兼容 script-src 'self'。 -->
+    <script src="/theme-init.js"></script>
     <style>
         /* V7 启动画面（内联，先于打包 CSS 生效） */
         #splash {
@@ -63,7 +44,7 @@
         }
 
         #splash .splash-name {
-            font-family: Inter, system-ui, sans-serif;
+            font-family: system-ui, -apple-system, sans-serif;
             font-size: 15px;
             font-weight: 600;
             letter-spacing: 0.12em;

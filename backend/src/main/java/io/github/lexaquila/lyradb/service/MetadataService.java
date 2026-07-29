@@ -46,7 +46,9 @@ public class MetadataService {
     public List<TreeNode> getTreeNodes(String connectionId, String parentPath) throws Exception {
         ConnectionService.ActiveConnection active = connectionService.getActiveConnection(connectionId);
         log.debug("获取树节点: connectionId={}, parentPath={}", connectionId, parentPath);
-        return active.driver.getTreeNodes(active.connection, parentPath);
+        try (ConnectionService.ActiveConnection.Lease ignored = active.acquire()) {
+            return active.driver.getTreeNodes(active.connection, parentPath);
+        }
     }
 
     /**
@@ -61,7 +63,9 @@ public class MetadataService {
             throws Exception {
         ConnectionService.ActiveConnection active = connectionService.getActiveConnection(connectionId);
         log.debug("获取表列元数据: connectionId={}, schema={}, table={}", connectionId, schemaName, tableName);
-        return active.driver.getTableColumns(active.connection, schemaName, tableName);
+        try (ConnectionService.ActiveConnection.Lease ignored = active.acquire()) {
+            return active.driver.getTableColumns(active.connection, schemaName, tableName);
+        }
     }
 
     /**
@@ -75,7 +79,9 @@ public class MetadataService {
     public String getTableDDL(String connectionId, String schemaName, String tableName) throws Exception {
         ConnectionService.ActiveConnection active = connectionService.getActiveConnection(connectionId);
         log.debug("获取表DDL: connectionId={}, schema={}, table={}", connectionId, schemaName, tableName);
-        return active.driver.getTableDDL(active.connection, schemaName, tableName);
+        try (ConnectionService.ActiveConnection.Lease ignored = active.acquire()) {
+            return active.driver.getTableDDL(active.connection, schemaName, tableName);
+        }
     }
 
     /**
@@ -92,12 +98,14 @@ public class MetadataService {
     public List<String> getDatabases(String connectionId) throws Exception {
         ConnectionService.ActiveConnection active = connectionService.getActiveConnection(connectionId);
         log.debug("获取数据库列表: connectionId={}", connectionId);
-        List<TreeNode> rootNodes = active.driver.getTreeNodes(active.connection, null);
-        return rootNodes.stream()
-                .filter(n -> "DATABASE".equals(n.getType()))
-                .map(TreeNode::getName)
-                .sorted()
-                .collect(Collectors.toList());
+        try (ConnectionService.ActiveConnection.Lease ignored = active.acquire()) {
+            List<TreeNode> rootNodes = active.driver.getTreeNodes(active.connection, null);
+            return rootNodes.stream()
+                    .filter(n -> "DATABASE".equals(n.getType()))
+                    .map(TreeNode::getName)
+                    .sorted()
+                    .collect(Collectors.toList());
+        }
     }
 
     /**
@@ -117,6 +125,7 @@ public class MetadataService {
         ConnectionService.ActiveConnection active = connectionService.getActiveConnection(connectionId);
         log.debug("搜索节点: connectionId={}, keyword={}, type={}", connectionId, keyword, type);
 
+        try (ConnectionService.ActiveConnection.Lease ignored = active.acquire()) {
         List<TreeNode> results = new ArrayList<>();
         String lowerKeyword = keyword.toLowerCase();
 
@@ -167,6 +176,7 @@ public class MetadataService {
         }
 
         return results;
+        }
     }
 
     /**
@@ -203,6 +213,7 @@ public class MetadataService {
     public io.github.lexaquila.lyradb.model.dto.ErDiagram getErDiagram(String connectionId, String schema) {
         io.github.lexaquila.lyradb.model.dto.ErDiagram er = new io.github.lexaquila.lyradb.model.dto.ErDiagram();
         ConnectionService.ActiveConnection active = connectionService.getActiveConnection(connectionId);
+        try (ConnectionService.ActiveConnection.Lease ignored = active.acquire()) {
         Object conn = active.connection;
 
         if (!(conn instanceof java.sql.Connection jdbcConn)) {
@@ -266,6 +277,7 @@ public class MetadataService {
         }
 
         return er;
+        }
     }
 
     /**

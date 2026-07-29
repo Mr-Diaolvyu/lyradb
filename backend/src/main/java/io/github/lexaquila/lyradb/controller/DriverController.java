@@ -1,20 +1,29 @@
+
 package io.github.lexaquila.lyradb.controller;
 
+import io.github.lexaquila.lyradb.config.AppProperties;
 import io.github.lexaquila.lyradb.driver.DriverDownloadWebSocketHandler;
 import io.github.lexaquila.lyradb.driver.DriverFactory;
 import io.github.lexaquila.lyradb.driver.DriverRegistry;
 import io.github.lexaquila.lyradb.driver.MavenDriverManager;
 import io.github.lexaquila.lyradb.model.entity.DriverInfo;
+import io.github.lexaquila.lyradb.service.SecurityUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.annotation.PreDestroy;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -46,21 +55,31 @@ public class DriverController {
     private final DriverFactory driverFactory;
     private final MavenDriverManager mavenDriverManager;
     private final DriverDownloadWebSocketHandler progressHandler;
+    private final SecurityUtil securityUtil;
+    private final AppProperties appProperties;
 
-    /** 驱动下载单线程执行器（串行化，避免并发下载冲突） */
-    private final ExecutorService downloadExecutor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "driver-download");
-        t.setDaemon(true);
-        return t;
-    });
+    /** 单线程有界队列，支持的驱动类型数量有限，不接受无限堆积。 */
+    private final ThreadPoolExecutor downloadExecutor = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(10), r -> {
+                Thread t = new Thread(r, "driver-download");
+                t.setDaemon(true);
+                return t;
+            }, new ThreadPoolExecutor.AbortPolicy());
+
+    /** 同一驱动下载请求去重（含排队与执行中）。 */
+    private final Set<String> inFlightDownloads = ConcurrentHashMap.newKeySet();
 
     public DriverController(DriverRegistry driverRegistry, DriverFactory driverFactory,
                            MavenDriverManager mavenDriverManager,
-                           DriverDownloadWebSocketHandler progressHandler) {
+                           DriverDownloadWebSocketHandler progressHandler,
+                           SecurityUtil securityUtil,
+                           AppProperties appProperties) {
         this.driverRegistry = driverRegistry;
         this.driverFactory = driverFactory;
         this.mavenDriverManager = mavenDriverManager;
         this.progressHandler = progressHandler;
+        this.securityUtil = securityUtil;
+        this.appProperties = appProperties;
     }
 
     /**
@@ -101,6 +120,9 @@ public class DriverController {
      */
     @PostMapping("/{dbType}/download")
     public ResponseEntity<Map<String, Object>> downloadDriver(@PathVariable String dbType) {
+        if ("enterprise".equalsIgnoreCase(appProperties.getEdition())) {
+            securityUtil.requireRole("DS_ADMIN");
+        }
         Map<String, Object> result = new HashMap<>();
         DriverInfo driverInfo = driverRegistry.getDriverInfo(dbType);
         result.put("dbType", dbType);
@@ -115,29 +137,47 @@ public class DriverController {
             return ResponseEntity.ok(result);
         }
 
-        // 异步下载，进度走 WebSocket
-        downloadExecutor.submit(() -> {
-            try {
-                mavenDriverManager.downloadDriverWithProgress(driverInfo, (dt, pct, msg) ->
-                        progressHandler.sendProgress(dt, pct, msg, "progress"));
-                progressHandler.sendProgress(dbType, 100, "驱动加载完成", "done");
-                log.info("驱动下载成功: {}", dbType);
-            } catch (Exception e) {
-                log.error("驱动下载失败: {} - {}", dbType, e.getMessage(), e);
-                Throwable rootCause = e;
-                while (rootCause.getCause() != null && rootCause.getCause() != rootCause) {
-                    rootCause = rootCause.getCause();
+        String downloadKey = dbType.toUpperCase(java.util.Locale.ROOT);
+        if (!inFlightDownloads.add(downloadKey)) {
+            result.put("success", true);
+            result.put("async", true);
+            result.put("message", "该驱动正在下载或等待下载");
+            return ResponseEntity.accepted().body(result);
+        }
+
+        try {
+            downloadExecutor.execute(() -> {
+                try {
+                    mavenDriverManager.downloadDriverWithProgress(driverInfo, (dt, pct, msg) ->
+                            progressHandler.sendProgress(dt, pct, msg, "progress"));
+                    progressHandler.sendProgress(dbType, 100, "驱动加载完成", "done");
+                    log.info("驱动下载成功: {}", dbType);
+                } catch (Exception e) {
+                    log.error("驱动下载失败: {} - {}", dbType,
+                            e.getClass().getSimpleName(), e);
+                    progressHandler.sendProgress(dbType, -1,
+                            "驱动下载失败，请稍后重试", "error");
+                } finally {
+                    inFlightDownloads.remove(downloadKey);
                 }
-                String errorMsg = rootCause.getMessage() != null ? rootCause.getMessage() : e.getMessage();
-                progressHandler.sendProgress(dbType, -1,
-                        "驱动下载失败: " + errorMsg, "error");
-            }
-        });
+            });
+        } catch (RejectedExecutionException e) {
+            inFlightDownloads.remove(downloadKey);
+            result.put("success", false);
+            result.put("message", "驱动下载队列已满，请稍后重试");
+            return ResponseEntity.status(429).body(result);
+        }
 
         result.put("success", true);
         result.put("async", true);
         result.put("message", driverInfo.getDisplayName() + " 驱动开始下载，请关注进度面板");
         return ResponseEntity.ok(result);
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        downloadExecutor.shutdownNow();
+        inFlightDownloads.clear();
     }
 
     /**

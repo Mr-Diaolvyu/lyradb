@@ -1,3 +1,4 @@
+
 package io.github.lexaquila.lyradb.model.entity;
 
 import jakarta.persistence.*;
@@ -38,6 +39,10 @@ public class User {
 
     @Column(nullable = false)
     private boolean enabled = true;
+
+    /** 密码或认证策略变化时递增，用于让既有会话立即失效。 */
+    @Column(name = "credential_version", nullable = false)
+    private long credentialVersion = 0;
 
     /** 角色集合 */
     @ElementCollection(fetch = FetchType.EAGER)
