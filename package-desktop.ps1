@@ -218,10 +218,17 @@ function Test-NativeDesktop {
             if (-not $process.Start()) {
                 throw "无法启动原生 LyraDB.exe"
             }
-            if (-not $process.WaitForExit(60000)) {
+            # GitHub Windows Hosted Runner 的 Defender 可能显著拖慢首次启动；
+            # 仍然坚持启动真实 EXE，只放宽冷启动等待时间。
+            if (-not $process.WaitForExit(180000)) {
+                $markerState = if (Test-Path -LiteralPath $markerPath) {
+                    Get-Content -LiteralPath $markerPath -Raw
+                } else {
+                    "冒烟标记尚未生成"
+                }
                 $process.Kill()
                 $process.WaitForExit()
-                throw "原生 LyraDB.exe 冒烟测试超时"
+                throw "原生 LyraDB.exe 冒烟测试超时（180 秒）：$markerState"
             }
             if ($process.ExitCode -ne 0) {
                 throw "原生 LyraDB.exe 冒烟测试失败，退出码：$($process.ExitCode)"
