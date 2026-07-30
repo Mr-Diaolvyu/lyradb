@@ -10,6 +10,91 @@ permissions:
   contents: read
 
 jobs:
+  release-gates:
+    name: 校验发布来源、Android 与部署
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    env:
+      COMPOSE_PROJECT_NAME: lyradb-release-${{ github.run_id }}
+      LYRADB_IMAGE_TAG: release-${{ github.run_id }}
+      LYRADB_PORT: '18080'
+      LYRADB_EDITION: enterprise
+      JASYPT_PASSWORD: release-only-jasypt-key-not-for-production
+      LYRADB_DB_PASSWORD: release-only-database-password
+      LYRADB_BOOTSTRAP_ADMIN_USERNAME: releaseadmin
+      LYRADB_BOOTSTRAP_ADMIN_PASSWORD: Release-Only-Strong-Password-2026!
+      LYRADB_BOOTSTRAP_ADMIN_DISPLAY_NAME: Release 验证管理员
+      CORS_ALLOWED_ORIGINS: http://localhost:18080
+      LYRADB_COOKIE_SECURE: 'false'
+    steps:
+      - name: 检出完整历史
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 校验标签提交属于 main
+        run: |
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          test "$GITHUB_SHA" = "$(git rev-parse origin/main)"
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 安装 Gradle 8.2.1
+        uses: gradle/actions/setup-gradle@017a9effdb900e5b5b2fddfb590a105619dca3c3 # v4.4.2
+        with:
+          gradle-version: '8.2.1'
+
+      - name: 校验并构建 Android Debug APK
+        working-directory: mobile/android
+        run: gradle --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
+
+      - name: 校验 Compose 生产配置
+        run: docker compose config --quiet
+
+      - name: 构建企业版镜像并以空卷启动
+        run: |
+          docker compose up --detach --build --wait --wait-timeout 240
+          container_id="$(docker compose ps --quiet lyradb)"
+          test -n "$container_id"
+          test "$(docker inspect --format '{{.Config.User}}' "$container_id")" = "10001:10001"
+          version="${GITHUB_REF_NAME#v}"
+          app_info="$(curl --fail --silent --show-error http://127.0.0.1:18080/api/app/info)"
+          jq -e --arg version "$version" \
+            '.edition == "enterprise" and .version == $version and .authRequired == true' \
+            <<< "$app_info"
+
+          cookie_jar="$RUNNER_TEMP/lyradb-release.cookies"
+          csrf="$(curl --fail --silent --show-error --cookie-jar "$cookie_jar" \
+            http://127.0.0.1:18080/api/auth/csrf)"
+          csrf_token="$(jq -er '.token' <<< "$csrf")"
+          csrf_header="$(jq -er '.headerName' <<< "$csrf")"
+          login="$(curl --fail --silent --show-error \
+            --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+            --header "$csrf_header: $csrf_token" \
+            --header 'Content-Type: application/json' \
+            --data '{"username":"releaseadmin","password":"Release-Only-Strong-Password-2026!"}' \
+            http://127.0.0.1:18080/api/auth/login)"
+          jq -e '.username == "releaseadmin" and (.workspaces | length) > 0' <<< "$login"
+          me="$(curl --fail --silent --show-error --cookie "$cookie_jar" \
+            http://127.0.0.1:18080/api/auth/me)"
+          jq -e '.username == "releaseadmin" and .currentWorkspaceId != null' <<< "$me"
+
+      - name: 输出容器诊断信息
+        if: always()
+        run: |
+          docker compose ps
+          docker compose logs --no-color --tail=200 lyradb
+
+      - name: 清理发布验证容器与卷
+        if: always()
+        run: docker compose down --volumes --remove-orphans
   build-windows:
     name: 构建个人原生桌面与企业服务端
     runs-on: windows-latest
@@ -245,7 +330,7 @@ jobs:
 
   attest:
     name: 生成制品来源证明
-    needs: build-windows
+    needs: [release-gates, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -269,7 +354,7 @@ jobs:
 
   publish:
     name: 发布 GitHub Release
-    needs: [build-windows, attest]
+    needs: [release-gates, build-windows, attest]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -286,8 +371,10 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |
-            个人版：真正的原生桌面数据库工作台，内置本地 AI 配置；不启动浏览器、WebView 或本地 HTTP 服务。
-            企业版：继续以独立 B/S 服务端 JAR 交付。
+            个人版：新增数据库连接批量导入/导出，凭据可选择不导出、口令加密或明确确认后明文导出。
+            企业版：新增需审批的一次性数据源配置导出，以及管理员批量导入和冲突处理。
+            AI：个人版与企业版均支持手动采集选定数据库结构、预览 Token 估算、一次性附加和 JSON/Markdown 文档导出。
+            安全：连接包提供版本、资源上限、完整性校验与 AES-256-GCM 加密；不采集业务数据行。
           files: |
             release-assets/LyraDB-*-windows-x64-portable.zip
             release-assets/lyradb-backend-*.jar

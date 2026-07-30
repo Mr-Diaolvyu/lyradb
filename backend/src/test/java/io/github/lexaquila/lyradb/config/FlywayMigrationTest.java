@@ -23,11 +23,12 @@ class FlywayMigrationTest {
         String url = memoryDatabaseUrl("clean");
         Flyway flyway = flyway(url);
 
-        assertEquals(1, flyway.migrate().migrationsExecuted);
+        assertEquals(2, flyway.migrate().migrationsExecuted);
         assertEquals(0, flyway.migrate().migrationsExecuted);
 
         try (Connection connection = DriverManager.getConnection(url, "sa", "")) {
             assertColumnExists(connection, "SYS_USER", "CREDENTIAL_VERSION");
+            assertColumnExists(connection, "ENT_AUDIT_LOG", "DETAILS_JSON");
             assertColumnExists(connection, "SYS_WORKSPACE_MEMBERSHIP", "ROLES_CSV");
             assertColumnExists(connection, "ENT_MASKING_RULE", "WORKSPACE_ID");
             assertColumnExists(connection, "ENT_AUDIT_LOG", "ACTION");
@@ -88,7 +89,7 @@ class FlywayMigrationTest {
                     """);
         }
 
-        assertEquals(1, flyway(url).migrate().migrationsExecuted);
+        assertEquals(2, flyway(url).migrate().migrationsExecuted);
 
         try (Connection connection = DriverManager.getConnection(url, "sa", "");
              Statement statement = connection.createStatement()) {

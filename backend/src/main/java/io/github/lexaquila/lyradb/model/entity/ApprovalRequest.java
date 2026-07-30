@@ -36,8 +36,8 @@ public class ApprovalRequest {
     @Column(name = "applicant_name", length = 100)
     private String applicantName;
 
-    /** EXPORT / DANGEROUS_SQL */
-    @Column(name = "operation_type", length = 16)
+    /** EXPORT / DANGEROUS_SQL / DATASOURCE_EXPORT */
+    @Column(name = "operation_type", length = 32)
     private String operationType;
 
     @Column(name = "data_source_id", length = 36)

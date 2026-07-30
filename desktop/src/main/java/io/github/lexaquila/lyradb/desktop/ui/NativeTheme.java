@@ -57,7 +57,7 @@ public final class NativeTheme {
         System.setProperty("flatlaf.useWindowDecorations", "true");
         System.setProperty("flatlaf.menuBarEmbedded", "true");
         if (!FlatDarkLaf.setup()) {
-            throw new IllegalStateException("无法初始化 LyraDB 原生主题");
+            throw new IllegalStateException("无法初始化 LyraDB 主题");
         }
 
         putColor("Panel.background", BACKGROUND);

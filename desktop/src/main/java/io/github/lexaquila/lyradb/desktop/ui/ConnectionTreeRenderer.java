@@ -36,7 +36,7 @@ final class ConnectionTreeRenderer extends DefaultTreeCellRenderer {
                 if (!selected) {
                     setForeground(connected ? NativeTheme.SUCCESS : NativeTheme.MUTED);
                 }
-                setToolTipText(connected ? "已连接（原生直连）" : "未连接");
+                setToolTipText(connected ? "已连接" : "未连接");
             } else if (item.node != null) {
                 setText(icon(item.node.getType()) + "  " + item.node.getName());
                 setToolTipText(item.node.getType() + " · " + item.node.getPath());

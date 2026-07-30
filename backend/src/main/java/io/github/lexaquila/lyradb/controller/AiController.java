@@ -72,7 +72,8 @@ public class AiController {
         ChatRequest request = parseRequest(body);
         String workspaceId = securityUtil.requireCurrentWorkspace(session);
         return enterpriseAiService.chat(workspaceId, request.grantedSourceName(),
-                request.message(), request.history());
+                request.message(), request.history(), request.attachMetadata(),
+                request.metadataSnapshotId());
     }
 
     /**
@@ -103,7 +104,9 @@ public class AiController {
                 }
                 enterpriseAiService.chatStream(
                         workspaceId, request.grantedSourceName(),
-                        request.message(), request.history(), emitter);
+                        request.message(), request.history(),
+                        request.attachMetadata(), request.metadataSnapshotId(),
+                        emitter);
             } finally {
                 SecurityContextHolder.clearContext();
                 RequestContextHolder.resetRequestAttributes();
@@ -169,12 +172,34 @@ public class AiController {
             }
             history = List.copyOf(parsed);
         }
-        return new ChatRequest(
-                grantedSourceName.trim(), message.trim(), history);
+        Object attachMetadataValue = body.get("attachMetadata");
+        boolean attachMetadata = false;
+        if (attachMetadataValue != null) {
+            if (!(attachMetadataValue instanceof Boolean value)) {
+                throw new IllegalArgumentException(
+                        "attachMetadata \u5fc5\u987b\u662f\u5e03\u5c14\u503c");
+            }
+            attachMetadata = value;
+        }
+        Object snapshotValue = body.get("metadataSnapshotId");
+        String metadataSnapshotId = null;
+        if (snapshotValue != null) {
+            if (!(snapshotValue instanceof String value)) {
+                throw new IllegalArgumentException(
+                        "metadataSnapshotId \u5fc5\u987b\u662f\u5b57\u7b26\u4e32");
+            }
+            metadataSnapshotId = value.trim();
+            if (metadataSnapshotId.isEmpty()) {
+                metadataSnapshotId = null;
+            }
+        }
+        return new ChatRequest(grantedSourceName.trim(), message.trim(),
+                history, attachMetadata, metadataSnapshotId);
     }
 
     private record ChatRequest(
             String grantedSourceName, String message,
-            List<Map<String, String>> history) {
+            List<Map<String, String>> history, boolean attachMetadata,
+            String metadataSnapshotId) {
     }
 }

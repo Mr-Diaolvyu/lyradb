@@ -78,6 +78,89 @@ export interface MaskingRule {
     createdAt?: string
 }
 
+export type CredentialExportMode = 'OMIT' | 'PLAINTEXT' | 'PASSWORD_ENCRYPTED'
+export type ImportConflictAction = 'SKIP' | 'RENAME' | 'OVERWRITE'
+
+export interface ConnectionExportRequest {
+    dataSourceIds: string[]
+    credentialMode: CredentialExportMode
+    plaintextRiskConfirmed: boolean
+    reason?: string
+}
+
+export interface DataSourceExportDownloadRequest {
+    password?: string
+    plaintextRiskConfirmed: boolean
+}
+
+export interface ConnectionImportPreviewItem {
+    entryKey: string
+    displayName: string
+    dbType: string
+    conflict: boolean
+    existingDisplayName?: string
+    parameterKeys: string[]
+    credentialKeys: string[]
+    credentialsIncluded: boolean
+}
+
+export interface ConnectionImportPreview {
+    previewToken: string
+    credentialPolicy: CredentialExportMode
+    riskCode?: string
+    expiresAt?: string
+    items: ConnectionImportPreviewItem[]
+}
+
+export interface ConnectionImportDecision {
+    entryKey: string
+    action: ImportConflictAction
+    newDisplayName?: string
+}
+
+export interface ConnectionImportResult {
+    created: number
+    overwritten: number
+    skipped: number
+}
+
+export interface MetadataSelection {
+    grantedSourceName: string
+    database?: string
+    schemas?: string[]
+    tables?: string[]
+}
+
+export interface MetadataTablePreview {
+    database?: string
+    schema?: string
+    table: string
+    type?: string
+    columns: string[]
+}
+
+export interface MetadataSnapshotSummary {
+    id: string
+    grantedSourceName: string
+    database?: string
+    schemas?: string[]
+    tables?: string[]
+    databaseCount: number
+    schemaCount: number
+    tableCount: number
+    columnCount: number
+    approximateTokens: number
+    preview: MetadataTablePreview[]
+    expiresAt?: string
+}
+
+export interface AiChatRequest {
+    grantedSourceName: string
+    message: string
+    history: Array<{ role: string; content: string }>
+    attachMetadata?: boolean
+    metadataSnapshotId?: string
+}
 export interface Page<T> {
     content: T[]
     totalElements: number
@@ -110,8 +193,17 @@ export const entApi = {
         const params = workspaceId ? { params: { workspaceId } } : {}
         return apiClient.get('/ai/providers', params as any)
     },
-    aiChat(grantedSourceName: string, message: string, history: any[]): Promise<any> {
-        return apiClient.post('/ai/chat', { grantedSourceName, message, history })
+    aiChat(body: AiChatRequest): Promise<any> {
+        return apiClient.post('/ai/chat', body)
+    },
+    createMetadataSnapshot(selection: MetadataSelection, signal?: AbortSignal): Promise<MetadataSnapshotSummary> {
+        return apiClient.post('/ai/metadata/snapshots', selection, { signal })
+    },
+    downloadMetadataSnapshot(id: string, format: 'json' | 'markdown'): Promise<Blob> {
+        return apiClient.get(`/ai/metadata/snapshots/${encodeURIComponent(id)}/download`, {
+            params: { format },
+            responseType: 'blob',
+        })
     },
     // AI 管理
     adminAiProviders(workspaceId?: string): Promise<any[]> {
@@ -137,6 +229,9 @@ export const entApi = {
     },
     approvalsPending(): Promise<ApprovalRequest[]> {
         return apiClient.get('/approvals/pending')
+    },
+    approvalDetail(id: string): Promise<ApprovalRequest> {
+        return apiClient.get(`/approvals/${encodeURIComponent(id)}`)
     },
     createApproval(body: any): Promise<ApprovalRequest> {
         return apiClient.post('/approvals', body)
@@ -169,6 +264,31 @@ export const entApi = {
     },
     adminTestDataSource(id: string): Promise<{ success: boolean; message: string }> {
         return apiClient.post(`/admin/datasources/${id}/test`)
+    },
+    adminRequestDataSourceExport(body: ConnectionExportRequest): Promise<ApprovalRequest> {
+        return apiClient.post('/admin/datasources/export-requests', body)
+    },
+    adminDownloadDataSourceExport(approvalId: string, body: DataSourceExportDownloadRequest): Promise<Blob> {
+        return apiClient.post(
+            `/admin/datasources/exports/${encodeURIComponent(approvalId)}/download`,
+            body,
+            { responseType: 'blob' },
+        )
+    },
+    adminPreviewDataSourceImport(file: File, password?: string, signal?: AbortSignal): Promise<ConnectionImportPreview> {
+        const body = new FormData()
+        body.append('file', file)
+        if (password) body.append('password', password)
+        return apiClient.post('/admin/datasources/imports/preview', body, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+            signal,
+        })
+    },
+    adminApplyDataSourceImport(previewToken: string, decisions: ConnectionImportDecision[]): Promise<ConnectionImportResult> {
+        return apiClient.post(
+            `/admin/datasources/imports/${encodeURIComponent(previewToken)}/apply`,
+            { decisions },
+        )
     },
 
     // 管理员：授权

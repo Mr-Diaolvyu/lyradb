@@ -57,6 +57,10 @@ public class AuditLog {
     private String action;
 
     @Lob
+    @Column(name = "details_json")
+    private String detailsJson;
+
+    @Lob
     @Column(name = "sql_text")
     private String sqlText;
 

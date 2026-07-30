@@ -161,7 +161,7 @@ public final class OpenAiCompatibleClient {
             default -> "优先输出适配当前数据库方言的 SQL，并放在 ```sql 代码块。";
         };
         return """
-                你是 LyraDB 个人版内置的数据库工程助手。当前数据库类型：%s。
+                你是 LyraDB 的数据库工程助手。当前数据库类型：%s。
                 任务：%s。
                 必须遵守：
                 1. 不得声称已执行 SQL；你没有数据库执行权限。

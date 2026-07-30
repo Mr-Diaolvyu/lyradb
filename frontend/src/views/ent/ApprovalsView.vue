@@ -1,15 +1,15 @@
 <template>
   <div class="page">
-    <div class="page-title"><h2>审批中心</h2><span class="page-sub">导出与高风险 SQL 按不可变申请内容审批</span></div>
+    <div class="page-title"><h2>审批中心</h2><span class="page-sub">查询结果导出、连接配置导出与高风险 SQL 按不可变申请内容审批。</span></div>
 
     <el-tabs v-model="tab" @tab-change="load">
       <el-tab-pane v-if="canApprove" label="待我审批" name="pending">
         <el-table :data="pending" border size="small" empty-text="无待审批">
           <el-table-column prop="applicantName" label="申请人" width="100" />
-          <el-table-column prop="operationType" label="操作" width="110" />
+          <el-table-column label="操作" width="130"><template #default="{ row }">{{ operationLabel(row.operationType) }}</template></el-table-column>
           <el-table-column prop="grantedSourceName" label="数据源" min-width="140" />
           <el-table-column label="申请内容" min-width="220" show-overflow-tooltip>
-            <template #default="{ row }">{{ payloadSummary(row) }}</template>
+            <template #default="{ row }"><span>{{ payloadSummary(row) }}</span><el-tag v-if="isPlaintextExport(row)" class="risk-tag" size="small" type="danger">包含明文凭据</el-tag></template>
           </el-table-column>
           <el-table-column prop="reason" label="理由" min-width="140" show-overflow-tooltip />
           <el-table-column prop="expiresAt" label="截止" width="160">
@@ -30,10 +30,10 @@
           <span class="hint">已批准的导出只能由申请人下载一次。</span>
         </div>
         <el-table :data="mine" border size="small" empty-text="无申请">
-          <el-table-column prop="operationType" label="操作" width="110" />
+          <el-table-column label="操作" width="130"><template #default="{ row }">{{ operationLabel(row.operationType) }}</template></el-table-column>
           <el-table-column prop="grantedSourceName" label="数据源" min-width="140" />
           <el-table-column label="申请内容" min-width="220" show-overflow-tooltip>
-            <template #default="{ row }">{{ payloadSummary(row) }}</template>
+            <template #default="{ row }"><span>{{ payloadSummary(row) }}</span><el-tag v-if="isPlaintextExport(row)" class="risk-tag" size="small" type="danger">包含明文凭据</el-tag></template>
           </el-table-column>
           <el-table-column prop="reason" label="理由" min-width="140" show-overflow-tooltip />
           <el-table-column prop="status" label="状态" width="110">
@@ -45,7 +45,7 @@
           <el-table-column label="操作" width="150" fixed="right">
             <template #default="{ row }">
               <el-button
-                v-if="row.operationType === 'EXPORT' && row.status === 'APPROVED'"
+                v-if="(row.operationType === 'EXPORT' || row.operationType === 'DATASOURCE_EXPORT') && row.status === 'APPROVED'"
                 size="small"
                 type="primary"
                 :loading="downloadingId === row.id"
@@ -96,6 +96,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { entApi, type ApprovalRequest, type LogicalGrant } from '@/api/ent'
+import { parseDataSourceExportPayload } from '@/utils/enterpriseTransfer'
 import { useAuthStore } from '@/stores/auth'
 import { saveBlob } from '@/utils/download'
 import { runPromptedAction } from '@/utils/requestControl'
@@ -136,18 +137,50 @@ function parseExportPayload(row: ApprovalRequest): ExportPayload | null {
 }
 
 function payloadSummary(row: ApprovalRequest): string {
+  const dataSourcePayload = parseDataSourceExportPayload(row)
+  if (dataSourcePayload) {
+    const mode = credentialModeLabel(dataSourcePayload.credentialMode)
+    const scope = dataSourcePayload.dataSourceRefs.map(ref => `${ref.displayName}（${ref.id}）`).join('、')
+    return `${dataSourcePayload.dataSourceRefs.length} 个连接 · ${mode} · ${scope}`
+  }
   const payload = parseExportPayload(row)
   if (!payload) return row.payloadJson || '—'
   const compactSql = payload.sql.replace(/\s+/g, ' ').trim()
   return (payload.format.toUpperCase() + ' · ' + compactSql).slice(0, 240)
 }
 
+function credentialModeLabel(mode: string): string {
+  if (mode === 'PLAINTEXT') return '包含明文凭据'
+  if (mode === 'PASSWORD_ENCRYPTED') return '密码加密凭据'
+  return '不包含凭据'
+}
+
+function operationLabel(operation: string): string {
+  if (operation === 'DATASOURCE_EXPORT') return '连接配置导出'
+  if (operation === 'EXPORT') return '查询结果导出'
+  if (operation === 'DANGEROUS_SQL') return '高风险 SQL'
+  return operation
+}
+
+function isPlaintextExport(row: ApprovalRequest): boolean {
+  return parseDataSourceExportPayload(row)?.credentialMode === 'PLAINTEXT'
+}
+
+async function loadApprovalDetails(rows: ApprovalRequest[]): Promise<ApprovalRequest[]> {
+  return Promise.all(rows.map(async row => {
+    try {
+      return await entApi.approvalDetail(row.id)
+    } catch {
+      return row
+    }
+  }))
+}
 async function load() {
   try {
     if (tab.value === 'pending' && canApprove.value) {
-      pending.value = await entApi.approvalsPending()
+      pending.value = await loadApprovalDetails(await entApi.approvalsPending())
     } else {
-      mine.value = await entApi.approvals(true)
+      mine.value = await loadApprovalDetails(await entApi.approvals(true))
     }
   } catch (e: any) {
     ElMessage.error(e.message || '加载审批列表失败')
@@ -249,6 +282,10 @@ async function create() {
 }
 
 async function downloadApproved(row: ApprovalRequest) {
+  if (row.operationType === 'DATASOURCE_EXPORT') {
+    await downloadApprovedDataSources(row)
+    return
+  }
   const payload = parseExportPayload(row)
   if (!payload) {
     ElMessage.error('审批内容不完整，无法安全下载')
@@ -266,6 +303,51 @@ async function downloadApproved(row: ApprovalRequest) {
     await load()
   } catch (e: any) {
     ElMessage.error(e.message || '导出失败')
+  } finally {
+    downloadingId.value = null
+  }
+}
+
+async function downloadApprovedDataSources(row: ApprovalRequest) {
+  const payload = parseDataSourceExportPayload(row)
+  if (!payload) {
+    ElMessage.error('连接导出审批内容不完整，无法安全下载')
+    return
+  }
+  let password: string | undefined
+  if (payload.credentialMode === 'PASSWORD_ENCRYPTED') {
+    try {
+      const answer = await ElMessageBox.prompt('输入本次导出包密码（至少 12 位，不会保存）', '加密导出', {
+        inputType: 'password',
+        inputValidator: value => (value?.length || 0) >= 12 || '密码至少 12 位',
+        confirmButtonText: '生成并下载',
+      })
+      password = answer.value
+    } catch {
+      return
+    }
+  } else if (payload.credentialMode === 'PLAINTEXT') {
+    try {
+      await ElMessageBox.confirm(
+        '此文件包含可直接使用的明文数据库凭据。请仅保存到受控位置，并在使用后及时删除。是否继续？',
+        '明文凭据风险确认',
+        { type: 'error', confirmButtonText: '确认下载', cancelButtonText: '取消' },
+      )
+    } catch {
+      return
+    }
+  }
+  downloadingId.value = row.id
+  try {
+    const blob = await entApi.adminDownloadDataSourceExport(row.id, {
+      password,
+      plaintextRiskConfirmed: payload.credentialMode === 'PLAINTEXT',
+    })
+    await saveBlob(blob, `lyradb-connections-${row.id}.json`)
+    ElMessage.success('连接配置包已生成')
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e.message || '连接配置导出失败')
   } finally {
     downloadingId.value = null
   }
@@ -292,6 +374,7 @@ function fmt(date?: string) { return date ? new Date(date).toLocaleString() : ''
 .page-title h2 { font-size: 18px; margin: 0; }
 .page-sub, .hint { font-size: 12px; color: var(--color-text-muted); }
 .mine-toolbar { margin-bottom: 10px; display: flex; align-items: center; gap: 12px; }
+.risk-tag { margin-left: 8px; }
 
 @media (max-width: 768px) {
   .mine-toolbar { align-items: flex-start; flex-direction: column; }

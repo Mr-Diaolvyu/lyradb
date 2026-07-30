@@ -1,8 +1,11 @@
 package io.github.lexaquila.lyradb.desktop.model;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -17,6 +20,7 @@ public final class DesktopConnection {
     private String name = "";
     private String dbType = "";
     private Map<String, Object> params = new LinkedHashMap<>();
+    private Set<String> credentialKeys = Set.of();
     private String group = "";
     private boolean favorite;
 
@@ -29,6 +33,7 @@ public final class DesktopConnection {
         copy.name = name;
         copy.dbType = dbType;
         copy.params = new LinkedHashMap<>(params);
+        copy.credentialKeys = immutableCredentialKeys(credentialKeys);
         copy.group = group;
         copy.favorite = favorite;
         return copy;
@@ -66,6 +71,14 @@ public final class DesktopConnection {
         this.params = params == null ? new LinkedHashMap<>() : new LinkedHashMap<>(params);
     }
 
+    public Set<String> getCredentialKeys() {
+        return immutableCredentialKeys(credentialKeys);
+    }
+
+    public void setCredentialKeys(Set<String> credentialKeys) {
+        this.credentialKeys = immutableCredentialKeys(credentialKeys);
+    }
+
     public String getGroup() {
         return group;
     }
@@ -85,5 +98,21 @@ public final class DesktopConnection {
     @Override
     public String toString() {
         return name.isBlank() ? dbType : name;
+    }
+
+    private static Set<String> immutableCredentialKeys(Set<String> values) {
+        if (values == null || values.isEmpty()) {
+            return Set.of();
+        }
+        LinkedHashSet<String> result = new LinkedHashSet<>();
+        values.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .sorted(String.CASE_INSENSITIVE_ORDER)
+                .forEach(result::add);
+        return result.isEmpty()
+                ? Set.of()
+                : Collections.unmodifiableSet(result);
     }
 }

@@ -39,6 +39,9 @@ public interface ApprovalRequestRepository
             String applicantId, String workspaceId, String grantId,
             String operationType, String payloadHash, String status);
 
+    Optional<ApprovalRequest> findFirstByApplicantIdAndWorkspaceIdAndOperationTypeAndPayloadHashAndStatusOrderByCreatedAtDesc(
+            String applicantId, String workspaceId,
+            String operationType, String payloadHash, String status);
     List<ApprovalRequest> findByStatusAndExpiresAtBefore(
             String status, LocalDateTime time);
 

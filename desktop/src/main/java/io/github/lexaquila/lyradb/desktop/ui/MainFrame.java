@@ -1,20 +1,27 @@
 package io.github.lexaquila.lyradb.desktop.ui;
 
 import io.github.lexaquila.lyradb.desktop.DesktopRuntime;
+import io.github.lexaquila.lyradb.desktop.metadata.MetadataSelection;
 import io.github.lexaquila.lyradb.desktop.model.DesktopConnection;
+import io.github.lexaquila.lyradb.desktop.transfer.ConnectionImportPlanner;
+import io.github.lexaquila.lyradb.desktop.transfer.ConnectionTransferService;
 import io.github.lexaquila.lyradb.model.dto.TreeNode;
+import io.github.lexaquila.lyradb.transfer.connection.ConnectionPackageException;
+import io.github.lexaquila.lyradb.transfer.connection.CredentialExportPolicy;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JFrame;
+import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPasswordField;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
@@ -31,9 +38,9 @@ import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.ExpandVetoException;
 import javax.swing.tree.TreePath;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
-import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -41,13 +48,17 @@ import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Supplier;
 
 /**
- * LyraDB 个人版原生主窗口。
+ * LyraDB 主窗口。
  */
 public final class MainFrame extends JFrame {
 
@@ -62,14 +73,18 @@ public final class MainFrame extends JFrame {
     private final JPanel navigatorCards = new JPanel(navigatorLayout);
     private final JLabel connectionCount = UiKit.badge(
             "0", NativeTheme.MUTED, NativeTheme.SURFACE_ALT);
-    private final JLabel statusLabel =
-            new JLabel("个人版 · 原生 C/S · 数据库直连 · AI 本地配置");
+    private final JLabel statusLabel = new JLabel("就绪");
+    private final JLabel connectionSummary = new JLabel("连接 0");
     private final Map<String, SqlWorkspacePanel> workspaceByConnection = new HashMap<>();
+    private final ConnectionTransferService connectionTransfer =
+            new ConnectionTransferService();
+    private final ConnectionImportPlanner connectionImportPlanner =
+            new ConnectionImportPlanner();
     private boolean shuttingDown;
 
     public MainFrame(DesktopRuntime runtime) {
-        super("LyraDB " + io.github.lexaquila.lyradb.desktop.NativeDesktopApplication.VERSION
-                + " · 个人版");
+        super("LyraDB "
+                + io.github.lexaquila.lyradb.desktop.NativeDesktopApplication.VERSION);
         this.runtime = runtime;
         setIconImage(LyraIcons.applicationImage());
         buildUi();
@@ -225,9 +240,9 @@ public final class MainFrame extends JFrame {
         left.add(indicator);
         left.add(statusLabel);
         bar.add(left, BorderLayout.CENTER);
-        JLabel mode = new JLabel("本地原生  ·  AI 可用");
+        JLabel mode = connectionSummary;
         mode.setFont(NativeTheme.FONT_CAPTION_BOLD);
-        mode.setForeground(NativeTheme.ACCENT_LIGHT);
+        mode.setForeground(NativeTheme.MUTED);
         bar.add(mode, BorderLayout.EAST);
         return bar;
     }
@@ -243,6 +258,11 @@ public final class MainFrame extends JFrame {
         toolbar.add(toolButton("新建连接", LyraIcons.Kind.ADD_DATABASE,
                 UiKit.ButtonStyle.PRIMARY, this::newConnection));
         toolbar.add(Box.createHorizontalStrut(5));
+        toolbar.add(toolButton("导入连接", LyraIcons.Kind.DATABASE,
+                UiKit.ButtonStyle.TOOLBAR, this::importConnections));
+        toolbar.add(toolButton("导出连接", LyraIcons.Kind.EXPORT,
+                UiKit.ButtonStyle.TOOLBAR, this::exportConnections));
+        toolbar.addSeparator();
         toolbar.add(toolButton("连接", LyraIcons.Kind.CONNECT,
                 UiKit.ButtonStyle.TOOLBAR, this::connectSelected));
         toolbar.add(toolButton("断开", LyraIcons.Kind.DISCONNECT,
@@ -271,6 +291,9 @@ public final class MainFrame extends JFrame {
         file.add(item("新建 SQL 编辑器", KeyStroke.getKeyStroke(
                 KeyEvent.VK_L, InputEvent.CTRL_DOWN_MASK), this::openSqlWorkspace));
         file.addSeparator();
+        file.add(item("导入连接配置…", null, this::importConnections));
+        file.add(item("导出全部连接配置…", null, this::exportConnections));
+        file.addSeparator();
         file.add(item("退出", null, this::shutdown));
 
         JMenu database = new JMenu("数据库");
@@ -288,19 +311,16 @@ public final class MainFrame extends JFrame {
         ai.add(item("Provider / API Key 设置", null, this::openAiSettings));
 
         JMenu tools = new JMenu("工具");
+        tools.add(item("导入连接配置…", null, this::importConnections));
+        tools.add(item("导出全部连接配置…", null, this::exportConnections));
+        tools.addSeparator();
         tools.add(item("ER 关系图", null, this::openErDiagram));
 
         JMenu help = new JMenu("帮助");
         help.add(item("关于 LyraDB", null, () -> JOptionPane.showMessageDialog(this,
                 """
-                        LyraDB %s 个人版
-                        原生 Java 桌面客户端（Swing）
-
-                        架构：本地 C/S 数据库直连
-                        AI：个人版可用，本地加密配置
-                        企业版：独立部署的 B/S 管理平台
-
-                        本进程不包含浏览器或 WebView。
+                        LyraDB %s
+                        数据库管理工具
                         """.formatted(
                         io.github.lexaquila.lyradb.desktop.NativeDesktopApplication.VERSION),
                 "关于", JOptionPane.INFORMATION_MESSAGE)));
@@ -310,11 +330,205 @@ public final class MainFrame extends JFrame {
         menuBar.add(ai);
         menuBar.add(tools);
         menuBar.add(help);
-        menuBar.add(Box.createHorizontalGlue());
-        menuBar.add(UiKit.badge("个人版 · 原生",
-                NativeTheme.ACCENT_LIGHT, NativeTheme.ACCENT_SOFT));
-        menuBar.add(Box.createHorizontalStrut(8));
         return menuBar;
+    }
+
+    private void exportConnections() {
+        List<DesktopConnection> connections = runtime.stateStore().listConnections();
+        if (connections.isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                    "当前没有可导出的连接配置。",
+                    "没有连接", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        ConnectionExportDialog.ExportRequest request =
+                ConnectionExportDialog.show(this, connections);
+        if (request == null) {
+            return;
+        }
+        CredentialExportPolicy policy = request.policy();
+        char[] exportPassword = request.exportPassword();
+        request.close();
+        if (policy == CredentialExportPolicy.PLAINTEXT) {
+            int confirmation = JOptionPane.showConfirmDialog(this,
+                    """
+                            文件将包含数据库明文凭据。
+                            任何能读取该文件的人都可以直接查看并使用这些凭据。
+
+                            是否仍要继续导出？
+                            """,
+                    "再次确认明文导出",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE);
+            if (confirmation != JOptionPane.YES_OPTION) {
+                Arrays.fill(exportPassword, '\0');
+                return;
+            }
+        }
+        JFileChooser chooser = connectionFileChooser();
+        chooser.setSelectedFile(new java.io.File(
+                "LyraDB" + ConnectionTransferService.FILE_SUFFIX));
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+            Arrays.fill(exportPassword, '\0');
+            return;
+        }
+        Path target = withConnectionSuffix(chooser.getSelectedFile().toPath());
+        if (Files.exists(target)) {
+            int overwrite = JOptionPane.showConfirmDialog(this,
+                    "文件已存在，是否覆盖？\n" + target,
+                    "确认覆盖", JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE);
+            if (overwrite != JOptionPane.YES_OPTION) {
+                Arrays.fill(exportPassword, '\0');
+                return;
+            }
+        }
+        runAsync("正在导出 " + connections.size() + " 个连接配置…",
+                () -> {
+                    try {
+                        connectionTransfer.exportTo(
+                                target, connections, policy, exportPassword);
+                        return target;
+                    } finally {
+                        Arrays.fill(exportPassword, '\0');
+                    }
+                },
+                saved -> status("已导出 " + connections.size()
+                        + " 个连接：" + saved.getFileName()));
+    }
+
+    private void importConnections() {
+        JFileChooser chooser = connectionFileChooser();
+        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        readImportPackage(chooser.getSelectedFile().toPath(),
+                new char[0], true);
+    }
+
+    private void readImportPackage(Path source, char[] password,
+            boolean allowPasswordPrompt) {
+        status("正在校验连接配置包…");
+        new SwingWorker<ConnectionTransferService.ImportBundle, Void>() {
+            @Override
+            protected ConnectionTransferService.ImportBundle doInBackground()
+                    throws Exception {
+                try {
+                    return connectionTransfer.read(source, password);
+                } finally {
+                    Arrays.fill(password, '\0');
+                }
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    showImportPreview(get());
+                } catch (Exception exception) {
+                    ConnectionPackageException packageError =
+                            findPackageException(exception);
+                    if (allowPasswordPrompt && packageError != null
+                            && packageError.getCode()
+                            == ConnectionPackageException.Code.PASSWORD_REQUIRED) {
+                        promptImportPassword(source);
+                        return;
+                    }
+                    Throwable cause = rootCause(exception);
+                    status("导入失败：" + cause.getMessage());
+                    JOptionPane.showMessageDialog(MainFrame.this,
+                            cause.getMessage(), "导入连接配置失败",
+                            JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        }.execute();
+    }
+
+    private void promptImportPassword(Path source) {
+        JPasswordField field = new JPasswordField(24);
+        int choice = JOptionPane.showConfirmDialog(this, field,
+                "输入导出密码", JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE);
+        if (choice != JOptionPane.OK_OPTION) {
+            return;
+        }
+        char[] password = field.getPassword();
+        field.setText("");
+        if (password.length == 0) {
+            Arrays.fill(password, '\0');
+            JOptionPane.showMessageDialog(this,
+                    "导出密码不能为空。", "缺少密码",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        readImportPackage(source, password, false);
+    }
+
+    private void showImportPreview(
+            ConnectionTransferService.ImportBundle bundle) {
+        List<DesktopConnection> existing =
+                runtime.stateStore().listConnections();
+        List<ConnectionImportPlanner.PreviewItem> preview =
+                connectionImportPlanner.preview(
+                        existing, bundle.desktopConnections());
+        ConnectionImportPlanner.Resolution resolution =
+                ConnectionImportDialog.show(this, connectionImportPlanner,
+                        preview, bundle, existing);
+        if (resolution == null) {
+            status("已取消导入");
+            return;
+        }
+        if (resolution.toSave().isEmpty()) {
+            status("没有连接被导入");
+            return;
+        }
+        long openTransactions = resolution.overwrittenIds().stream()
+                .filter(runtime.connectionManager()::isConnected)
+                .filter(runtime.connectionManager()::inTransaction)
+                .count();
+        if (openTransactions > 0) {
+            int confirm = JOptionPane.showConfirmDialog(this,
+                    "将覆盖的连接中有 " + openTransactions
+                            + " 个存在未提交事务。继续后会先回滚并断开，是否继续？",
+                    "覆盖已连接配置", JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE);
+            if (confirm != JOptionPane.YES_OPTION) {
+                return;
+            }
+        }
+        runAsync("正在应用导入决策…",
+                () -> {
+                    for (String connectionId : resolution.overwrittenIds()) {
+                        runtime.connectionManager().disconnect(connectionId);
+                    }
+                    runtime.stateStore().saveConnections(resolution.toSave());
+                    return resolution;
+                },
+                saved -> {
+                    refreshConnections();
+                    String summary = "导入完成：新增 " + saved.importedCount()
+                            + "，重命名 " + saved.renamedCount()
+                            + "，覆盖 " + saved.overwrittenCount()
+                            + "，跳过 " + saved.skippedCount();
+                    status(summary);
+                    JOptionPane.showMessageDialog(MainFrame.this,
+                            summary, "连接配置导入完成",
+                            JOptionPane.INFORMATION_MESSAGE);
+                });
+    }
+
+    private static JFileChooser connectionFileChooser() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setFileFilter(new FileNameExtensionFilter(
+                "LyraDB 连接配置 (*.lyradb-connections.json)", "json"));
+        return chooser;
+    }
+
+    private static Path withConnectionSuffix(Path value) {
+        String name = value.getFileName().toString();
+        return name.toLowerCase(Locale.ROOT)
+                .endsWith(ConnectionTransferService.FILE_SUFFIX)
+                ? value : value.resolveSibling(
+                name + ConnectionTransferService.FILE_SUFFIX);
     }
 
     private void refreshConnections() {
@@ -327,6 +541,7 @@ public final class MainFrame extends JFrame {
         }
         treeModel.reload();
         connectionCount.setText("  " + root.getChildCount() + "  ");
+        connectionSummary.setText("连接 " + root.getChildCount());
         navigatorLayout.show(navigatorCards,
                 root.getChildCount() == 0 ? "empty" : "tree");
         status("已加载 " + root.getChildCount() + " 个本地连接配置");
@@ -508,7 +723,35 @@ public final class MainFrame extends JFrame {
                         () -> openWorkspace(targetConnectionId, value));
             }
         };
-        new AiAssistantDialog(this, runtime, sql, dbType, insert).setVisible(true);
+        new AiAssistantDialog(this, runtime, sql, dbType, insert,
+                this::currentMetadataSelection).setVisible(true);
+    }
+
+    private MetadataSelection currentMetadataSelection() {
+        DefaultMutableTreeNode selected = selectedNode();
+        if (selected == null
+                || !(selected.getUserObject() instanceof BrowserItem item)
+                || item.node == null) {
+            return null;
+        }
+        String type = item.node.getType() == null ? ""
+                : item.node.getType().trim().toUpperCase(Locale.ROOT);
+        MetadataSelection.Scope scope = switch (type) {
+            case "DATABASE" -> MetadataSelection.Scope.DATABASE;
+            case "SCHEMA" -> MetadataSelection.Scope.SCHEMA;
+            case "TABLE", "VIEW", "COLLECTION" -> MetadataSelection.Scope.TABLE;
+            default -> null;
+        };
+        if (scope == null) {
+            return null;
+        }
+        String dbType = runtime.stateStore()
+                .findConnection(item.connectionId)
+                .map(DesktopConnection::getDbType)
+                .orElseThrow(() ->
+                        new IllegalArgumentException("当前连接配置不存在"));
+        return new MetadataSelection(item.connectionId, dbType,
+                scope, item.node.getName(), item.node.getPath(), type);
     }
 
     private void openErDiagram() {
@@ -803,6 +1046,18 @@ public final class MainFrame extends JFrame {
         }
         item.addActionListener(event -> action.run());
         return item;
+    }
+
+    private static ConnectionPackageException findPackageException(
+            Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof ConnectionPackageException result) {
+                return result;
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 
     private static Throwable rootCause(Throwable throwable) {

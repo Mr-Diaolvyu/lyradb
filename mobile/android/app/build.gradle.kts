@@ -13,8 +13,8 @@ android {
         applicationId = "io.github.lexaquila.lyradb.mobile"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3000001
-        versionName = "3.0.1"
+        versionCode = 3001000
+        versionName = "3.1.0"
         manifestPlaceholders["usesCleartextTraffic"] = "false"
     }
 

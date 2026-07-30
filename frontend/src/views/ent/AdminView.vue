@@ -5,8 +5,15 @@
     <el-tabs v-model="tab" @tab-change="load">
       <!-- 数据源 -->
       <el-tab-pane label="数据源" name="ds">
-        <div class="bar"><el-button type="primary" :icon="Plus" @click="dsCreate.visible = true">注册数据源</el-button></div>
-        <el-table :data="dataSources" border size="small" empty-text="无">
+        <div class="bar">
+          <el-button type="primary" :icon="Plus" @click="dsCreate.visible = true">注册数据源</el-button>
+          <el-button :icon="Download" :disabled="!selectedDataSources.length" @click="openExport">申请导出所选连接</el-button>
+          <el-button :icon="Upload" @click="openImportFile">导入连接</el-button>
+          <input ref="importFileInput" class="sr-only" type="file" accept=".json,.lyradb" aria-label="选择连接配置包" @change="onImportFile" />
+          <span v-if="selectedDataSources.length" class="selection-count">已选择 {{ selectedDataSources.length }} 项</span>
+        </div>
+        <el-table :data="dataSources" border size="small" empty-text="无" @selection-change="onDataSourceSelection">
+          <el-table-column type="selection" width="44" />
           <el-table-column prop="displayName" label="名称" width="160" />
           <el-table-column prop="dbType" label="类型" width="120" />
           <el-table-column label="参数（已掩码）" show-overflow-tooltip>
@@ -117,6 +124,12 @@
           </el-select>
         </el-form-item>
         <el-form-item label="逻辑名"><el-input v-model="grantCreate.form.grantedSourceName" /></el-form-item>
+        <el-form-item label="允许 Schema" required>
+          <el-input
+            v-model="grantCreate.form.allowedSchemas"
+            placeholder="如 sales、reporting；逗号分隔"
+          />
+        </el-form-item>
         <el-form-item label="允许表（完整限定名）" required><el-input v-model="grantCreate.form.allowedTables" placeholder="如 sales.orders、prod.sales.orders_*；逗号分隔，空=不授权" /></el-form-item>
         <el-form-item label="黑名单表"><el-input v-model="grantCreate.form.blockedTables" placeholder="如 sales.user_secret" /></el-form-item>
         <el-form-item label="能力">
@@ -183,14 +196,127 @@
       </el-form>
       <template #footer><el-button @click="maskCreate.visible=false">取消</el-button><el-button type="primary" :loading="maskCreate.busy" @click="createMask">保存</el-button></template>
     </el-dialog>
+    <el-dialog v-model="connectionExport.visible" title="申请导出连接配置" width="600" destroy-on-close>
+      <el-form label-width="110px">
+        <el-form-item label="已选连接">
+          <div class="selected-list">{{ selectedDataSourceNames.join('、') }}</div>
+        </el-form-item>
+        <el-form-item label="凭据处理">
+          <el-radio-group v-model="connectionExport.mode">
+            <el-radio value="OMIT">不导出凭据</el-radio>
+            <el-radio value="PASSWORD_ENCRYPTED">使用密码加密</el-radio>
+            <el-radio value="PLAINTEXT">明文导出</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-alert
+          v-if="connectionExport.mode === 'PASSWORD_ENCRYPTED'"
+          title="审批通过并下载时再输入加密密码；密码不会写入审批单或保存到服务器。"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+        <el-alert
+          v-if="connectionExport.mode === 'PLAINTEXT'"
+          title="高风险：导出文件会包含可直接使用的数据库凭据。审批人与下载人都会看到风险提示。"
+          type="error"
+          :closable="false"
+          show-icon
+        />
+        <el-form-item v-if="connectionExport.mode === 'PLAINTEXT'" class="risk-confirm">
+          <el-checkbox v-model="connectionExport.plaintextConfirmed">我了解并确认导出明文凭据</el-checkbox>
+        </el-form-item>
+        <el-form-item label="申请理由">
+          <el-input v-model="connectionExport.reason" type="textarea" :rows="3" maxlength="500" show-word-limit />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="connectionExport.visible = false">取消</el-button>
+        <el-button type="primary" :loading="connectionExport.busy" @click="submitConnectionExport">提交审批</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="connectionImport.visible" title="导入连接配置" width="860" destroy-on-close @closed="resetConnectionImport">
+      <div class="import-toolbar">
+        <span class="file-name">{{ connectionImport.file?.name || '尚未选择文件' }}</span>
+        <el-input
+          v-model="connectionImport.password"
+          type="password"
+          show-password
+          clearable
+          placeholder="加密包密码（如需要，不会保存）"
+          aria-label="连接包密码"
+        />
+        <el-button type="primary" :loading="connectionImport.previewing" :disabled="!connectionImport.file" @click="previewConnectionImport">解析并预览</el-button>
+        <el-button v-if="connectionImport.previewing" @click="cancelImportPreview">取消解析</el-button>
+      </div>
+      <el-alert v-if="connectionImport.error" :title="connectionImport.error" type="error" :closable="false" show-icon />
+      <template v-if="connectionImport.preview">
+        <el-alert
+          :title="`凭据模式：${credentialPolicyLabel(connectionImport.preview.credentialPolicy)}${connectionImport.preview.riskCode ? ` · 风险标识：${connectionImport.preview.riskCode}` : ''}`"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+
+        <el-table :data="connectionImport.preview.items" border size="small" max-height="420" empty-text="配置包中没有可导入连接">
+          <el-table-column prop="displayName" label="连接名" min-width="150" />
+          <el-table-column prop="dbType" label="类型" width="100" />
+          <el-table-column label="配置键" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.parameterKeys.join('、') || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="凭据" min-width="130" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.credentialsIncluded ? (row.credentialKeys.join('、') || '已包含') : '未包含' }}</template>
+          </el-table-column>
+          <el-table-column label="冲突" min-width="150">
+            <template #default="{ row }">
+              <el-tag :type="row.conflict ? 'warning' : 'success'" size="small">{{ row.conflict ? (row.existingDisplayName ? `已存在：${row.existingDisplayName}` : '存在同名连接') : '无' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="处理方式" width="150">
+            <template #default="{ row }">
+              <el-select v-model="importChoices[row.entryKey].action" size="small" aria-label="冲突处理方式">
+                <el-option label="跳过" value="SKIP" />
+                <el-option label="重命名导入" value="RENAME" />
+                <el-option :label="row.conflict ? '覆盖' : '直接导入'" value="OVERWRITE" />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column label="导入名称" min-width="170">
+            <template #default="{ row }">
+              <el-input
+                v-if="importChoices[row.entryKey].action === 'RENAME'"
+                v-model="importChoices[row.entryKey].renameTo"
+                size="small"
+                maxlength="120"
+                aria-label="重命名后的连接名"
+              />
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
+      <template #footer>
+        <el-button @click="connectionImport.visible = false">取消</el-button>
+        <el-button type="primary" :loading="connectionImport.applying" :disabled="!connectionImport.preview" @click="applyConnectionImport">确认导入</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { computed, ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
-import { entApi, type AdminDataSource, type AdminGrant, type MaskingRule } from '@/api/ent'
+import { Download, Plus, Upload } from '@element-plus/icons-vue'
+import {
+  entApi,
+  type AdminDataSource,
+  type AdminGrant,
+  type ConnectionImportPreview,
+  type CredentialExportMode,
+  type ImportConflictAction,
+  type MaskingRule,
+} from '@/api/ent'
+import { buildImportDecisions } from '@/utils/enterpriseTransfer'
 import { driverApi } from '@/api/driver'
 import type { DatabaseType } from '@/types/driver'
 
@@ -202,9 +328,29 @@ const dbTypes = ref<DatabaseType[]>([])
 const aiProviders = ref<any[]>([])
 const aiPresets = ref<Record<string, any>>({})
 const maskRules = ref<MaskingRule[]>([])
+const selectedDataSources = ref<AdminDataSource[]>([])
+const importFileInput = ref<HTMLInputElement | null>(null)
+const connectionExport = reactive({
+  visible: false,
+  busy: false,
+  mode: 'OMIT' as CredentialExportMode,
+  plaintextConfirmed: false,
+  reason: '',
+})
+const connectionImport = reactive({
+  visible: false,
+  file: null as File | null,
+  password: '',
+  preview: null as ConnectionImportPreview | null,
+  previewing: false,
+  applying: false,
+  error: '',
+})
+const importChoices = reactive<Record<string, { action: ImportConflictAction; renameTo: string }>>({})
+let importPreviewController: AbortController | null = null
 
 const dsCreate = reactive({ visible: false, busy: false, form: { dbType: '', displayName: '', params: { host: '', port: '', username: '', password: '', database: '' } } })
-const grantCreate = reactive({ visible: false, busy: false, form: { dataSourceId: '', userId: '', grantedSourceName: '', allowedTables: '', blockedTables: '', sqlCapability: 'READ_ONLY' } })
+const grantCreate = reactive({ visible: false, busy: false, form: { dataSourceId: '', userId: '', grantedSourceName: '', allowedSchemas: '', allowedTables: '', blockedTables: '', sqlCapability: 'READ_ONLY' } })
 const userCreate = reactive({ visible: false, busy: false, form: { username: '', password: '', displayName: '', roles: ['ANALYST'] } })
 const aiCreate = reactive({ visible: false, busy: false, form: { providerKey: 'deepseek', displayName: '', baseUrl: '', model: '', apiKey: '', isDefault: true } })
 const maskCreate = reactive({ visible: false, busy: false, form: { dataSourceId: '', tablePattern: '', columnPattern: '', maskType: 'PARTIAL', remark: '' } })
@@ -252,6 +398,7 @@ async function delDs(id: string) {
 
 async function createGrant() {
   if (!grantCreate.form.dataSourceId || !grantCreate.form.userId || !grantCreate.form.grantedSourceName) { ElMessage.warning('请补全'); return }
+  if (!grantCreate.form.allowedSchemas.trim()) { ElMessage.warning('必须填写至少一个允许的 Schema'); return }
   if (!grantCreate.form.allowedTables.trim()) { ElMessage.warning('必须填写至少一个 schema.table 或 catalog.schema.table（可在表名段使用受控通配）；空值表示不授权任何表'); return }
   grantCreate.busy = true
   try {
@@ -326,6 +473,149 @@ async function delMask(id: string) {
   await entApi.adminDeleteMaskingRule(id); ElMessage.success('已删除'); load()
 }
 
+function credentialPolicyLabel(policy: CredentialExportMode): string {
+  if (policy === 'PLAINTEXT') return '明文凭据'
+  if (policy === 'PASSWORD_ENCRYPTED') return '密码加密凭据'
+  return '不含凭据'
+}
+function onDataSourceSelection(rows: AdminDataSource[]) {
+  selectedDataSources.value = rows
+}
+
+const selectedDataSourceNames = computed(() => selectedDataSources.value.map(row => row.displayName))
+
+function openExport() {
+  connectionExport.mode = 'OMIT'
+  connectionExport.plaintextConfirmed = false
+  connectionExport.reason = ''
+  connectionExport.visible = true
+}
+
+async function submitConnectionExport() {
+  if (!selectedDataSources.value.length) {
+    ElMessage.warning('请先选择需要导出的连接')
+    return
+  }
+  if (connectionExport.mode === 'PLAINTEXT' && !connectionExport.plaintextConfirmed) {
+    ElMessage.warning('请确认已了解明文凭据风险')
+    return
+  }
+  if (connectionExport.mode === 'PLAINTEXT') {
+    try {
+      await ElMessageBox.confirm(
+        '明文导出会把数据库凭据直接写入文件。提交后仍需审批，审批通过下载时还会再次确认。是否提交？',
+        '再次确认明文导出风险',
+        { type: 'error', confirmButtonText: '确认提交', cancelButtonText: '取消' },
+      )
+    } catch {
+      return
+    }
+  }
+  connectionExport.busy = true
+  try {
+    await entApi.adminRequestDataSourceExport({
+      dataSourceIds: selectedDataSources.value.map(row => row.id),
+      credentialMode: connectionExport.mode,
+      plaintextRiskConfirmed: connectionExport.mode === 'PLAINTEXT' && connectionExport.plaintextConfirmed,
+      reason: connectionExport.reason.trim() || undefined,
+    })
+    ElMessage.success('连接导出申请已提交，请前往审批中心查看进度')
+    connectionExport.visible = false
+  } catch (e: any) {
+    ElMessage.error(e.message || '提交连接导出申请失败')
+  } finally {
+    connectionExport.busy = false
+  }
+}
+
+function openImportFile() {
+  importFileInput.value?.click()
+}
+
+function onImportFile(event: Event) {
+  const inputElement = event.target as HTMLInputElement
+  const file = inputElement.files?.[0]
+  inputElement.value = ''
+  if (!file) return
+  if (file.size > 10 * 1024 * 1024) {
+    ElMessage.error('连接配置包不得超过 10 MiB')
+    return
+  }
+  resetConnectionImport()
+  connectionImport.file = file
+  connectionImport.visible = true
+}
+
+async function previewConnectionImport() {
+  if (!connectionImport.file) return
+  importPreviewController?.abort()
+  const controller = new AbortController()
+  importPreviewController = controller
+  const file = connectionImport.file
+  const password = connectionImport.password || undefined
+  connectionImport.previewing = true
+  connectionImport.error = ''
+  try {
+    const preview = await entApi.adminPreviewDataSourceImport(file, password, controller.signal)
+    if (importPreviewController !== controller) return
+    connectionImport.password = ''
+    connectionImport.preview = preview
+    for (const key of Object.keys(importChoices)) delete importChoices[key]
+    for (const item of preview.items) {
+      importChoices[item.entryKey] = {
+        action: item.conflict ? 'SKIP' : 'OVERWRITE',
+        renameTo: item.displayName,
+      }
+    }
+  } catch (e: any) {
+    if (importPreviewController === controller) {
+      connectionImport.error = controller.signal.aborted ? '已取消解析' : (e.message || '连接配置包解析失败')
+    }
+  } finally {
+    if (importPreviewController === controller) {
+      connectionImport.previewing = false
+      importPreviewController = null
+    }
+  }
+}
+
+function cancelImportPreview() {
+  importPreviewController?.abort()
+}
+
+async function applyConnectionImport() {
+  if (!connectionImport.preview) return
+  let decisions
+  try {
+    decisions = buildImportDecisions(connectionImport.preview.items, importChoices)
+  } catch {
+    ElMessage.warning('重命名导入时必须填写新连接名')
+    return
+  }
+  connectionImport.applying = true
+  try {
+    const result = await entApi.adminApplyDataSourceImport(connectionImport.preview.previewToken, decisions)
+    ElMessage.success(`导入完成：新增 ${result.created}，覆盖 ${result.overwritten}，跳过 ${result.skipped}`)
+    connectionImport.visible = false
+    await load()
+  } catch (e: any) {
+    connectionImport.error = e.message || '连接导入失败'
+  } finally {
+    connectionImport.applying = false
+  }
+}
+
+function resetConnectionImport() {
+  importPreviewController?.abort()
+  importPreviewController = null
+  connectionImport.file = null
+  connectionImport.password = ''
+  connectionImport.preview = null
+  connectionImport.previewing = false
+  connectionImport.applying = false
+  connectionImport.error = ''
+  for (const key of Object.keys(importChoices)) delete importChoices[key]
+}
 function summaryParams(p: any) {
   if (!p) return ''
   return Object.entries(p).map(([k, v]) => `${k}=${v}`).join(', ')
@@ -338,5 +628,14 @@ function fmt(d?: string) { return d ? new Date(d).toLocaleString() : '' }
 .page-title { margin-bottom: 12px; }
 .page-title h2 { font-size: 18px; margin: 0; }
 .page-sub { font-size: 12px; color: var(--color-text-muted); }
-.bar { margin-bottom: 10px; }
+.bar { margin-bottom: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bar :deep(.el-button + .el-button) { margin-left: 0; }
+.selection-count, .file-name { color: var(--color-text-muted); font-size: 12px; }
+.selected-list { max-height: 96px; overflow: auto; }
+.import-toolbar { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(220px, 1.5fr) auto auto; gap: 8px; align-items: center; margin-bottom: 12px; }
+.risk-confirm { margin-top: 12px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (max-width: 768px) {
+  .import-toolbar { grid-template-columns: 1fr; }
+}
 </style>

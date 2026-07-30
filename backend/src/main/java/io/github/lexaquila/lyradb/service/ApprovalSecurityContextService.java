@@ -78,6 +78,58 @@ public class ApprovalSecurityContextService {
         }
     }
 
+    public String fingerprintDataSources(String workspaceId, List<String> dataSourceIds) {
+        if (workspaceId == null || workspaceId.isBlank()
+                || dataSourceIds == null || dataSourceIds.isEmpty()
+                || dataSourceIds.size() > 100) {
+            throw new IllegalArgumentException("\u6570\u636e\u6e90\u6279\u6b21\u6307\u7eb9\u8bf7\u6c42\u65e0\u6548");
+        }
+        List<String> normalized = new ArrayList<>();
+        for (String id : dataSourceIds) {
+            if (id == null || id.isBlank() || id.length() > 36) {
+                throw new IllegalArgumentException("\u6570\u636e\u6e90 ID \u65e0\u6548");
+            }
+            String value = id.trim();
+            if (!normalized.contains(value)) {
+                normalized.add(value);
+            }
+        }
+        normalized.sort(String::compareTo);
+
+        Map<String, DataSource> sourcesById = new LinkedHashMap<>();
+        for (DataSource source : dataSourceRepository.findAllById(normalized)) {
+            if (!workspaceId.equals(source.getWorkspaceId())) {
+                throw new RuntimeException("\u6570\u636e\u6e90\u4e0d\u5c5e\u4e8e\u5f53\u524d\u5de5\u4f5c\u7a7a\u95f4");
+            }
+            sourcesById.put(source.getId(), source);
+        }
+        if (sourcesById.size() != normalized.size()) {
+            throw new RuntimeException("\u90e8\u5206\u6570\u636e\u6e90\u4e0d\u5b58\u5728\u6216\u65e0\u6743\u8bbf\u95ee");
+        }
+
+        List<Map<String, Object>> sources = new ArrayList<>(normalized.size());
+        for (String id : normalized) {
+            DataSource source = sourcesById.get(id);
+            Map<String, Object> value = new LinkedHashMap<>();
+            value.put("id", source.getId());
+            value.put("workspaceId", source.getWorkspaceId());
+            value.put("dbType", source.getDbType());
+            value.put("displayName", source.getDisplayName());
+            value.put("description", source.getDescription());
+            value.put("connectionParamsJson", source.getConnectionParamsJson());
+            sources.add(value);
+        }
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("dataSources", sources);
+        context.put("approvalPolicy", policyContext(workspaceId));
+        try {
+            byte[] canonical = objectMapper.writeValueAsBytes(context);
+            return hex(MessageDigest.getInstance("SHA-256").digest(canonical));
+        } catch (Exception exception) {
+            throw new IllegalStateException("\u65e0\u6cd5\u751f\u6210\u6570\u636e\u6e90\u5bfc\u51fa\u4e0a\u4e0b\u6587\u6307\u7eb9", exception);
+        }
+    }
+
     /**
      * 数据源安全配置变化时使待审批/已审批单失效；若已有外部执行正在进行则拒绝变更。
      */

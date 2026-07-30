@@ -22,7 +22,7 @@ public final class NativeDesktopApplication {
         String implementationVersion = NativeDesktopApplication.class
                 .getPackage().getImplementationVersion();
         return implementationVersion == null || implementationVersion.isBlank()
-                ? "3.0.1"
+                ? "3.1.0"
                 : implementationVersion;
     }
 
@@ -44,7 +44,7 @@ public final class NativeDesktopApplication {
                 new MainFrame(runtime).setVisible(true);
             } catch (Throwable throwable) {
                 JOptionPane.showMessageDialog(null,
-                        "LyraDB 原生桌面端启动失败：\n" + rootCause(throwable).getMessage(),
+                        "LyraDB 启动失败：\n" + rootCause(throwable).getMessage(),
                         "LyraDB 启动错误", JOptionPane.ERROR_MESSAGE);
                 System.exit(1);
             }

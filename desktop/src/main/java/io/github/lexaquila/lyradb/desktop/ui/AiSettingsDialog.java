@@ -30,7 +30,7 @@ import java.awt.Insets;
 import java.util.Arrays;
 
 /**
- * 个人版本地 AI Provider 配置。
+ * AI Provider 配置。
  */
 public final class AiSettingsDialog extends JDialog {
 
@@ -45,12 +45,12 @@ public final class AiSettingsDialog extends JDialog {
     private final JSpinner maxTokensSpinner =
             new JSpinner(new SpinnerNumberModel(4096, 256, 32768, 256));
     private final JLabel statusLabel =
-            new JLabel("API Key 将加密保存在本机，不进入企业服务");
+            new JLabel("请填写配置并测试连接");
     private boolean populating;
     private String selectedProviderKey;
 
     public AiSettingsDialog(JFrame owner, DesktopRuntime runtime) {
-        super(owner, "AI 服务设置 · 个人版", true);
+        super(owner, "AI 服务设置", true);
         this.runtime = runtime;
         setIconImage(LyraIcons.applicationImage());
         buildUi();
@@ -78,16 +78,13 @@ public final class AiSettingsDialog extends JDialog {
         JLabel title = new JLabel("AI 服务设置");
         title.setFont(NativeTheme.FONT_TITLE);
         title.setForeground(NativeTheme.FOREGROUND);
-        JLabel subtitle = new JLabel("配置个人版使用的模型服务，凭据仅保存在当前设备");
+        JLabel subtitle = new JLabel("配置服务商、模型与访问凭据");
         subtitle.setFont(NativeTheme.FONT_CAPTION);
         subtitle.setForeground(NativeTheme.MUTED);
         heading.add(title);
         heading.add(Box.createVerticalStrut(3));
         heading.add(subtitle);
         header.add(heading, BorderLayout.CENTER);
-        header.add(UiKit.badge("本地配置",
-                NativeTheme.SUCCESS, NativeTheme.SUCCESS_SOFT),
-                BorderLayout.EAST);
 
         JPanel form = new JPanel(new GridBagLayout());
         form.setOpaque(false);
@@ -110,16 +107,14 @@ public final class AiSettingsDialog extends JDialog {
                 BorderLayout.WEST);
         JLabel securityText = new JLabel("""
                 <html><body style='width:520px'>
-                API Key 使用 AES-256-GCM 加密后存放在本机。
-                远程地址默认必须使用 HTTPS；仅本机 Ollama 可使用
-                127.0.0.1 / localhost 的 HTTP。AI 输出永远不会被自动执行。
+                请妥善保管 API Key。AI 输出不会自动执行。
                 </body></html>
                 """);
         securityText.setFont(NativeTheme.FONT_CAPTION);
         securityText.setForeground(NativeTheme.MUTED);
         securityContent.add(securityText, BorderLayout.CENTER);
         JPanel securitySection = UiKit.section(
-                "安全边界", null, securityContent);
+                "安全提示", null, securityContent);
 
         JPanel content = new JPanel();
         content.setBackground(NativeTheme.BACKGROUND);
@@ -253,7 +248,7 @@ public final class AiSettingsDialog extends JDialog {
                 try {
                     get();
                     statusLabel.setForeground(NativeTheme.SUCCESS);
-                    statusLabel.setText("AI 连接成功，可以加密保存");
+                    statusLabel.setText("AI 连接成功，可以保存");
                 } catch (Exception exception) {
                     statusLabel.setForeground(NativeTheme.ERROR);
                     statusLabel.setText("AI 连接失败");
@@ -266,7 +261,7 @@ public final class AiSettingsDialog extends JDialog {
     private void save() {
         try {
             runtime.stateStore().saveAiProfile(collect());
-            JOptionPane.showMessageDialog(this, "AI 配置已在本机加密保存。");
+            JOptionPane.showMessageDialog(this, "AI 配置已保存。");
             dispose();
         } catch (Exception exception) {
             showError(exception);

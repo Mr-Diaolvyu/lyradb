@@ -6,7 +6,7 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 FRONTEND="$ROOT/frontend"
 BACKEND="$ROOT/backend"
 STATIC="$BACKEND/src/main/resources/static"
-VERSION="${1:-3.0.1}"
+VERSION="${1:-3.1.0}"
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "版本号必须使用 X.Y.Z 格式，实际：$VERSION" >&2

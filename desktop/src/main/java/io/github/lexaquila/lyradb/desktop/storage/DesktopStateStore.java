@@ -79,6 +79,52 @@ public final class DesktopStateStore {
         return connection.copy();
     }
 
+    /**
+     * 以一次状态文件替换批量新增或覆盖连接。
+     *
+     * <p>调用方必须先完成冲突预览与用户确认；本方法只按连接 ID 执行已解析的
+     * upsert。任一校验或持久化失败时恢复调用前的内存状态。</p>
+     */
+    public synchronized List<DesktopConnection> saveConnections(
+            List<DesktopConnection> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        List<DesktopConnection> prepared = new ArrayList<>();
+        Set<String> incomingIds = new java.util.HashSet<>();
+        for (DesktopConnection value : values) {
+            if (value == null) {
+                throw new IllegalArgumentException("连接配置不能为空");
+            }
+            DesktopConnection connection = value.copy();
+            validate(connection);
+            if (connection.getId() == null || connection.getId().isBlank()) {
+                connection.setId(UUID.randomUUID().toString());
+            }
+            if (!incomingIds.add(connection.getId())) {
+                throw new IllegalArgumentException("批量连接 ID 不能重复");
+            }
+            prepared.add(connection);
+        }
+
+        List<DesktopConnection> before =
+                connections.stream().map(DesktopConnection::copy).toList();
+        try {
+            for (DesktopConnection connection : prepared) {
+                connections.removeIf(existing ->
+                        existing.getId().equals(connection.getId()));
+                connections.add(connection);
+            }
+            persist();
+        } catch (RuntimeException exception) {
+            connections.clear();
+            connections.addAll(before.stream()
+                    .map(DesktopConnection::copy).toList());
+            throw exception;
+        }
+        return prepared.stream().map(DesktopConnection::copy).toList();
+    }
+
     public synchronized void deleteConnection(String id) {
         boolean removed = connections.removeIf(connection -> connection.getId().equals(id));
         if (removed) {
@@ -124,7 +170,10 @@ public final class DesktopStateStore {
                     connection.setDbType(stored.dbType);
                     connection.setGroup(stored.group);
                     connection.setFavorite(stored.favorite);
-                    connection.setParams(decryptParams(stored.params));
+                    Set<String> credentialKeys = stored.credentialKeys == null
+                            ? Set.of() : stored.credentialKeys;
+                    connection.setCredentialKeys(credentialKeys);
+                    connection.setParams(decryptParams(stored.params, credentialKeys));
                     validate(connection);
                     connections.add(connection);
                 }
@@ -155,7 +204,9 @@ public final class DesktopStateStore {
             stored.dbType = connection.getDbType();
             stored.group = connection.getGroup();
             stored.favorite = connection.isFavorite();
-            stored.params = encryptParams(connection.getParams());
+            stored.credentialKeys = connection.getCredentialKeys();
+            stored.params = encryptParams(
+                    connection.getParams(), stored.credentialKeys);
             return stored;
         }).toList();
         state.ai = new PersistedAiProfile();
@@ -188,13 +239,15 @@ public final class DesktopStateStore {
         }
     }
 
-    private Map<String, Object> encryptParams(Map<String, Object> params) {
+    private Map<String, Object> encryptParams(Map<String, Object> params,
+            Set<String> credentialKeys) {
         Map<String, Object> result = new LinkedHashMap<>();
         if (params == null) {
             return result;
         }
         params.forEach((key, value) -> {
-            if (isSensitive(key) && value != null && !value.toString().isBlank()) {
+            if (isSensitive(key, credentialKeys)
+                    && value != null && !value.toString().isBlank()) {
                 result.put(key, vault.encrypt(value.toString()));
             } else {
                 result.put(key, value);
@@ -203,13 +256,15 @@ public final class DesktopStateStore {
         return result;
     }
 
-    private Map<String, Object> decryptParams(Map<String, Object> params) {
+    private Map<String, Object> decryptParams(Map<String, Object> params,
+            Set<String> credentialKeys) {
         Map<String, Object> result = new LinkedHashMap<>();
         if (params == null) {
             return result;
         }
         params.forEach((key, value) -> {
-            if (isSensitive(key) && value != null && !value.toString().isBlank()) {
+            if (isSensitive(key, credentialKeys)
+                    && value != null && !value.toString().isBlank()) {
                 result.put(key, decryptSensitive(value.toString()));
             } else {
                 result.put(key, value);
@@ -232,9 +287,25 @@ public final class DesktopStateStore {
         return vault.decrypt(value);
     }
 
-    private static boolean isSensitive(String key) {
-        return key != null && SENSITIVE_FIELDS.contains(
-                key.replace("-", "").replace("_", "").toLowerCase(Locale.ROOT));
+    private static boolean isSensitive(
+            String key, Set<String> credentialKeys) {
+        String normalized = normalizeKey(key);
+        if (SENSITIVE_FIELDS.contains(normalized)) {
+            return true;
+        }
+        if (credentialKeys == null || credentialKeys.isEmpty()) {
+            return false;
+        }
+        return credentialKeys.stream()
+                .map(DesktopStateStore::normalizeKey)
+                .anyMatch(normalized::equals);
+    }
+
+    private static String normalizeKey(String key) {
+        return key == null ? ""
+                : key.replace("-", "")
+                        .replace("_", "")
+                        .toLowerCase(Locale.ROOT);
     }
 
     private static void validate(DesktopConnection connection) {
@@ -256,6 +327,7 @@ public final class DesktopStateStore {
         public String id;
         public String name;
         public String dbType;
+        public Set<String> credentialKeys = Set.of();
         public Map<String, Object> params = Map.of();
         public String group;
         public boolean favorite;

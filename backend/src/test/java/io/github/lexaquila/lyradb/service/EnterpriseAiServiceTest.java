@@ -1,8 +1,6 @@
 package io.github.lexaquila.lyradb.service;
 
-import io.github.lexaquila.lyradb.driver.DatabaseDriver;
-import io.github.lexaquila.lyradb.model.dto.ColumnMetadata;
-import io.github.lexaquila.lyradb.model.dto.TreeNode;
+import io.github.lexaquila.lyradb.model.entity.DataSource;
 import io.github.lexaquila.lyradb.model.entity.AiProviderConfig;
 import io.github.lexaquila.lyradb.model.entity.Grant;
 import io.github.lexaquila.lyradb.model.entity.User;
@@ -14,6 +12,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.access.AccessDeniedException;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -42,22 +41,22 @@ class EnterpriseAiServiceTest {
     @Mock
     private SecurityUtil securityUtil;
     @Mock
-    private DatabaseDriver driver;
-
+    private EnterpriseMetadataSnapshotService metadataSnapshotService;
+    @Mock
+    private AuditService auditService;
     private EnterpriseAiService service;
     private User user;
     private AiProviderConfig provider;
-    private ConnectionService.ActiveConnection active;
 
     @BeforeEach
     void setUp() {
         service = new EnterpriseAiService(aiProviderService, grantService,
-                dataSourceService, enterpriseQueryService, securityUtil);
+                dataSourceService, securityUtil, metadataSnapshotService,
+                auditService);
         user = new User();
         user.setId("user-1");
         provider = new AiProviderConfig();
         provider.setId("provider-1");
-        active = new ConnectionService.ActiveConnection(driver, new Object());
     }
 
     @Test
@@ -68,11 +67,22 @@ class EnterpriseAiServiceTest {
                 .thenReturn("没有足够的授权表结构，无法生成 SQL。");
 
         Map<String, Object> result = service.chat(
-                "workspace-1", "sales-source", "统计订单", List.of());
+                "workspace-1", "sales-source", "统计订单", List.of(), false, null);
 
         assertEquals(false, result.get("executed"));
         assertFalse(result.containsKey("error"));
-        verify(driver, never()).getTreeNodes(any(), any());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Map<String, String>>> messages =
+                ArgumentCaptor.forClass(List.class);
+        verify(aiProviderService).chat(eq(provider), messages.capture());
+        String prompt = messages.getValue().stream()
+                .map(item -> item.getOrDefault("content", ""))
+                .reduce("", (left, right) -> left + "\n" + right);
+        assertTrue(prompt.contains("当前用户消息中明确提供的表与列"));
+        assertFalse(prompt.contains("只能使用下面给出的表和列"));
+
+        verify(dataSourceService, never()).resolveActiveConnection(any());
+        verifyNoInteractions(metadataSnapshotService);
     }
 
     @Test
@@ -83,7 +93,7 @@ class EnterpriseAiServiceTest {
                 .thenReturn(grant);
 
         assertThrows(AccessDeniedException.class, () -> service.chat(
-                "workspace-1", "sales-source", "统计订单", List.of()));
+                "workspace-1", "sales-source", "统计订单", List.of(), false, null));
 
         verifyNoInteractions(aiProviderService, dataSourceService);
     }
@@ -92,19 +102,27 @@ class EnterpriseAiServiceTest {
     void schemaPromptContainsOnlyExplicitlyAuthorizedTables() throws Exception {
         Grant grant = grant("workspace-1", "sales.orders", "sales");
         prepare(grant);
-        Object connection = active.connection;
-        TreeNode schema = node("sales", "SCHEMA", "sales");
-        TreeNode orders = node("orders", "TABLE", "sales/orders");
-        TreeNode secrets = node("secrets", "TABLE", "sales/secrets");
-        when(driver.getTreeNodes(connection, null)).thenReturn(List.of(schema));
-        when(driver.getTreeNodes(connection, "sales"))
-                .thenReturn(List.of(orders, secrets));
-        when(driver.getTableColumns(connection, "sales", "orders"))
-                .thenReturn(List.of(column("id", "BIGINT")));
+        MetadataSnapshotSessionStore.SnapshotSession snapshot =
+                new MetadataSnapshotSessionStore.SnapshotSession(
+                        "snapshot-1", "user-1", "workspace-1",
+                        "grant-1", "source-1", "sales-source",
+                        "fingerprint",
+                        new MetadataSnapshotSessionStore.MapScope(
+                                null, List.of("sales"),
+                                List.of("sales.orders")),
+                        null, 1, 1, 50,
+                        LocalDateTime.now().plusMinutes(5), false);
+        when(metadataSnapshotService.consumeForAi(
+                "workspace-1", user, "snapshot-1")).thenReturn(snapshot);
+        when(metadataSnapshotService.renderForAi(snapshot))
+                .thenReturn("{\"tables\":[{\"table\":\"sales.orders\"}]}");
+        when(metadataSnapshotService.auditOf(snapshot)).thenReturn(
+                new EnterpriseMetadataSnapshotService.MetadataAudit(
+                        "snapshot-1", snapshot.scope(), "a".repeat(64)));
         when(aiProviderService.chat(eq(provider), any()))
                 .thenReturn("已识别授权结构，但未生成查询。");
 
-        service.chat("workspace-1", "sales-source", "统计订单", List.of());
+        service.chat("workspace-1", "sales-source", "统计订单", List.of(), true, "snapshot-1");
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<Map<String, String>>> messages =
@@ -115,8 +133,10 @@ class EnterpriseAiServiceTest {
                 .reduce("", (left, right) -> left + "\n" + right);
         assertTrue(prompt.contains("sales.orders"));
         assertFalse(prompt.contains("sales.secrets"));
-        verify(driver, never()).getTableColumns(
-                connection, "sales", "secrets");
+        verify(dataSourceService, never()).resolveActiveConnection(any());
+        verify(auditService).recordCurrentMetadata(
+                "workspace-1", "AI_METADATA_ATTACH", "source-1", "sales-source",
+                "snapshot-1", snapshot.scope(), "a".repeat(64));
     }
 
     @Test
@@ -128,10 +148,32 @@ class EnterpriseAiServiceTest {
                 .thenReturn("建议如下\n" + fence + "sql\nDROP TABLE users\n" + fence);
 
         Map<String, Object> result = service.chat(
-                "workspace-1", "sales-source", "删除用户表", List.of());
+                "workspace-1", "sales-source", "删除用户表", List.of(), false, null);
 
         assertEquals(false, result.get("executed"));
         assertEquals("AI 生成的 SQL 未通过安全校验", result.get("error"));
+        verify(enterpriseQueryService, never())
+                .executeQuery(any(), any(), any());
+    }
+
+    @Test
+    void readOnlySqlIsSuggestedButNeverAutomaticallyExecuted()
+            throws Exception {
+        Grant grant = grant(
+                "workspace-1", "sales.orders", "sales");
+        prepare(grant);
+        String fence = String.valueOf((char) 96).repeat(3);
+        when(aiProviderService.chat(eq(provider), any()))
+                .thenReturn("建议查询\n" + fence + "sql\n"
+                        + "SELECT * FROM sales.orders\n" + fence);
+
+        Map<String, Object> result = service.chat(
+                "workspace-1", "sales-source", "查询订单",
+                List.of(), false, null);
+
+        assertEquals(false, result.get("executed"));
+        assertEquals("SELECT * FROM sales.orders", result.get("sql"));
+        assertFalse(result.containsKey("result"));
         verify(enterpriseQueryService, never())
                 .executeQuery(any(), any(), any());
     }
@@ -142,13 +184,6 @@ class EnterpriseAiServiceTest {
                 "workspace-1", "sales.orders", "sales");
         grant.setSqlCapability("DML_ALLOWED");
         prepare(grant);
-        Object connection = active.connection;
-        TreeNode schema = node("sales", "SCHEMA", "sales");
-        TreeNode orders = node("orders", "TABLE", "sales/orders");
-        when(driver.getTreeNodes(connection, null)).thenReturn(List.of(schema));
-        when(driver.getTreeNodes(connection, "sales")).thenReturn(List.of(orders));
-        when(driver.getTableColumns(connection, "sales", "orders"))
-                .thenReturn(List.of(column("status", "VARCHAR")));
         String fence = String.valueOf((char) 96).repeat(3);
         when(aiProviderService.chat(eq(provider), any()))
                 .thenReturn("可执行更新\n" + fence + "sql\n"
@@ -156,7 +191,7 @@ class EnterpriseAiServiceTest {
                         + fence);
 
         Map<String, Object> result = service.chat(
-                "workspace-1", "sales-source", "完成新订单", List.of());
+                "workspace-1", "sales-source", "完成新订单", List.of(), false, null);
 
         assertEquals(true, result.get("needsApproval"));
         assertEquals(false, result.get("executed"));
@@ -170,8 +205,11 @@ class EnterpriseAiServiceTest {
                 .thenReturn(grant);
         when(aiProviderService.resolveDefault(grant.getWorkspaceId()))
                 .thenReturn(provider);
-        when(dataSourceService.resolveActiveConnection("source-1"))
-                .thenReturn(active);
+        DataSource source = new DataSource();
+        source.setWorkspaceId(grant.getWorkspaceId());
+        source.setDbType("H2");
+        when(dataSourceService.getEntity("source-1"))
+                .thenReturn(source);
     }
 
     private static Grant grant(
@@ -179,20 +217,11 @@ class EnterpriseAiServiceTest {
         Grant grant = new Grant();
         grant.setWorkspaceId(workspaceId);
         grant.setDataSourceId("source-1");
+        grant.setId("grant-1");
+        grant.setGrantedSourceName("sales-source");
         grant.setAllowedTables(allowedTables);
         grant.setAllowedSchemas(allowedSchemas);
         grant.setSqlCapability("READ_ONLY");
         return grant;
-    }
-
-    private static TreeNode node(String name, String type, String path) {
-        return TreeNode.of(path, name, type, path);
-    }
-
-    private static ColumnMetadata column(String name, String type) {
-        ColumnMetadata column = new ColumnMetadata();
-        column.setName(name);
-        column.setTypeName(type);
-        return column;
     }
 }

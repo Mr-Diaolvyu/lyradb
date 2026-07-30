@@ -1,6 +1,6 @@
 # BS 服务端打包：前端质量门禁 → 嵌入静态资源 → 后端测试与 fat jar。
 param(
-    [string]$Version = "3.0.1"
+    [string]$Version = "3.1.0"
 )
 
 $ErrorActionPreference = "Stop"

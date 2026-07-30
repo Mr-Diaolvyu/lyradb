@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -63,6 +64,14 @@ public class DataSourceService {
     /** 创建数据源（敏感字段加密入库） */
     public DataSource create(String workspaceId, String dbType, String displayName,
                              Map<String, Object> params, String description, String createdBy) {
+        return create(workspaceId, dbType, displayName, params,
+                description, createdBy, Set.of());
+    }
+
+    public DataSource create(String workspaceId, String dbType,
+            String displayName, Map<String, Object> params,
+            String description, String createdBy,
+            Set<String> declaredSensitiveFields) {
         DataSource ds = new DataSource();
         ds.setWorkspaceId(workspaceId);
         ds.setDbType(dbType != null ? dbType.toUpperCase() : null);
@@ -70,7 +79,8 @@ public class DataSourceService {
         ds.setDisplayName(displayName != null ? displayName : (info != null ? info.getDisplayName() : dbType));
         ds.setDescription(description);
         ds.setCreatedBy(createdBy);
-        Map<String, Object> enc = credentialService.encryptSensitiveFields(params);
+        Map<String, Object> enc = credentialService.encryptSensitiveFields(
+                params, declaredSensitiveFields);
         ds.setConnectionParamsJson(toJson(enc));
         return repository.save(ds);
     }
@@ -102,6 +112,14 @@ public class DataSourceService {
     @Transactional
     public synchronized DataSource update(String id, String displayName, String description,
                                           Map<String, Object> params) {
+        return update(id, displayName, description, params, Set.of());
+    }
+
+    @Transactional
+    public synchronized DataSource update(
+            String id, String displayName, String description,
+            Map<String, Object> params,
+            Set<String> declaredSensitiveFields) {
         DataSource ds = getEntity(id);
         if (params != null) {
             approvalSecurityContextService.invalidateForDataSource(ds.getWorkspaceId(), id);
@@ -117,11 +135,39 @@ public class DataSourceService {
                     merged.put(e.getKey(), e.getValue());
                 }
             }
-            ds.setConnectionParamsJson(toJson(credentialService.encryptSensitiveFields(merged)));
+            ds.setConnectionParamsJson(toJson(
+                    credentialService.encryptSensitiveFields(
+                            merged, declaredSensitiveFields)));
             // 参数变更后断开旧连接；事务完成时再次清理并发窗口中新建的旧配置连接。
             disconnect(id);
             disconnectAfterTransaction(id);
         }
+        return repository.save(ds);
+    }
+
+    /**
+     * 导入覆盖专用：以配置包内容完整替换连接参数。
+     *
+     * <p>与管理界面的掩码补丁更新不同，本方法不会保留包中缺失的旧字段；
+     * 因而 OMIT 包会明确清除目标连接原有凭据。</p>
+     */
+    @Transactional
+    public synchronized DataSource replaceImportedConfiguration(
+            String id, String displayName, String description,
+            Map<String, Object> params,
+            Set<String> declaredSensitiveFields) {
+        DataSource ds = getEntity(id);
+        approvalSecurityContextService.invalidateForDataSource(
+                ds.getWorkspaceId(), id);
+        ds.setDisplayName(displayName);
+        ds.setDescription(description);
+        Map<String, Object> replacement =
+                params == null ? Map.of() : new HashMap<>(params);
+        ds.setConnectionParamsJson(toJson(
+                credentialService.encryptSensitiveFields(
+                        replacement, declaredSensitiveFields)));
+        disconnect(id);
+        disconnectAfterTransaction(id);
         return repository.save(ds);
     }
 

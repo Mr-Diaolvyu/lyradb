@@ -25,9 +25,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 /**
@@ -213,6 +215,81 @@ class ApprovalServiceSecurityTest {
         verify(repository, never()).saveAndFlush(any());
     }
 
+    @Test
+    void approveRechecksExpiryAfterPessimisticLock() {
+        LocalDateTime beforeLock = LocalDateTime.of(
+                2026, 7, 30, 13, 0, 0);
+        ApprovalRequest approval = approvedRequest();
+        approval.setStatus("PENDING");
+        approval.setExpiresAt(beforeLock.plusSeconds(1));
+        when(repository.findByIdForUpdate("approval-1"))
+                .thenReturn(Optional.of(approval));
+        ApprovalService timed = spy(service);
+        doReturn(beforeLock, beforeLock.plusSeconds(2))
+                .when(timed).now();
+
+        RuntimeException exception = assertThrows(RuntimeException.class,
+                () -> timed.approve(
+                        "approval-1", "approver-1",
+                        "workspace-1", null));
+
+        assertTrue(exception.getMessage().contains("过期"));
+        assertEquals("PENDING", approval.getStatus());
+        verify(repository).expireByIdAndStatusBefore(
+                "approval-1", "PENDING", beforeLock);
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void rejectRechecksExpiryAfterPessimisticLock() {
+        LocalDateTime beforeLock = LocalDateTime.of(
+                2026, 7, 30, 13, 0, 0);
+        ApprovalRequest approval = approvedRequest();
+        approval.setStatus("PENDING");
+        approval.setExpiresAt(beforeLock.plusSeconds(1));
+        when(repository.findByIdForUpdate("approval-1"))
+                .thenReturn(Optional.of(approval));
+        ApprovalService timed = spy(service);
+        doReturn(beforeLock, beforeLock.plusSeconds(2))
+                .when(timed).now();
+
+        RuntimeException exception = assertThrows(RuntimeException.class,
+                () -> timed.reject(
+                        "approval-1", "approver-1",
+                        "workspace-1", null));
+
+        assertTrue(exception.getMessage().contains("过期"));
+        assertEquals("PENDING", approval.getStatus());
+        verify(repository).expireByIdAndStatusBefore(
+                "approval-1", "PENDING", beforeLock);
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void claimRechecksExpiryAfterWorkspaceAndApprovalLocks() {
+        LocalDateTime beforeLock = LocalDateTime.of(
+                2026, 7, 30, 13, 0, 0);
+        ApprovalRequest approval = approvedRequest();
+        approval.setExpiresAt(beforeLock.plusSeconds(1));
+        when(repository.findByIdForUpdate("approval-1"))
+                .thenReturn(Optional.of(approval));
+        ApprovalService timed = spy(service);
+        doReturn(beforeLock, beforeLock.plusSeconds(2))
+                .when(timed).now();
+
+        RuntimeException exception = assertThrows(RuntimeException.class,
+                () -> timed.claimForExecution(
+                        "approval-1", user("user-1", "alice"),
+                        grant("user-1", "workspace-1", "source-1", "sales"),
+                        "EXPORT", "select * from orders", "csv", "dw"));
+
+        assertTrue(exception.getMessage().contains("过期"));
+        assertEquals("APPROVED", approval.getStatus());
+        verify(repository).expireByIdAndStatusBefore(
+                "approval-1", "APPROVED", beforeLock);
+        verify(credentialService, never()).decryptValue(any());
+        verify(repository, never()).saveAndFlush(any());
+    }
     @Test
     void payloadRejectsUnknownFieldsAndUnsupportedFormat() {
         Grant grant = grant("user-1", "workspace-1", "source-1", "sales");

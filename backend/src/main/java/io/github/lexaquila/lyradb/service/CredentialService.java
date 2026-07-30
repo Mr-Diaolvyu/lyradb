@@ -76,12 +76,21 @@ public class CredentialService {
     }
 
     public Map<String, Object> encryptSensitiveFields(Map<String, Object> params) {
+        return encryptSensitiveFields(params, Set.of());
+    }
+
+    public Map<String, Object> encryptSensitiveFields(
+            Map<String, Object> params, Set<String> declaredSensitiveFields) {
         if (params == null) {
             return Map.of();
         }
+        Set<String> declared = normalizeDeclaredFields(
+                declaredSensitiveFields);
         Map<String, Object> encrypted = new java.util.HashMap<>(params);
         for (Map.Entry<String, Object> entry : encrypted.entrySet()) {
-            if (isSensitiveField(entry.getKey()) && entry.getValue() != null) {
+            if ((isSensitiveField(entry.getKey())
+                    || declared.contains(normalizeField(entry.getKey())))
+                    && entry.getValue() != null) {
                 String value = entry.getValue().toString();
                 if (!value.isEmpty() && !MASKED_VALUE.equals(value)) {
                     entry.setValue(encryptValue(value));
@@ -97,7 +106,8 @@ public class CredentialService {
         }
         Map<String, Object> decrypted = new java.util.HashMap<>(params);
         for (Map.Entry<String, Object> entry : decrypted.entrySet()) {
-            if (isSensitiveField(entry.getKey()) && entry.getValue() != null) {
+            if ((isSensitiveField(entry.getKey())
+                    || isEncryptedValue(entry.getValue())) && entry.getValue() != null) {
                 String value = entry.getValue().toString();
                 if (!value.isEmpty() && !MASKED_VALUE.equals(value)) {
                     entry.setValue(decryptValue(value));
@@ -113,7 +123,8 @@ public class CredentialService {
         }
         Map<String, Object> masked = new java.util.HashMap<>(params);
         for (Map.Entry<String, Object> entry : masked.entrySet()) {
-            if (isSensitiveField(entry.getKey()) && entry.getValue() != null
+            if ((isSensitiveField(entry.getKey())
+                    || isEncryptedValue(entry.getValue())) && entry.getValue() != null
                     && !entry.getValue().toString().isEmpty()) {
                 entry.setValue(MASKED_VALUE);
             }
@@ -192,6 +203,31 @@ public class CredentialService {
         }
         String lower = fieldName.toLowerCase(java.util.Locale.ROOT);
         return SENSITIVE_FIELDS.stream().anyMatch(lower::contains);
+    }
+
+    public boolean isEncryptedValue(Object value) {
+        if (!(value instanceof String text)) {
+            return false;
+        }
+        return text.startsWith(V2_PREFIX) || text.startsWith(V1_PREFIX);
+    }
+
+    private static Set<String> normalizeDeclaredFields(Set<String> fields) {
+        if (fields == null || fields.isEmpty()) {
+            return Set.of();
+        }
+        java.util.LinkedHashSet<String> normalized =
+                new java.util.LinkedHashSet<>();
+        for (String field : fields) {
+            if (field != null && !field.isBlank()) {
+                normalized.add(normalizeField(field));
+            }
+        }
+        return Set.copyOf(normalized);
+    }
+
+    private static String normalizeField(String field) {
+        return field.trim().toLowerCase(java.util.Locale.ROOT);
     }
 
     private String encryptV2(String plaintext) {

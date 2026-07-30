@@ -38,6 +38,7 @@ public class ApprovalService {
 
     private static final int APPROVAL_TTL_HOURS = 72;
     private static final int EXECUTE_WINDOW_HOURS = 24;
+    private static final int DATASOURCE_EXPORT_WINDOW_MINUTES = 15;
     private static final int EXECUTION_STALE_HOURS = 6;
     private static final int MAX_ACTIVE_PER_USER_WORKSPACE = 50;
     private static final int MAX_SQL_CHARS = 15_000;
@@ -169,12 +170,13 @@ public class ApprovalService {
 
     @Transactional
     public ApprovalRequest approve(String id, String approverId, String workspaceId, String comment) {
-        LocalDateTime now = LocalDateTime.now();
-        expirePendingBeforeLock(id, now);
+        LocalDateTime beforeLock = now();
+        expirePendingBeforeLock(id, beforeLock);
         ApprovalRequest approval = getForUpdate(id);
+        LocalDateTime lockedNow = now();
         requireWorkspace(approval, workspaceId);
         comment = boundedInput(comment, MAX_COMMENT_CHARS, "comment");
-        requirePendingAndNotExpired(approval, now);
+        requirePendingAndNotExpired(approval, lockedNow);
         if (approverId.equals(approval.getApplicantId())) {
             throw new RuntimeException("申请人不能审批自己的申请");
         }
@@ -194,7 +196,7 @@ public class ApprovalService {
             approval.setApproverComment(comment);
             if (approval.getApproverCount() >= 2) {
                 approval.setStatus("APPROVED");
-                approval.setExpiresAt(LocalDateTime.now().plusHours(EXECUTE_WINDOW_HOURS));
+                approval.setExpiresAt(executionDeadline(approval, lockedNow));
             }
         } else {
             approval.setStatus("APPROVED");
@@ -202,7 +204,7 @@ public class ApprovalService {
             approval.setApproverCount(1);
             approval.setApproverIds(approverId);
             approval.setApproverComment(comment);
-            approval.setExpiresAt(LocalDateTime.now().plusHours(EXECUTE_WINDOW_HOURS));
+            approval.setExpiresAt(executionDeadline(approval, lockedNow));
         }
         return repository.saveAndFlush(approval);
     }
@@ -210,11 +212,12 @@ public class ApprovalService {
     @Transactional
     public ApprovalRequest reject(String id, String approverId, String workspaceId, String comment) {
         comment = boundedInput(comment, MAX_COMMENT_CHARS, "comment");
-        LocalDateTime now = LocalDateTime.now();
-        expirePendingBeforeLock(id, now);
+        LocalDateTime beforeLock = now();
+        expirePendingBeforeLock(id, beforeLock);
         ApprovalRequest approval = getForUpdate(id);
         requireWorkspace(approval, workspaceId);
-        requirePendingAndNotExpired(approval, now);
+        LocalDateTime lockedNow = now();
+        requirePendingAndNotExpired(approval, lockedNow);
         if (approverId.equals(approval.getApplicantId())) {
             throw new RuntimeException("申请人不能驳回自己的申请");
         }
@@ -232,17 +235,18 @@ public class ApprovalService {
     public ApprovalRequest claimForExecution(String id, User applicant, Grant grant,
                                              String operationType, String sql,
                                              String format, String defaultDatabase) {
-        LocalDateTime now = LocalDateTime.now();
-        if (repository.expireByIdAndStatusBefore(id, "APPROVED", now) > 0) {
+        LocalDateTime beforeLock = now();
+        if (repository.expireByIdAndStatusBefore(id, "APPROVED", beforeLock) > 0) {
             throw new RuntimeException("审批单已过期");
         }
         securityContextService.lockWorkspace(grant.getWorkspaceId());
         ApprovalRequest approval = getForUpdate(id);
+        LocalDateTime lockedNow = now();
         String operation = normalizeOperation(operationType);
         if (!"APPROVED".equals(approval.getStatus())) {
             throw new RuntimeException("审批单不可执行，当前状态: " + approval.getStatus());
         }
-        if (approval.getExpiresAt() != null && !approval.getExpiresAt().isAfter(now)) {
+        if (approval.getExpiresAt() != null && !approval.getExpiresAt().isAfter(lockedNow)) {
             throw new RuntimeException("审批单已过期");
         }
         if (!applicant.getId().equals(approval.getApplicantId())
@@ -266,7 +270,7 @@ public class ApprovalService {
             throw new RuntimeException("审批后的数据源、授权或脱敏配置已变更，请重新申请");
         }
         approval.setStatus("EXECUTING");
-        approval.setExpiresAt(now.plusHours(EXECUTION_STALE_HOURS));
+        approval.setExpiresAt(lockedNow.plusHours(EXECUTION_STALE_HOURS));
         return repository.saveAndFlush(approval);
     }
 
@@ -339,6 +343,7 @@ public class ApprovalService {
         view.put("approverId", approval.getApproverId());
         view.put("approverCount", approval.getApproverCount());
         view.put("approverComment", approval.getApproverComment());
+        view.put("riskScore", approval.getRiskScore());
         view.put("expiresAt", approval.getExpiresAt());
         view.put("executedAt", approval.getExecutedAt());
         view.put("executionResult", approval.getExecutionResult());
@@ -451,6 +456,17 @@ public class ApprovalService {
                 .findFirstByApplicantIdAndWorkspaceIdAndGrantIdAndOperationTypeAndPayloadHashAndStatusOrderByCreatedAtDesc(
                         applicantId, grant.getWorkspaceId(), grant.getId(),
                         operation, payloadHash, "PENDING");
+    }
+
+    LocalDateTime now() {
+        return LocalDateTime.now();
+    }
+
+    private static LocalDateTime executionDeadline(
+            ApprovalRequest approval, LocalDateTime lockedNow) {
+        return "DATASOURCE_EXPORT".equals(approval.getOperationType())
+                ? lockedNow.plusMinutes(DATASOURCE_EXPORT_WINDOW_MINUTES)
+                : lockedNow.plusHours(EXECUTE_WINDOW_HOURS);
     }
 
     private static String boundedInput(

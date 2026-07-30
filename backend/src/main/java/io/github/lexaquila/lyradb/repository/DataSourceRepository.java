@@ -7,4 +7,6 @@ import java.util.List;
 
 public interface DataSourceRepository extends JpaRepository<DataSource, String> {
     List<DataSource> findByWorkspaceIdOrderByCreatedAtDesc(String workspaceId);
+    List<DataSource> findByWorkspaceIdAndDisplayNameIgnoreCase(
+            String workspaceId, String displayName);
 }
