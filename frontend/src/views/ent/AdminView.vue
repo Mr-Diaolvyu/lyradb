@@ -9,7 +9,8 @@
           <el-button type="primary" :icon="Plus" @click="dsCreate.visible = true">注册数据源</el-button>
           <el-button :icon="Download" :disabled="!selectedDataSources.length" @click="openExport">申请导出所选连接</el-button>
           <el-button :icon="Upload" @click="openImportFile">导入连接</el-button>
-          <input ref="importFileInput" class="sr-only" type="file" accept=".json,.lyradb" aria-label="选择连接配置包" @change="onImportFile" />
+          <el-button :icon="Download" @click="downloadImportTemplate">下载 Excel 模板</el-button>
+          <input ref="importFileInput" class="sr-only" type="file" accept=".json,.lyradb,.xlsx" aria-label="选择连接导入文件" @change="onImportFile" />
           <span v-if="selectedDataSources.length" class="selection-count">已选择 {{ selectedDataSources.length }} 项</span>
         </div>
         <el-table :data="dataSources" border size="small" empty-text="无" @selection-change="onDataSourceSelection">
@@ -243,7 +244,8 @@
           type="password"
           show-password
           clearable
-          placeholder="加密包密码（如需要，不会保存）"
+          :disabled="isExcelImport"
+          placeholder="加密 JSON 包密码（Excel 模板无需填写）"
           aria-label="连接包密码"
         />
         <el-button type="primary" :loading="connectionImport.previewing" :disabled="!connectionImport.file" @click="previewConnectionImport">解析并预览</el-button>
@@ -258,7 +260,7 @@
           show-icon
         />
 
-        <el-table :data="connectionImport.preview.items" border size="small" max-height="420" empty-text="配置包中没有可导入连接">
+        <el-table :data="connectionImport.preview.items" border size="small" max-height="420" empty-text="导入文件中没有可导入连接">
           <el-table-column prop="displayName" label="连接名" min-width="150" />
           <el-table-column prop="dbType" label="类型" width="100" />
           <el-table-column label="配置键" min-width="140" show-overflow-tooltip>
@@ -316,7 +318,13 @@ import {
   type ImportConflictAction,
   type MaskingRule,
 } from '@/api/ent'
-import { buildImportDecisions } from '@/utils/enterpriseTransfer'
+import {
+  buildImportDecisions,
+  CONNECTION_IMPORT_TEMPLATE_FILE_NAME,
+  isExcelConnectionImportFile,
+  isSupportedConnectionImportFile,
+} from '@/utils/enterpriseTransfer'
+import { saveBlob } from '@/utils/download'
 import { driverApi } from '@/api/driver'
 import type { DatabaseType } from '@/types/driver'
 
@@ -346,6 +354,9 @@ const connectionImport = reactive({
   applying: false,
   error: '',
 })
+const isExcelImport = computed(() =>
+  isExcelConnectionImportFile(connectionImport.file?.name),
+)
 const importChoices = reactive<Record<string, { action: ImportConflictAction; renameTo: string }>>({})
 let importPreviewController: AbortController | null = null
 
@@ -528,6 +539,16 @@ async function submitConnectionExport() {
   }
 }
 
+async function downloadImportTemplate() {
+  try {
+    const blob = await entApi.adminDownloadDataSourceImportTemplate()
+    await saveBlob(blob, CONNECTION_IMPORT_TEMPLATE_FILE_NAME)
+    ElMessage.success('Excel 连接导入模板已下载')
+  } catch (e: any) {
+    ElMessage.error(e.message || '模板下载失败')
+  }
+}
+
 function openImportFile() {
   importFileInput.value?.click()
 }
@@ -537,8 +558,12 @@ function onImportFile(event: Event) {
   const file = inputElement.files?.[0]
   inputElement.value = ''
   if (!file) return
+  if (!isSupportedConnectionImportFile(file.name)) {
+    ElMessage.error('请选择 .xlsx 或 LyraDB JSON 连接文件')
+    return
+  }
   if (file.size > 10 * 1024 * 1024) {
-    ElMessage.error('连接配置包不得超过 10 MiB')
+    ElMessage.error('连接导入文件不得超过 10 MiB')
     return
   }
   resetConnectionImport()
@@ -569,7 +594,7 @@ async function previewConnectionImport() {
     }
   } catch (e: any) {
     if (importPreviewController === controller) {
-      connectionImport.error = controller.signal.aborted ? '已取消解析' : (e.message || '连接配置包解析失败')
+      connectionImport.error = controller.signal.aborted ? '已取消解析' : (e.message || '连接导入文件解析失败')
     }
   } finally {
     if (importPreviewController === controller) {

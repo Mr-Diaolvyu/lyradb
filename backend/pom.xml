@@ -19,7 +19,7 @@
 
     <properties>
         <!-- CI 通过 -Drevision=<tag> 覆盖，作为后端包与桌面包的单一版本源。 -->
-        <revision>3.1.0</revision>
+        <revision>3.1.1</revision>
         <java.version>17</java.version>
         <maven-resolver.version>1.9.18</maven-resolver.version>
         <jasypt.version>3.0.5</jasypt.version>
@@ -141,13 +141,6 @@
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <optional>true</optional>
-        </dependency>
-
-        <!-- Apache POI (Excel 导出) -->
-        <dependency>
-            <groupId>org.apache.poi</groupId>
-            <artifactId>poi-ooxml</artifactId>
-            <version>5.2.5</version>
         </dependency>
 
         <!-- OpenCSV (for CSV export) -->

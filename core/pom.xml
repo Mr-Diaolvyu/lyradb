@@ -19,10 +19,11 @@
 
     <properties>
         <mongodb.driver.test.version>4.11.1</mongodb.driver.test.version>
-        <revision>3.1.0</revision>
+        <revision>3.1.1</revision>
         <java.version>17</java.version>
         <maven-resolver.version>1.9.18</maven-resolver.version>
         <jsqlparser.version>5.3</jsqlparser.version>
+        <poi.version>5.5.1</poi.version>
     </properties>
 
     <dependencies>
@@ -54,6 +55,11 @@
             <groupId>com.github.jsqlparser</groupId>
             <artifactId>jsqlparser</artifactId>
             <version>${jsqlparser.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>${poi.version}</version>
         </dependency>
 
         <dependency>

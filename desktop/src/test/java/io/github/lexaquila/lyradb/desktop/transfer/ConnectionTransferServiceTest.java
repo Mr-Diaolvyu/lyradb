@@ -7,9 +7,14 @@ import io.github.lexaquila.lyradb.transfer.connection.ConnectionPackageCodec;
 import io.github.lexaquila.lyradb.transfer.connection.ConnectionPackageEntry;
 import io.github.lexaquila.lyradb.transfer.connection.ConnectionPackageException;
 import io.github.lexaquila.lyradb.transfer.connection.CredentialExportPolicy;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -107,6 +112,49 @@ class ConnectionTransferServiceTest {
     }
 
     @Test
+    void shouldCreateAndImportFilledExcelTemplate() throws Exception {
+        byte[] template = service.createExcelTemplate();
+        Path savedTemplate = temporaryDirectory.resolve("connection-template.xlsx");
+        service.saveExcelTemplate(savedTemplate);
+        assertThat(savedTemplate).exists();
+        assertThat(Files.size(savedTemplate)).isGreaterThan(0);
+
+        byte[] filled;
+        try (XSSFWorkbook workbook = new XSSFWorkbook(
+                new ByteArrayInputStream(template));
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            Sheet sheet = workbook.getSheet("连接导入");
+            Row header = sheet.getRow(1);
+            Row row = sheet.createRow(2);
+            for (int index = 0; index < header.getLastCellNum(); index++) {
+                row.createCell(index);
+            }
+            row.getCell(column(header, "连接名称 *")).setCellValue("Excel MySQL");
+            row.getCell(column(header, "数据库类型 *")).setCellValue("MYSQL");
+            row.getCell(column(header, "主机地址")).setCellValue("127.0.0.1");
+            row.getCell(column(header, "端口")).setCellValue(3306);
+            row.getCell(column(header, "密码（明文）")).setCellValue("excel-secret");
+            workbook.write(output);
+            filled = output.toByteArray();
+        }
+        Path source = temporaryDirectory.resolve("connections.xlsx");
+        Files.write(source, filled);
+
+        ConnectionTransferService.ImportBundle imported =
+                service.read(source, new char[0]);
+
+        assertThat(imported.credentialPolicy())
+                .isEqualTo(CredentialExportPolicy.PLAINTEXT);
+        assertThat(imported.desktopConnections()).singleElement()
+                .satisfies(connection -> {
+                    assertThat(connection.getName()).isEqualTo("Excel MySQL");
+                    assertThat(connection.getParams())
+                            .containsEntry("host", "127.0.0.1")
+                            .containsEntry("port", 3306)
+                            .containsEntry("password", "excel-secret");
+                });
+    }
+    @Test
     void customCredentialClassificationMustSurviveImportPlanStoreAndExport()
             throws Exception {
         Map<String, Object> sourceParameters = new LinkedHashMap<>();
@@ -166,6 +214,14 @@ class ConnectionTransferServiceTest {
         }
     }
 
+    private static int column(Row header, String name) {
+        for (org.apache.poi.ss.usermodel.Cell cell : header) {
+            if (name.equals(cell.getStringCellValue())) {
+                return cell.getColumnIndex();
+            }
+        }
+        throw new IllegalArgumentException("缺少表头: " + name);
+    }
     private static DesktopConnection connection() {
         DesktopConnection connection = new DesktopConnection();
         connection.setId("connection-1");

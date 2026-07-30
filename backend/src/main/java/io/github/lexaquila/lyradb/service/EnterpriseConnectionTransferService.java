@@ -6,6 +6,7 @@ import io.github.lexaquila.lyradb.driver.DriverRegistry;
 import io.github.lexaquila.lyradb.model.entity.DataSource;
 import io.github.lexaquila.lyradb.model.entity.User;
 import io.github.lexaquila.lyradb.repository.DataSourceRepository;
+import io.github.lexaquila.lyradb.transfer.connection.ConnectionExcelTemplateCodec;
 import io.github.lexaquila.lyradb.transfer.connection.ConnectionPackageCodec;
 import io.github.lexaquila.lyradb.transfer.connection.ConnectionPackageEntry;
 import io.github.lexaquila.lyradb.transfer.connection.ConnectionPackageException;
@@ -45,6 +46,8 @@ public class EnterpriseConnectionTransferService {
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
     private final ConnectionPackageCodec codec = new ConnectionPackageCodec();
+    private final ConnectionExcelTemplateCodec excelCodec =
+            new ConnectionExcelTemplateCodec();
 
     public EnterpriseConnectionTransferService(
             DataSourceRepository dataSourceRepository,
@@ -108,6 +111,13 @@ public class EnterpriseConnectionTransferService {
                 "application/json;charset=UTF-8");
     }
 
+    public ExportFile createImportTemplate()
+            throws ConnectionPackageException {
+        return new ExportFile(excelCodec.createTemplate(),
+                ConnectionExcelTemplateCodec.FILE_NAME,
+                ConnectionExcelTemplateCodec.CONTENT_TYPE);
+    }
+
     public ImportPreview previewImport(
             String workspaceId, User owner, byte[] source,
             char[] packagePassword) throws ConnectionPackageException {
@@ -117,7 +127,9 @@ public class EnterpriseConnectionTransferService {
                     "连接配置包不能为空且不得超过 10 MiB");
         }
         ConnectionPackageReadResult parsed =
-                codec.read(source, packagePassword);
+                ConnectionExcelTemplateCodec.hasXlsxSignature(source)
+                        ? excelCodec.read(source)
+                        : codec.read(source, packagePassword);
         for (ConnectionPackageEntry entry : parsed.connections()) {
             if (driverRegistry.getDriverInfo(entry.dbType()) == null) {
                 throw new IllegalArgumentException(

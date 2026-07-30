@@ -1,9 +1,11 @@
 package io.github.lexaquila.lyradb.desktop.transfer;
 
 import io.github.lexaquila.lyradb.desktop.model.DesktopConnection;
+import io.github.lexaquila.lyradb.transfer.connection.ConnectionExcelTemplateCodec;
 import io.github.lexaquila.lyradb.transfer.connection.ConnectionPackageCodec;
 import io.github.lexaquila.lyradb.transfer.connection.ConnectionPackageEntry;
 import io.github.lexaquila.lyradb.transfer.connection.ConnectionPackageException;
+import io.github.lexaquila.lyradb.transfer.connection.ConnectionPackageLimits;
 import io.github.lexaquila.lyradb.transfer.connection.ConnectionPackageReadResult;
 import io.github.lexaquila.lyradb.transfer.connection.ConnectionPackageRisk;
 import io.github.lexaquila.lyradb.transfer.connection.CredentialExportPolicy;
@@ -29,6 +31,9 @@ import java.util.Set;
 public final class ConnectionTransferService {
 
     public static final String FILE_SUFFIX = ".lyradb-connections.json";
+    public static final String EXCEL_SUFFIX = ".xlsx";
+    public static final String EXCEL_TEMPLATE_FILE_NAME =
+            ConnectionExcelTemplateCodec.FILE_NAME;
 
     public record ImportedConnection(DesktopConnection connection,
                                      Set<String> credentialKeys) {
@@ -64,13 +69,21 @@ public final class ConnectionTransferService {
     }
 
     private final ConnectionPackageCodec codec;
+    private final ConnectionExcelTemplateCodec excelCodec;
 
     public ConnectionTransferService() {
-        this(new ConnectionPackageCodec());
+        this(new ConnectionPackageCodec(),
+                new ConnectionExcelTemplateCodec());
     }
 
     ConnectionTransferService(ConnectionPackageCodec codec) {
+        this(codec, new ConnectionExcelTemplateCodec());
+    }
+
+    ConnectionTransferService(ConnectionPackageCodec codec,
+            ConnectionExcelTemplateCodec excelCodec) {
         this.codec = java.util.Objects.requireNonNull(codec);
+        this.excelCodec = java.util.Objects.requireNonNull(excelCodec);
     }
 
     public byte[] encode(List<DesktopConnection> connections,
@@ -102,10 +115,47 @@ public final class ConnectionTransferService {
         }
     }
 
+    public byte[] createExcelTemplate() throws ConnectionPackageException {
+        return excelCodec.createTemplate();
+    }
+
+    public void saveExcelTemplate(Path target)
+            throws ConnectionPackageException, IOException {
+        byte[] content = createExcelTemplate();
+        try {
+            writeAtomically(target, content);
+        } finally {
+            java.util.Arrays.fill(content, (byte) 0);
+        }
+    }
+
     public ImportBundle read(Path source, char[] exportPassword)
             throws ConnectionPackageException {
         Path safe = requireReadableFile(source);
-        ConnectionPackageReadResult result = codec.read(safe, exportPassword);
+        ConnectionPackageReadResult result;
+        if (safe.getFileName().toString().toLowerCase(java.util.Locale.ROOT)
+                .endsWith(EXCEL_SUFFIX)) {
+            try {
+                if (Files.size(safe)
+                        > ConnectionPackageLimits.DEFAULT_MAX_FILE_BYTES) {
+                    throw new ConnectionPackageException(
+                            ConnectionPackageException.Code.FILE_TOO_LARGE,
+                            "Excel 导入文件超过允许大小");
+                }
+                byte[] content = Files.readAllBytes(safe);
+                try {
+                    result = excelCodec.read(content);
+                } finally {
+                    java.util.Arrays.fill(content, (byte) 0);
+                }
+            } catch (IOException exception) {
+                throw new ConnectionPackageException(
+                        ConnectionPackageException.Code.IO_ERROR,
+                        "无法读取 Excel 导入文件");
+            }
+        } else {
+            result = codec.read(safe, exportPassword);
+        }
         List<ImportedConnection> imported = new ArrayList<>();
         for (ConnectionPackageEntry entry : result.connections()) {
             DesktopConnection connection = new DesktopConnection();

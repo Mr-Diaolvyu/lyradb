@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { ApprovalRequest, ConnectionImportPreviewItem } from '@/api/ent'
 import {
     buildImportDecisions,
+    CONNECTION_IMPORT_TEMPLATE_FILE_NAME,
     formatMetadataPreview,
+    isExcelConnectionImportFile,
+    isSupportedConnectionImportFile,
     hasMetadataScope,
     normalizeMetadataSelection,
     parseDataSourceExportPayload,
@@ -125,5 +128,23 @@ describe('metadata helpers', () => {
     it('creates a safe deterministic download stem', () => {
         expect(safeDownloadStem(' Finance / Prod ')).toBe('Finance-Prod')
         expect(safeDownloadStem('中文')).toBe('lyradb')
+    })
+})
+describe('connection import file helpers', () => {
+    it('publishes the stable Excel template filename', () => {
+        expect(CONNECTION_IMPORT_TEMPLATE_FILE_NAME).toBe('LyraDB-连接导入模板.xlsx')
+    })
+
+    it('accepts supported import formats case-insensitively', () => {
+        expect(isSupportedConnectionImportFile('connections.xlsx')).toBe(true)
+        expect(isSupportedConnectionImportFile('connections.JSON')).toBe(true)
+        expect(isSupportedConnectionImportFile('connections.lyradb')).toBe(true)
+        expect(isSupportedConnectionImportFile('connections.csv')).toBe(false)
+    })
+
+    it('identifies Excel imports for password-field behavior', () => {
+        expect(isExcelConnectionImportFile('connections.XLSX')).toBe(true)
+        expect(isExcelConnectionImportFile('connections.json')).toBe(false)
+        expect(isExcelConnectionImportFile()).toBe(false)
     })
 })

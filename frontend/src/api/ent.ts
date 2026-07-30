@@ -275,6 +275,12 @@ export const entApi = {
             { responseType: 'blob' },
         )
     },
+    adminDownloadDataSourceImportTemplate(): Promise<Blob> {
+        return apiClient.get(
+            '/admin/datasources/imports/template',
+            { responseType: 'blob' },
+        )
+    },
     adminPreviewDataSourceImport(file: File, password?: string, signal?: AbortSignal): Promise<ConnectionImportPreview> {
         const body = new FormData()
         body.append('file', file)

@@ -5,7 +5,7 @@
 [![Java](https://img.shields.io/badge/Java-17-orange)]()
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.5-brightgreen)]()
 [![Vue](https://img.shields.io/badge/Vue-3.4-42b883)]()
-[![Version](https://img.shields.io/badge/version-3.1.0-334155)]()
+[![Version](https://img.shields.io/badge/version-3.1.1-334155)]()
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue)]()
 
 **简体中文** | [English](README.en.md)
@@ -30,7 +30,7 @@ LyraDB 支持 MySQL、PostgreSQL、Oracle、SQL Server、SQLite、ClickHouse、M
 | SQL 工作台 | 原生多标签编辑器、结果表格、限行、精确取消、CSV 导出 |
 | 安全执行 | UPDATE/DELETE 无 WHERE、DROP、TRUNCATE 等规则拦截；强制执行必须二次确认 |
 | 事务 | JDBC 手动事务、提交与回滚 |
-| 连接迁移 | 批量导入、导出连接配置；密码可选择不导出、口令加密或明文高风险导出 |
+| 连接迁移 | 批量导入、导出连接配置；可下载并填写 `.xlsx` 模板；密码可选择不导出、口令加密或明文高风险导出 |
 | 元数据 | 字段、主键、DDL 与 JDBC 外键 ER 图；可手动采集选中范围并保存 JSON / Markdown 快照 |
 | 动态驱动 | 首次使用时按需下载并隔离加载 9 类数据库驱动 |
 | AI 助手 | 生成、解释、修复、优化和安全审查 SQL；元数据先预览范围与 Token 估算，再由用户显式附加；永不自动执行 AI 输出 |
@@ -39,9 +39,11 @@ LyraDB 支持 MySQL、PostgreSQL、Oracle、SQL Server、SQLite、ClickHouse、M
 
 个人版 AI 设置入口位于菜单 `AI → Provider / API Key 设置`，或工具栏的 `AI 设置`。默认只允许 HTTPS Provider；只有 `localhost`、`127.0.0.1`、`::1` 可使用 HTTP 连接本地模型。
 
+连接导入模板可从个人版工具栏的 `Excel 模板` 或菜单 `文件/工具 → 下载 Excel 导入模板` 获取。模板包含填写示例、字段说明和 9 类数据库参数说明；Excel 中填写的密码与 Secret 为明文，请在导入后妥善删除文件。
+
 ## 企业版能力
 
-企业版保留 Vue 3 + Spring Boot B/S 架构，提供工作空间 RBAC、托管数据源、连接配置批量导入、审批后一次性导出、SQL 审批、脱敏、审计、定时报表、SSH 隧道和集中 AI Provider 管理。企业 AI 元数据同样采用手动采集、预览、显式附加和文档下载。生产模式没有默认管理员口令；企业空库首次启动必须提供：
+企业版保留 Vue 3 + Spring Boot B/S 架构，提供工作空间 RBAC、托管数据源、管理员下载 Excel 模板并批量导入连接配置、审批后一次性导出、SQL 审批、脱敏、审计、定时报表、SSH 隧道和集中 AI Provider 管理。企业 AI 元数据同样采用手动采集、预览、显式附加和文档下载。生产模式没有默认管理员口令；企业空库首次启动必须提供：
 
 - `LYRADB_BOOTSTRAP_ADMIN_USERNAME`
 - `LYRADB_BOOTSTRAP_ADMIN_PASSWORD`
@@ -52,7 +54,7 @@ LyraDB 支持 MySQL、PostgreSQL、Oracle、SQL Server、SQLite、ClickHouse、M
 
 ### Windows 个人版
 
-从 GitHub Release 下载 `LyraDB-3.1.0-windows-x64-portable.zip`，完整解压后运行：
+从 GitHub Release 下载 `LyraDB-3.1.1-windows-x64-portable.zip`，完整解压后运行：
 
 ```text
 LyraDB\LyraDB.exe
@@ -63,7 +65,7 @@ LyraDB\LyraDB.exe
 从源码构建需要带 `jpackage` 的 JDK 21 与 Maven：
 
 ```powershell
-.\package-desktop.ps1 -Version 3.1.0
+.\package-desktop.ps1 -Version 3.1.1
 ```
 
 脚本会运行 core/desktop 测试，生成原生 app-image，真实启动 EXE 并验证：
@@ -86,7 +88,7 @@ npm run dev
 ```bash
 # 仓库根目录
 mvn -B -ntp -pl backend -am clean package
-java -jar backend/target/lyradb-backend-3.1.0.jar
+java -jar backend/target/lyradb-backend-3.1.1.jar
 ```
 
 前端开发服务器默认位于 `http://localhost:5173`，并把 `/api` 代理到后端 `8080`。
@@ -140,10 +142,10 @@ lyradb/
 
 ```bash
 # 企业版服务端（包含 Vue 前端）
-bash package-server.sh 3.1.0
+bash package-server.sh 3.1.1
 
 # 个人版原生桌面
-bash package-desktop.sh 3.1.0
+bash package-desktop.sh 3.1.1
 ```
 
 Windows 使用同名 `.ps1` 脚本。服务端与桌面端是两条独立产物链，不会再互相包装。

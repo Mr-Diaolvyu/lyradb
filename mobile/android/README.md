@@ -1,6 +1,6 @@
 # LyraDB Android 外壳
 
-版本：`3.1.0`。这是 Kotlin + Android WebView 的企业 B/S 客户端，数据库访问与授权均由远端 LyraDB 服务端完成。
+版本：`3.1.1`。这是 Kotlin + Android WebView 的企业 B/S 客户端，数据库访问与授权均由远端 LyraDB 服务端完成。
 
 ## 已实现
 

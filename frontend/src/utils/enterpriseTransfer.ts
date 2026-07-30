@@ -18,6 +18,16 @@ export interface DataSourceExportPayload {
     plaintextRiskConfirmed: boolean
 }
 
+export const CONNECTION_IMPORT_TEMPLATE_FILE_NAME = 'LyraDB-连接导入模板.xlsx'
+
+export function isSupportedConnectionImportFile(fileName: string): boolean {
+    return /\.(xlsx|json|lyradb)$/i.test(fileName.trim())
+}
+
+export function isExcelConnectionImportFile(fileName?: string): boolean {
+    return fileName?.trim().toLowerCase().endsWith('.xlsx') === true
+}
+
 const CREDENTIAL_MODES: ReadonlySet<string> = new Set(['OMIT', 'PLAINTEXT', 'PASSWORD_ENCRYPTED'])
 
 export function parseDataSourceExportPayload(row: ApprovalRequest): DataSourceExportPayload | null {

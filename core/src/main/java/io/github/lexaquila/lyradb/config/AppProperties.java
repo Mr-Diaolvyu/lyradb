@@ -18,7 +18,7 @@ import org.springframework.validation.annotation.Validated;
 public class AppProperties {
 
     /** 应用版本。 */
-    private String version = "3.1.0";
+    private String version = "3.1.1";
 
     /** 驱动 JAR 缓存目录路径。 */
     private String driverCacheDir;

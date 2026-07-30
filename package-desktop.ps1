@@ -1,6 +1,6 @@
 # LyraDB 个人版原生桌面打包：core/desktop 测试 → jpackage → 独立架构扫描 → 原生冒烟 → zip。
 param(
-    [string]$Version = "3.1.0"
+    [string]$Version = "3.1.1"
 )
 
 $ErrorActionPreference = "Stop"

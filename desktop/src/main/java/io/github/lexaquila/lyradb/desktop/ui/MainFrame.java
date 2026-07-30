@@ -260,6 +260,8 @@ public final class MainFrame extends JFrame {
         toolbar.add(Box.createHorizontalStrut(5));
         toolbar.add(toolButton("导入连接", LyraIcons.Kind.DATABASE,
                 UiKit.ButtonStyle.TOOLBAR, this::importConnections));
+        toolbar.add(toolButton("Excel 模板", LyraIcons.Kind.EXPORT,
+                UiKit.ButtonStyle.TOOLBAR, this::downloadConnectionTemplate));
         toolbar.add(toolButton("导出连接", LyraIcons.Kind.EXPORT,
                 UiKit.ButtonStyle.TOOLBAR, this::exportConnections));
         toolbar.addSeparator();
@@ -292,6 +294,8 @@ public final class MainFrame extends JFrame {
                 KeyEvent.VK_L, InputEvent.CTRL_DOWN_MASK), this::openSqlWorkspace));
         file.addSeparator();
         file.add(item("导入连接配置…", null, this::importConnections));
+        file.add(item("下载 Excel 导入模板…", null,
+                this::downloadConnectionTemplate));
         file.add(item("导出全部连接配置…", null, this::exportConnections));
         file.addSeparator();
         file.add(item("退出", null, this::shutdown));
@@ -312,6 +316,8 @@ public final class MainFrame extends JFrame {
 
         JMenu tools = new JMenu("工具");
         tools.add(item("导入连接配置…", null, this::importConnections));
+        tools.add(item("下载 Excel 导入模板…", null,
+                this::downloadConnectionTemplate));
         tools.add(item("导出全部连接配置…", null, this::exportConnections));
         tools.addSeparator();
         tools.add(item("ER 关系图", null, this::openErDiagram));
@@ -397,8 +403,40 @@ public final class MainFrame extends JFrame {
                         + " 个连接：" + saved.getFileName()));
     }
 
+    private void downloadConnectionTemplate() {
+        JFileChooser chooser = excelTemplateFileChooser();
+        chooser.setSelectedFile(new java.io.File(
+                ConnectionTransferService.EXCEL_TEMPLATE_FILE_NAME));
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        Path target = withExcelSuffix(chooser.getSelectedFile().toPath());
+        if (Files.exists(target)) {
+            int overwrite = JOptionPane.showConfirmDialog(this,
+                    "文件已存在，是否覆盖？\n" + target,
+                    "确认覆盖", JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE);
+            if (overwrite != JOptionPane.YES_OPTION) {
+                return;
+            }
+        }
+        runAsync("正在生成 Excel 连接导入模板…",
+                () -> {
+                    connectionTransfer.saveExcelTemplate(target);
+                    return target;
+                },
+                saved -> {
+                    status("Excel 导入模板已保存：" + saved.getFileName());
+                    JOptionPane.showMessageDialog(this,
+                            "模板已保存：\n" + saved
+                                    + "\n\n密码和 Secret 列为明文，请妥善保管并在导入后删除文件。",
+                            "Excel 导入模板",
+                            JOptionPane.INFORMATION_MESSAGE);
+                });
+    }
+
     private void importConnections() {
-        JFileChooser chooser = connectionFileChooser();
+        JFileChooser chooser = connectionImportFileChooser();
         if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
@@ -523,12 +561,36 @@ public final class MainFrame extends JFrame {
         return chooser;
     }
 
+    private static JFileChooser connectionImportFileChooser() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setAcceptAllFileFilterUsed(false);
+        chooser.setFileFilter(new FileNameExtensionFilter(
+                "连接导入文件 (*.xlsx, *.json)", "xlsx", "json", "lyradb"));
+        return chooser;
+    }
+
+    private static JFileChooser excelTemplateFileChooser() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setAcceptAllFileFilterUsed(false);
+        chooser.setFileFilter(new FileNameExtensionFilter(
+                "Excel 工作簿 (*.xlsx)", "xlsx"));
+        return chooser;
+    }
+
     private static Path withConnectionSuffix(Path value) {
         String name = value.getFileName().toString();
         return name.toLowerCase(Locale.ROOT)
                 .endsWith(ConnectionTransferService.FILE_SUFFIX)
                 ? value : value.resolveSibling(
                 name + ConnectionTransferService.FILE_SUFFIX);
+    }
+
+    private static Path withExcelSuffix(Path value) {
+        String name = value.getFileName().toString();
+        return name.toLowerCase(Locale.ROOT)
+                .endsWith(ConnectionTransferService.EXCEL_SUFFIX)
+                ? value : value.resolveSibling(
+                name + ConnectionTransferService.EXCEL_SUFFIX);
     }
 
     private void refreshConnections() {

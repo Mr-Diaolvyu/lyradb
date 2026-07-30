@@ -13,6 +13,7 @@ import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -129,6 +130,33 @@ public class AdminDataSourceTransferController {
         }
     }
 
+    @GetMapping("/imports/template")
+    public ResponseEntity<byte[]> downloadImportTemplate(HttpSession session) {
+        securityUtil.requireRole("DS_ADMIN");
+        String workspaceId = securityUtil.requireCurrentWorkspace(session);
+        try {
+            EnterpriseConnectionTransferService.ExportFile file =
+                    transferService.createImportTemplate();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.parseMediaType(file.contentType()));
+            headers.setContentDisposition(ContentDisposition.attachment()
+                    .filename(file.fileName(), StandardCharsets.UTF_8)
+                    .build());
+            headers.set("X-Content-Type-Options", "nosniff");
+            headers.setCacheControl("no-store, private");
+            headers.setPragma("no-cache");
+            auditService.recordCurrent(workspaceId,
+                    "DATA_SOURCE_IMPORT_TEMPLATE_DOWNLOAD",
+                    null, null, true, null);
+            return ResponseEntity.ok().headers(headers).body(file.content());
+        } catch (ConnectionPackageException exception) {
+            auditService.recordCurrent(workspaceId,
+                    "DATA_SOURCE_IMPORT_TEMPLATE_DOWNLOAD",
+                    null, null, false, exception.getMessage());
+            throw new IllegalStateException(exception.getMessage(), exception);
+        }
+    }
+
     @PostMapping(
             value = "/imports/preview",
             consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -148,7 +176,7 @@ public class AdminDataSourceTransferController {
             if (file == null || file.isEmpty()
                     || file.getSize() > MAX_IMPORT_BYTES) {
                 throw new IllegalArgumentException(
-                        "连接配置包不能为空且不得超过 10 MiB");
+                        "连接导入文件不能为空且不得超过 10 MiB");
             }
             source = file.getBytes();
             EnterpriseConnectionTransferService.ImportPreview preview =
@@ -169,7 +197,7 @@ public class AdminDataSourceTransferController {
                     workspaceId, "DATA_SOURCE_IMPORT_PREVIEW",
                     null, null, false, "文件读取失败");
             throw new IllegalArgumentException(
-                    "无法读取连接配置包", exception);
+                    "无法读取连接导入文件", exception);
         } finally {
             Arrays.fill(safePassword, '\0');
             if (source != null) {

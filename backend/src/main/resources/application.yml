@@ -44,7 +44,7 @@ jasypt:
     iv-generator-classname: org.jasypt.iv.NoIvGenerator
 
 app:
-  version: ${LYRADB_VERSION:3.1.0}
+  version: ${LYRADB_VERSION:3.1.1}
   edition: ${LYRADB_EDITION:personal}
   driver-cache-dir: ${user.home}/.lyradb/drivers
   max-connections-per-db: 10

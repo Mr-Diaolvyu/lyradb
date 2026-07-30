@@ -1,6 +1,6 @@
 # LyraDB HarmonyOS 外壳
 
-版本：`3.1.0`。工程采用 ArkTS + ArkUI + ArkWeb，业务页面与权限规则来自远端 LyraDB 企业 B/S 服务端。
+版本：`3.1.1`。工程采用 ArkTS + ArkUI + ArkWeb，业务页面与权限规则来自远端 LyraDB 企业 B/S 服务端。
 
 ## 已实现
 
