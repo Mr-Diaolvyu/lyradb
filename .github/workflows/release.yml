@@ -300,7 +300,10 @@ jobs:
 
           $stage = [System.IO.Path]::GetFullPath("release-assets")
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
-          Copy-Item -LiteralPath $zip, $jar -Destination $stage
+          Copy-Item -LiteralPath $zip -Destination $stage
+          Copy-Item -LiteralPath $jar -Destination (
+            Join-Path $stage "LyraDB-Enterprise-Server-$version.jar"
+          )
           Copy-Item -Path "release-metadata/*.cdx.json" -Destination $stage
 
           $checksums = Get-ChildItem -LiteralPath $stage -File |
@@ -371,12 +374,25 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |
+            > [!IMPORTANT]
+            > **普通个人用户只需下载 `LyraDB-<版本>-windows-x64-portable.zip`。**
+            > 其他附件用于企业部署、安全审计或源码查看，无需全部下载。
+
+            | 附件 | 用途 |
+            | --- | --- |
+            | `LyraDB-<版本>-windows-x64-portable.zip` | Windows x64 原生桌面个人版 |
+            | `LyraDB-Enterprise-Server-<版本>.jar` | 企业版 B/S 服务端 |
+            | `lyradb-frontend-<版本>.cdx.json` | 企业前端 CycloneDX 安全清单 |
+            | `lyradb-java-<版本>.cdx.json` | Java/Core/后端 CycloneDX 安全清单 |
+            | `SHA256SUMS.txt` | 下载文件完整性校验 |
+            | `Source code (zip/tar.gz)` | GitHub 根据标签自动生成的源码包 |
+
             个人版：新增数据库连接批量导入/导出，凭据可选择不导出、口令加密或明确确认后明文导出。
             企业版：新增需审批的一次性数据源配置导出，以及管理员批量导入和冲突处理。
             AI：个人版与企业版均支持手动采集选定数据库结构、预览 Token 估算、一次性附加和 JSON/Markdown 文档导出。
             安全：连接包提供版本、资源上限、完整性校验与 AES-256-GCM 加密；不采集业务数据行。
           files: |
             release-assets/LyraDB-*-windows-x64-portable.zip
-            release-assets/lyradb-backend-*.jar
+            release-assets/LyraDB-Enterprise-Server-*.jar
             release-assets/lyradb-*.cdx.json
             release-assets/SHA256SUMS.txt
