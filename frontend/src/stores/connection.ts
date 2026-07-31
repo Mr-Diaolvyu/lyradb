@@ -16,6 +16,7 @@ export const useConnectionStore = defineStore('connection', () => {
     const dbTypes = ref<DatabaseType[]>([])
     const activeConnectionId = ref<string | null>(null)
     const loading = ref(false)
+    const lastConnectionMessage = ref('')
 
     // === Getters ===
     const activeConnection = computed(() =>
@@ -85,8 +86,10 @@ export const useConnectionStore = defineStore('connection', () => {
 
     /** 建立连接 */
     async function connect(id: string): Promise<boolean> {
+        lastConnectionMessage.value = ''
         try {
             const result = await connectionApi.connect(id)
+            lastConnectionMessage.value = result.message || (result.success ? '连接成功' : '数据库连接失败')
             if (result.success) {
                 const conn = connections.value.find(c => c.id === id)
                 if (conn) conn.status = 'CONNECTED'
@@ -96,7 +99,12 @@ export const useConnectionStore = defineStore('connection', () => {
                 await uiStore.loadCapabilities(id)
             }
             return result.success
-        } catch (e) {
+        } catch (e: any) {
+            lastConnectionMessage.value =
+                e?.response?.data?.message ||
+                e?.response?.data?.error ||
+                e?.message ||
+                '数据库连接失败'
             return false
         }
     }
@@ -153,6 +161,7 @@ export const useConnectionStore = defineStore('connection', () => {
         dbTypes,
         activeConnectionId,
         loading,
+        lastConnectionMessage,
         activeConnection,
         connectedConnections,
         loadConnections,

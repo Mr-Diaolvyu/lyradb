@@ -19,20 +19,52 @@ import java.util.Map;
  */
 public class GenericJdbcDriver extends AbstractJdbcDriver {
 
+    private static final int DEFAULT_CONNECT_TIMEOUT_SECONDS = 10;
+    private static final int MAX_CONNECT_TIMEOUT_SECONDS = 120;
+
     public GenericJdbcDriver(DriverInfo driverInfo, ClassLoader driverClassLoader) {
         super(driverInfo, driverClassLoader);
     }
 
     @Override
     protected void setExtraConnectionProperties(java.util.Properties props, Map<String, Object> params) {
-        // MySQL特殊处理：设置时区和字符编码
-        if ("MYSQL".equals(driverInfo.getDbType())) {
-            // URL模板中已包含参数，这里不需要额外设置
-        }
-        // PostgreSQL SSL特殊处理
-        if ("POSTGRESQL".equals(driverInfo.getDbType())) {
-            boolean ssl = getBooleanParam(params, "ssl", false);
-            props.setProperty("ssl", String.valueOf(ssl));
+        int timeoutSeconds = Math.max(1, Math.min(
+                getIntParam(params, "connectTimeoutSeconds",
+                        DEFAULT_CONNECT_TIMEOUT_SECONDS),
+                MAX_CONNECT_TIMEOUT_SECONDS));
+        String dbType = driverInfo.getDbType();
+        switch (dbType) {
+            case "MYSQL" -> {
+                props.setProperty("connectTimeout",
+                        String.valueOf(timeoutSeconds * 1_000));
+                props.setProperty("tcpKeepAlive", "true");
+                String sslMode = getStringParam(
+                        params, "sslMode", "PREFERRED");
+                props.setProperty("sslMode", sslMode);
+                props.setProperty("allowPublicKeyRetrieval", String.valueOf(
+                        getBooleanParam(params,
+                                "allowPublicKeyRetrieval", false)));
+                props.setProperty("rewriteBatchedStatements", "true");
+                if (!"DISABLED".equalsIgnoreCase(sslMode)) {
+                    props.setProperty(
+                            "enabledTLSProtocols", "TLSv1.2,TLSv1.3");
+                }
+            }
+            case "POSTGRESQL" -> {
+                props.setProperty("connectTimeout", String.valueOf(timeoutSeconds));
+                props.setProperty("ssl", String.valueOf(
+                        getBooleanParam(params, "ssl", false)));
+            }
+            case "MSSQL" -> {
+                props.setProperty("loginTimeout", String.valueOf(timeoutSeconds));
+                props.setProperty("trustServerCertificate", String.valueOf(
+                        getBooleanParam(params, "trustServerCertificate", false)));
+            }
+            case "ORACLE" -> props.setProperty(
+                    "oracle.net.CONNECT_TIMEOUT",
+                    String.valueOf(timeoutSeconds * 1_000));
+            default -> {
+            }
         }
     }
 }

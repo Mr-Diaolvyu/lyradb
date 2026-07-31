@@ -71,7 +71,8 @@ public class DriverRegistry {
      * 按dbType获取驱动信息
      */
     public DriverInfo getDriverInfo(String dbType) {
-        DriverInfo info = driverInfoMap.get(dbType.toUpperCase());
+        String normalized = normalizeDbType(dbType);
+        DriverInfo info = driverInfoMap.get(normalized);
         if (info == null) {
             throw new IllegalArgumentException("不支持的数据库类型: " + dbType);
         }
@@ -89,7 +90,7 @@ public class DriverRegistry {
      * 检查是否支持某种数据库
      */
     public boolean isSupported(String dbType) {
-        return driverInfoMap.containsKey(dbType.toUpperCase());
+        return driverInfoMap.containsKey(normalizeDbType(dbType));
     }
 
     /**
@@ -97,5 +98,14 @@ public class DriverRegistry {
      */
     public Set<String> getSupportedTypes() {
         return Collections.unmodifiableSet(driverInfoMap.keySet());
+    }
+
+    public static String normalizeDbType(String dbType) {
+        String normalized = Objects.requireNonNullElse(dbType, "")
+                .trim()
+                .toUpperCase(Locale.ROOT)
+                .replace("-", "")
+                .replace("_", "");
+        return "SQLSERVER".equals(normalized) ? "MSSQL" : normalized;
     }
 }

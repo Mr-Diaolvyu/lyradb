@@ -1,36 +1,48 @@
 package io.github.lexaquila.lyradb.desktop.ui;
 
 import com.formdev.flatlaf.FlatDarkLaf;
+import com.formdev.flatlaf.FlatLightLaf;
 
 import javax.swing.BorderFactory;
+import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import javax.swing.plaf.ColorUIResource;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.Insets;
+import java.awt.Window;
 
 /**
  * LyraDB 原生桌面设计系统。
  */
 public final class NativeTheme {
 
-    public static final Color BACKGROUND = new Color(15, 20, 29);
-    public static final Color SURFACE = new Color(23, 30, 42);
-    public static final Color SURFACE_ALT = new Color(31, 41, 55);
-    public static final Color SURFACE_HOVER = new Color(39, 51, 68);
-    public static final Color BORDER = new Color(51, 65, 85);
-    public static final Color BORDER_SOFT = new Color(40, 52, 70);
-    public static final Color FOREGROUND = new Color(229, 234, 242);
-    public static final Color MUTED = new Color(148, 163, 184);
-    public static final Color ACCENT = new Color(79, 140, 255);
-    public static final Color ACCENT_STRONG = new Color(43, 98, 202);
-    public static final Color ACCENT_LIGHT = new Color(137, 180, 255);
-    public static final Color ACCENT_SOFT = new Color(31, 55, 94);
-    public static final Color SUCCESS = new Color(52, 211, 153);
-    public static final Color SUCCESS_SOFT = new Color(20, 67, 59);
-    public static final Color WARNING = new Color(251, 191, 36);
-    public static final Color ERROR = new Color(248, 113, 113);
-    public static final Color ERROR_DARK = new Color(185, 52, 69);
+    public static final Color BACKGROUND = color(ThemePalette.Token.BACKGROUND);
+    public static final Color SURFACE = color(ThemePalette.Token.SURFACE);
+    public static final Color SURFACE_ALT = color(ThemePalette.Token.SURFACE_ALT);
+    public static final Color SURFACE_HOVER = color(ThemePalette.Token.SURFACE_HOVER);
+    public static final Color TABLE_ALT = color(ThemePalette.Token.TABLE_ALT);
+    public static final Color BORDER = color(ThemePalette.Token.BORDER);
+    public static final Color BORDER_SOFT = color(ThemePalette.Token.BORDER_SOFT);
+    public static final Color FOREGROUND = color(ThemePalette.Token.FOREGROUND);
+    public static final Color MUTED = color(ThemePalette.Token.MUTED);
+    public static final Color ACCENT = color(ThemePalette.Token.ACCENT);
+    public static final Color ACCENT_STRONG = color(ThemePalette.Token.ACCENT_STRONG);
+    public static final Color ACCENT_LIGHT = color(ThemePalette.Token.ACCENT_LIGHT);
+    public static final Color ACCENT_SOFT = color(ThemePalette.Token.ACCENT_SOFT);
+    public static final Color SUCCESS = color(ThemePalette.Token.SUCCESS);
+    public static final Color SUCCESS_SOFT = color(ThemePalette.Token.SUCCESS_SOFT);
+    public static final Color WARNING = color(ThemePalette.Token.WARNING);
+    public static final Color ERROR = color(ThemePalette.Token.ERROR);
+    public static final Color ERROR_DARK = color(ThemePalette.Token.ERROR_DARK);
+    public static final Color GLASS_SURFACE = color(ThemePalette.Token.GLASS_SURFACE);
+    public static final Color GLASS_HIGHLIGHT = color(ThemePalette.Token.GLASS_HIGHLIGHT);
+    public static final Color GLASS_BORDER = color(ThemePalette.Token.GLASS_BORDER);
+    public static final Color SHADOW = color(ThemePalette.Token.SHADOW);
+    public static final Color AURORA_PRIMARY = color(ThemePalette.Token.AURORA_PRIMARY);
+    public static final Color AURORA_SECONDARY = color(ThemePalette.Token.AURORA_SECONDARY);
+
+    private static volatile Mode currentMode = Mode.DARK;
 
     public static final Font FONT_HERO =
             new Font("Microsoft YaHei UI", Font.BOLD, 28);
@@ -47,6 +59,32 @@ public final class NativeTheme {
     public static final Font FONT_MONO =
             new Font(Font.MONOSPACED, Font.PLAIN, 13);
 
+    public enum Mode {
+        DARK("深色"),
+        LIGHT("浅色");
+
+        private final String displayName;
+
+        Mode(String displayName) {
+            this.displayName = displayName;
+        }
+
+        public String displayName() {
+            return displayName;
+        }
+
+        public static Mode from(String value) {
+            if (value == null || value.isBlank()) {
+                return DARK;
+            }
+            try {
+                return valueOf(value.trim().toUpperCase(java.util.Locale.ROOT));
+            } catch (IllegalArgumentException ignored) {
+                return DARK;
+            }
+        }
+    }
+
     private NativeTheme() {
     }
 
@@ -54,11 +92,20 @@ public final class NativeTheme {
      * 必须在创建任何 Swing 组件前调用。
      */
     public static void install() {
+        install(Mode.DARK);
+    }
+
+    public static void install(Mode mode) {
+        Mode selectedMode = mode == null ? Mode.DARK : mode;
+        Mode previousMode = currentMode;
+        ThemePalette.setMode(selectedMode);
         System.setProperty("flatlaf.useWindowDecorations", "true");
         System.setProperty("flatlaf.menuBarEmbedded", "true");
-        if (!FlatDarkLaf.setup()) {
+        if (!setupLookAndFeel(selectedMode)) {
+            ThemePalette.setMode(previousMode);
             throw new IllegalStateException("无法初始化 LyraDB 主题");
         }
+        currentMode = selectedMode;
 
         putColor("Panel.background", BACKGROUND);
         putColor("Viewport.background", BACKGROUND);
@@ -79,7 +126,7 @@ public final class NativeTheme {
         putColor("Button.foreground", FOREGROUND);
         putColor("Button.hoverBackground", SURFACE_HOVER);
         putColor("Button.pressedBackground", ACCENT_SOFT);
-        putColor("Button.default.background", ACCENT);
+        putColor("Button.default.background", ACCENT_STRONG);
         putColor("Button.default.foreground", Color.WHITE);
         UIManager.put("Button.arc", 8);
         UIManager.put("Button.margin", new Insets(7, 12, 7, 12));
@@ -114,11 +161,11 @@ public final class NativeTheme {
 
         putColor("List.background", SURFACE);
         putColor("List.foreground", FOREGROUND);
-        putColor("List.selectionBackground", ACCENT_SOFT);
+        putColor("List.selectionBackground", ACCENT_STRONG);
         putColor("List.selectionForeground", Color.WHITE);
         putColor("Tree.background", SURFACE);
         putColor("Tree.foreground", FOREGROUND);
-        putColor("Tree.selectionBackground", ACCENT_SOFT);
+        putColor("Tree.selectionBackground", ACCENT_STRONG);
         putColor("Tree.selectionForeground", Color.WHITE);
         putColor("Tree.selectionInactiveBackground", SURFACE_HOVER);
         UIManager.put("Tree.rowHeight", 28);
@@ -126,9 +173,9 @@ public final class NativeTheme {
 
         putColor("Table.background", SURFACE);
         putColor("Table.foreground", FOREGROUND);
-        putColor("Table.alternateRowColor", new Color(27, 36, 49));
+        putColor("Table.alternateRowColor", TABLE_ALT);
         putColor("Table.gridColor", BORDER_SOFT);
-        putColor("Table.selectionBackground", ACCENT_SOFT);
+        putColor("Table.selectionBackground", ACCENT_STRONG);
         putColor("Table.selectionForeground", Color.WHITE);
         putColor("TableHeader.background", SURFACE_ALT);
         putColor("TableHeader.foreground", FOREGROUND);
@@ -154,11 +201,11 @@ public final class NativeTheme {
         putColor("Menu.background", SURFACE);
         putColor("Menu.foreground", FOREGROUND);
         putColor("Menu.selectionBackground", SURFACE_HOVER);
-        putColor("Menu.selectionForeground", Color.WHITE);
+        putColor("Menu.selectionForeground", FOREGROUND);
         putColor("MenuItem.background", SURFACE);
         putColor("MenuItem.foreground", FOREGROUND);
         putColor("MenuItem.selectionBackground", SURFACE_HOVER);
-        putColor("MenuItem.selectionForeground", Color.WHITE);
+        putColor("MenuItem.selectionForeground", FOREGROUND);
         putColor("PopupMenu.background", SURFACE);
         putColor("PopupMenu.borderColor", BORDER);
 
@@ -200,6 +247,32 @@ public final class NativeTheme {
         UIManager.put("TitledBorder.font", FONT_CAPTION_BOLD);
         UIManager.put("ScrollPane.border",
                 BorderFactory.createLineBorder(BORDER_SOFT));
+    }
+
+    public static Mode mode() {
+        return currentMode;
+    }
+
+    /**
+     * 在事件分派线程中切换主题，并刷新所有已打开窗口。
+     */
+    public static void apply(Mode mode) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            throw new IllegalStateException("主题切换必须在 Swing 事件线程执行");
+        }
+        install(mode);
+        for (Window window : Window.getWindows()) {
+            SwingUtilities.updateComponentTreeUI(window);
+            window.repaint();
+        }
+    }
+
+    private static boolean setupLookAndFeel(Mode mode) {
+        return mode == Mode.LIGHT ? FlatLightLaf.setup() : FlatDarkLaf.setup();
+    }
+
+    private static Color color(ThemePalette.Token token) {
+        return ThemePalette.color(token);
     }
 
     private static void putColor(String key, Color color) {

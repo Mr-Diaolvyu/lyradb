@@ -73,4 +73,37 @@ class DesktopStateStoreTest {
                     .hasMessageContaining("未加密");
         }
     }
+
+    @Test
+    void shouldPersistThemeMode() throws Exception {
+        try (DesktopVault vault = new DesktopVault(tempDirectory)) {
+            DesktopStateStore store = new DesktopStateStore(tempDirectory, vault);
+            assertThat(store.getThemeMode()).isEqualTo("DARK");
+
+            store.saveThemeMode("light");
+
+            DesktopStateStore reopened = new DesktopStateStore(tempDirectory, vault);
+            assertThat(reopened.getThemeMode()).isEqualTo("LIGHT");
+            assertThat(Files.readString(tempDirectory.resolve("desktop-state.json")))
+                    .contains("\"themeMode\" : \"LIGHT\"");
+            assertThatThrownBy(() -> reopened.saveThemeMode("blue"))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void shouldDefaultLegacyStateToDarkTheme() throws Exception {
+        try (DesktopVault vault = new DesktopVault(tempDirectory)) {
+            Files.writeString(tempDirectory.resolve("desktop-state.json"), """
+                    {
+                      "formatVersion": 1,
+                      "connections": []
+                    }
+                    """);
+
+            DesktopStateStore store = new DesktopStateStore(tempDirectory, vault);
+
+            assertThat(store.getThemeMode()).isEqualTo("DARK");
+        }
+    }
 }

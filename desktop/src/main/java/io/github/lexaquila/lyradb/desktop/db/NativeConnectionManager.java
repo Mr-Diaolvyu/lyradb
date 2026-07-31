@@ -9,6 +9,7 @@ import io.github.lexaquila.lyradb.driver.StatementRegistry;
 import io.github.lexaquila.lyradb.model.dto.ColumnMetadata;
 import io.github.lexaquila.lyradb.model.dto.QueryResult;
 import io.github.lexaquila.lyradb.model.dto.SqlReviewFinding;
+import io.github.lexaquila.lyradb.model.dto.TableConstraintMetadata;
 import io.github.lexaquila.lyradb.model.dto.TreeNode;
 import io.github.lexaquila.lyradb.service.SqlParseUtil;
 import io.github.lexaquila.lyradb.service.SqlReviewService;
@@ -22,6 +23,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.regex.Pattern;
 
 /**
  * 原生客户端数据库会话管理器。
@@ -30,6 +32,12 @@ import java.util.concurrent.locks.ReentrantLock;
  * 避免目录切换、事务和并发语句互相污染。</p>
  */
 public final class NativeConnectionManager implements AutoCloseable {
+    private static final System.Logger LOGGER = System.getLogger(
+            NativeConnectionManager.class.getName());
+
+    private static final int MAX_LOG_DETAIL_LENGTH = 500;
+    private static final Pattern SENSITIVE_LOG_VALUE = Pattern.compile(
+            "(?i)(password|pwd|accesskeysecret|api[-_]?key|token|secret|passphrase)\\s*[=:]\\s*[^;\\s]+");
 
     private static final Set<String> REDIS_QUERY_COMMANDS = Set.of(
             "GET", "KEYS", "SCAN", "TYPE", "HGETALL", "LRANGE",
@@ -61,14 +69,21 @@ public final class NativeConnectionManager implements AutoCloseable {
     }
 
     public void test(DesktopConnection definition) throws Exception {
-        DatabaseDriver driver = driverFactory.createDriver(definition.getDbType());
-        Object connection = driver.connect(definition.getParams());
         try {
-            if (connection == null) {
-                throw new IllegalStateException("驱动未返回有效连接");
+            DatabaseDriver driver = driverFactory.createDriver(definition.getDbType());
+            Object connection = driver.connect(definition.getParams());
+            try {
+                if (connection == null) {
+                    throw new IllegalStateException("驱动未返回有效连接");
+                }
+            } finally {
+                driver.disconnect(connection);
             }
-        } finally {
-            driver.disconnect(connection);
+        } catch (Exception exception) {
+            LOGGER.log(System.Logger.Level.ERROR,
+                    "数据库连接测试失败: " + definition.getDbType()
+                            + " - " + failureSummary(exception));
+            throw exception;
         }
     }
 
@@ -77,14 +92,21 @@ public final class NativeConnectionManager implements AutoCloseable {
             return;
         }
         DesktopConnection definition = requireSaved(connectionId);
-        DatabaseDriver driver =
-                driverFactory.getOrCreateDriver(connectionId, definition.getDbType());
-        Object connection = driver.connect(definition.getParams());
-        if (connection == null) {
-            throw new IllegalStateException("驱动未返回有效连接");
+        try {
+            DatabaseDriver driver = driverFactory.getOrCreateDriver(
+                    connectionId, definition.getDbType());
+            Object connection = driver.connect(definition.getParams());
+            if (connection == null) {
+                throw new IllegalStateException("驱动未返回有效连接");
+            }
+            sessions.put(connectionId,
+                    new ActiveSession(definition.getDbType(), driver, connection));
+        } catch (Exception exception) {
+            LOGGER.log(System.Logger.Level.ERROR,
+                    "数据库连接失败: " + definition.getDbType()
+                            + " - " + failureSummary(exception));
+            throw exception;
         }
-        sessions.put(connectionId,
-                new ActiveSession(definition.getDbType(), driver, connection));
     }
 
     public synchronized void disconnect(String connectionId) {
@@ -106,11 +128,35 @@ public final class NativeConnectionManager implements AutoCloseable {
                 () -> session.driver.getTreeNodes(session.connection, parentPath));
     }
 
+    public List<TreeNode> search(
+            String connectionId, String query, int limit) throws Exception {
+        ActiveSession session = requireActive(connectionId);
+        return withLock(session, () -> session.driver.searchTreeNodes(
+                session.connection, query, limit));
+    }
+
     public List<ColumnMetadata> columns(String connectionId,
             String schemaName, String tableName) throws Exception {
         ActiveSession session = requireActive(connectionId);
         return withLock(session, () -> session.driver.getTableColumns(
                 session.connection, schemaName, tableName));
+    }
+
+    public List<TableConstraintMetadata> constraints(String connectionId,
+            String schemaName, String tableName) throws Exception {
+        ActiveSession session = requireActive(connectionId);
+        return withLock(session, () -> session.driver.getTableConstraints(
+                session.connection, schemaName, tableName));
+    }
+
+    public QueryResult previewTable(String connectionId,
+            String schemaName, String tableName, int requestedLimit)
+            throws Exception {
+        ActiveSession session = requireActive(connectionId);
+        int limit = Math.max(1, Math.min(
+                requestedLimit, properties.getMaxQueryRows()));
+        return withLock(session, () -> session.driver.previewTable(
+                session.connection, schemaName, tableName, limit));
     }
 
     public String ddl(String connectionId,
@@ -307,6 +353,20 @@ public final class NativeConnectionManager implements AutoCloseable {
         } finally {
             session.lock.unlock();
         }
+    }
+
+    private static String failureSummary(Throwable throwable) {
+        Throwable root = throwable;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        String detail = root.getClass().getSimpleName();
+        if (root.getMessage() != null && !root.getMessage().isBlank()) {
+            detail += ": " + root.getMessage();
+        }
+        detail = SENSITIVE_LOG_VALUE.matcher(detail).replaceAll("$1=***");
+        return detail.length() <= MAX_LOG_DETAIL_LENGTH
+                ? detail : detail.substring(0, MAX_LOG_DETAIL_LENGTH) + "…";
     }
 
     private static final class ActiveSession {

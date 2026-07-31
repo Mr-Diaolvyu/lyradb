@@ -3,6 +3,7 @@
 
 package io.github.lexaquila.lyradb.service;
 
+import io.github.lexaquila.lyradb.driver.ConnectionFailureAdvisor;
 import io.github.lexaquila.lyradb.driver.DatabaseDriver;
 import io.github.lexaquila.lyradb.driver.DriverFactory;
 import io.github.lexaquila.lyradb.driver.DriverRegistry;
@@ -185,16 +186,26 @@ public class DataSourceService {
     public Map<String, Object> test(String id) {
         DataSource ds = getEntity(id);
         Map<String, Object> result = new HashMap<>();
+        DatabaseDriver driver = null;
+        Object connection = null;
         try {
             Map<String, Object> params = credentialService.decryptSensitiveFields(parseParams(ds.getConnectionParamsJson()));
-            DatabaseDriver driver = driverFactory.createDriver(ds.getDbType());
-            boolean ok = driver.testConnection(params);
-            result.put("success", ok);
-            result.put("message", ok ? "连接成功" : "连接失败");
+            driver = driverFactory.createDriver(ds.getDbType());
+            connection = driver.connect(params);
+            if (connection == null) {
+                throw new IllegalStateException("驱动未返回有效连接");
+            }
+            result.put("success", true);
+            result.put("message", "连接成功");
         } catch (Exception e) {
-            log.warn("测试数据源连接失败: {} - {}", id, e.getMessage());
+            log.warn("测试数据源连接失败: {} - {}", id,
+                    e.getClass().getSimpleName());
             result.put("success", false);
-            result.put("message", "连接失败，请检查地址、网络和凭证");
+            result.put("message", ConnectionFailureAdvisor.message(ds.getDbType(), e));
+        } finally {
+            if (driver != null && connection != null) {
+                driver.disconnect(connection);
+            }
         }
         return result;
     }

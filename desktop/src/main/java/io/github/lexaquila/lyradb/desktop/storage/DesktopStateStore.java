@@ -40,6 +40,7 @@ public final class DesktopStateStore {
     private final ObjectMapper mapper;
     private final List<DesktopConnection> connections = new ArrayList<>();
     private AiProfile aiProfile = new AiProfile();
+    private String themeMode = "DARK";
 
     public DesktopStateStore(Path dataDirectory, DesktopVault vault) {
         this.stateFile = dataDirectory.toAbsolutePath().normalize().resolve("desktop-state.json");
@@ -147,6 +148,20 @@ public final class DesktopStateStore {
         persist();
     }
 
+    public synchronized String getThemeMode() {
+        return themeMode;
+    }
+
+    public synchronized void saveThemeMode(String value) {
+        String normalized = value == null
+                ? "" : value.trim().toUpperCase(Locale.ROOT);
+        if (!"DARK".equals(normalized) && !"LIGHT".equals(normalized)) {
+            throw new IllegalArgumentException("主题模式仅支持 DARK 或 LIGHT");
+        }
+        themeMode = normalized;
+        persist();
+    }
+
     private void load() {
         if (!Files.exists(stateFile, LinkOption.NOFOLLOW_LINKS)) {
             return;
@@ -161,6 +176,7 @@ public final class DesktopStateStore {
                 throw new IllegalStateException(
                         "不支持的桌面状态版本: " + persisted.formatVersion);
             }
+            themeMode = normalizeThemeMode(persisted.themeMode);
             connections.clear();
             if (persisted.connections != null) {
                 for (PersistedConnection stored : persisted.connections) {
@@ -197,6 +213,7 @@ public final class DesktopStateStore {
     private void persist() {
         PersistedState state = new PersistedState();
         state.formatVersion = FORMAT_VERSION;
+        state.themeMode = themeMode;
         state.connections = connections.stream().map(connection -> {
             PersistedConnection stored = new PersistedConnection();
             stored.id = connection.getId();
@@ -317,10 +334,19 @@ public final class DesktopStateStore {
         }
     }
 
+    private static String normalizeThemeMode(String value) {
+        if (value == null) {
+            return "DARK";
+        }
+        return "LIGHT".equals(value.trim().toUpperCase(Locale.ROOT))
+                ? "LIGHT" : "DARK";
+    }
+
     public static final class PersistedState {
         public int formatVersion;
         public List<PersistedConnection> connections = List.of();
         public PersistedAiProfile ai;
+        public String themeMode = "DARK";
     }
 
     public static final class PersistedConnection {

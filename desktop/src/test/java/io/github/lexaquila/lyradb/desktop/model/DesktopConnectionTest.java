@@ -26,4 +26,16 @@ class DesktopConnectionTest {
         assertThatThrownBy(() -> connection.getCredentialKeys().add("other"))
                 .isInstanceOf(UnsupportedOperationException.class);
     }
+
+    @Test
+    void sqlServerAliasesMustUseCanonicalMssqlType() {
+        DesktopConnection sqlServer = new DesktopConnection();
+        DesktopConnection underscored = new DesktopConnection();
+
+        sqlServer.setDbType("sqlserver");
+        underscored.setDbType("SQL_SERVER");
+
+        assertThat(sqlServer.getDbType()).isEqualTo("MSSQL");
+        assertThat(underscored.getDbType()).isEqualTo("MSSQL");
+    }
 }

@@ -2,7 +2,7 @@
  * 元数据和查询 API
  */
 import apiClient from './index'
-import type { TreeNode, ColumnMetadata, QueryResult, ExecuteUpdateResult, ExecuteQueryRequest, ErDiagram } from '@/types/metadata'
+import type { TreeNode, ColumnMetadata, QueryResult, ExecuteUpdateResult, ExecuteQueryRequest, ErDiagram, TableInspection } from '@/types/metadata'
 import type { DriverCapability } from '@/types/driver'
 
 export const metadataApi = {
@@ -24,6 +24,19 @@ export const metadataApi = {
         const params: any = { table }
         if (schema) params.schema = schema
         return apiClient.get(`/metadata/${connectionId}/ddl`, { params })
+    },
+
+    /** 一次加载表数据、字段、索引约束与 DDL；预览最多 200 行 */
+    inspectTable(
+        connectionId: string,
+        schema: string | null,
+        table: string,
+        objectType = 'TABLE',
+        limit = 200,
+    ): Promise<TableInspection> {
+        const params: any = { table, type: objectType, limit: Math.min(200, Math.max(1, limit)) }
+        if (schema) params.schema = schema
+        return apiClient.get(`/metadata/${connectionId}/inspect`, { params })
     },
 
     /** 获取数据库列表 */

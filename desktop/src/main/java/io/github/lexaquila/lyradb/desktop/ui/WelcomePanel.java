@@ -24,7 +24,7 @@ final class WelcomePanel extends JPanel {
     WelcomePanel(Runnable newConnection, Runnable openAiSettings,
             Runnable openAiAssistant) {
         super(new BorderLayout());
-        setBackground(NativeTheme.BACKGROUND);
+        setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(40, 36, 40, 36));
 
         JPanel content = new JPanel();
@@ -36,7 +36,7 @@ final class WelcomePanel extends JPanel {
         meta.setOpaque(false);
         meta.setAlignmentX(Component.LEFT_ALIGNMENT);
         meta.add(UiKit.badge("v" + NativeDesktopApplication.VERSION,
-                NativeTheme.ACCENT_LIGHT, NativeTheme.ACCENT_SOFT));
+                NativeTheme.FOREGROUND, NativeTheme.ACCENT_SOFT));
         content.add(meta);
         content.add(Box.createVerticalStrut(16));
 
@@ -68,23 +68,21 @@ final class WelcomePanel extends JPanel {
 
     private static JButton actionCard(String title, String description,
             LyraIcons.Kind icon, Runnable action, boolean primary) {
-        String color = primary ? "#FFFFFF" : "#E5EAF2";
-        String muted = primary ? "#EAF1FF" : "#94A3B8";
         JButton button = new JButton("""
                 <html><div style='width:150px'>
-                <b style='font-size:13px;color:%s'>%s</b><br>
-                <span style='font-size:11px;color:%s'>%s</span>
+                <b style='font-size:13px'>%s</b><br>
+                <span style='font-size:11px'>%s</span>
                 </div></html>
-                """.formatted(color, title, muted, description),
+                """.formatted(title, description),
                 LyraIcons.of(icon, 24,
                         primary ? Color.WHITE : NativeTheme.ACCENT_LIGHT));
         button.setHorizontalAlignment(JButton.LEFT);
         button.setIconTextGap(11);
         button.setMargin(new Insets(14, 13, 14, 13));
-        button.setBackground(primary ? NativeTheme.ACCENT_STRONG : NativeTheme.SURFACE);
+        button.setBackground(primary ? NativeTheme.ACCENT_STRONG : NativeTheme.SURFACE_ALT);
         button.setForeground(primary ? Color.WHITE : NativeTheme.FOREGROUND);
         button.setBorder(BorderFactory.createLineBorder(
-                primary ? NativeTheme.ACCENT_STRONG : NativeTheme.BORDER));
+                primary ? NativeTheme.ACCENT_STRONG : NativeTheme.GLASS_BORDER));
         button.putClientProperty("JButton.buttonType", "roundRect");
         button.putClientProperty("FlatLaf.style", "arc: 12");
         button.addActionListener(event -> action.run());

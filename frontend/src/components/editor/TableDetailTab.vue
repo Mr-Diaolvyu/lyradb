@@ -1,5 +1,14 @@
 <template>
   <div class="table-detail-tab" v-loading="loading">
+    <TableInspectionView
+      :inspection="tab.inspection"
+      :loading="loading"
+      :error="tab.error"
+      @refresh="refreshInspection"
+      @open-sql="openPreviewSql"
+    />
+
+    <template v-if="false">
     <template v-if="!loading && columns.length > 0">
       <!-- 表信息头部 + 操作按钮 -->
       <div class="detail-header">
@@ -124,6 +133,7 @@
     <div v-if="!loading && columns.length === 0" class="detail-empty">
       <el-empty description="无法获取表字段信息" :image-size="80" />
     </div>
+    </template>
   </div>
 </template>
 
@@ -134,6 +144,7 @@ import { ElMessage } from 'element-plus'
 import type { ColumnMetadata } from '@/types/metadata'
 import { useEditorStore, type TableDetailTab } from '@/stores/editor'
 import { saveBlob } from '@/utils/download'
+import TableInspectionView from '@/components/editor/TableInspectionView.vue'
 
 const props = defineProps<{
   tab: TableDetailTab
@@ -184,6 +195,16 @@ async function copyTableName() {
   } catch {
     ElMessage.error('复制失败')
   }
+}
+
+function refreshInspection() {
+  editorStore.refreshTableDetailTab(props.tab.id)
+}
+
+function openPreviewSql(sql: string) {
+  const tabId = editorStore.createTab(
+    connectionId.value, `SELECT: ${tableName.value}`)
+  editorStore.updateSql(tabId, sql)
 }
 
 function genSelect() {

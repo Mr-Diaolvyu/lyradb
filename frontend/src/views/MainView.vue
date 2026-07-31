@@ -1,5 +1,5 @@
 <template>
-  <div class="main-layout">
+  <div class="main-layout stellar-canvas">
     <!-- 顶部工具栏 -->
     <AppHeader />
 

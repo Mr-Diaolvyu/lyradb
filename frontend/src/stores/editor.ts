@@ -6,7 +6,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { queryApi, metadataApi } from '@/api/metadata'
-import type { QueryResult, ColumnMetadata, SqlReviewFinding } from '@/types/metadata'
+import type { QueryResult, ColumnMetadata, SqlReviewFinding, TableInspection } from '@/types/metadata'
 import type { BackgroundTask } from '@/types/task'
 import { useUiStore } from '@/stores/ui'
 import { useTaskStore } from '@/stores/tasks'
@@ -41,9 +41,12 @@ export interface TableDetailTab extends TabBase {
     type: 'table-detail'
     tableName: string
     schema: string | null
+    objectType: string
     columns: ColumnMetadata[]
     ddl: string
+    inspection: TableInspection | null
     loading: boolean
+    error: string | null
 }
 
 /** 联合 Tab 类型 */
@@ -92,7 +95,8 @@ export const useEditorStore = defineStore('editor', () => {
     async function createTableDetailTab(
         connectionId: string,
         tableName: string,
-        schema: string | null
+        schema: string | null,
+        objectType = 'TABLE',
     ): Promise<string> {
         // 检查是否已存在同表 Tab
         const existing = tabs.value.find(t =>
@@ -115,33 +119,51 @@ export const useEditorStore = defineStore('editor', () => {
             type: 'table-detail',
             tableName,
             schema,
+            objectType,
             columns: [],
             ddl: '',
+            inspection: null,
             loading: true,
+            error: null,
         }
         tabs.value.push(tab)
         activeTabId.value = id
 
-        // 异步加载列信息和 DDL
+        await refreshTableDetailTab(id)
+        return id
+    }
+
+    /** 刷新表工作台；请求代次保证关闭或重复刷新后旧响应不会回写。 */
+    async function refreshTableDetailTab(id: string): Promise<void> {
+        const tab = tabs.value.find(t => t.id === id)
+        if (!tab || tab.type !== 'table-detail') return
+        const version = requestGate.begin(id)
+        tab.loading = true
+        tab.error = null
         try {
-            const [columns, ddl] = await Promise.all([
-                metadataApi.getTableColumns(connectionId, schema, tableName),
-                metadataApi.getTableDDL(connectionId, schema, tableName).catch(() => ''),
-            ])
+            const inspection = await metadataApi.inspectTable(
+                tab.connectionId,
+                tab.schema,
+                tab.tableName,
+                tab.objectType,
+                200,
+            )
+            if (!requestGate.isCurrent(id, version)) return
             const targetTab = tabs.value.find(t => t.id === id) as TableDetailTab | undefined
             if (targetTab) {
-                targetTab.columns = columns
-                targetTab.ddl = ddl
+                targetTab.inspection = inspection
+                targetTab.columns = inspection.columns
+                targetTab.ddl = inspection.ddl
                 targetTab.loading = false
             }
         } catch (e: any) {
+            if (!requestGate.isCurrent(id, version)) return
             const targetTab = tabs.value.find(t => t.id === id) as TableDetailTab | undefined
             if (targetTab) {
                 targetTab.loading = false
+                targetTab.error = e.message || '表工作台加载失败'
             }
         }
-
-        return id
     }
 
     /** 关闭 Tab */
@@ -314,6 +336,7 @@ export const useEditorStore = defineStore('editor', () => {
         tabCount,
         createTab,
         createTableDetailTab,
+        refreshTableDetailTab,
         closeTab,
         updateSql,
         executeSql,

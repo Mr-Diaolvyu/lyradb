@@ -16,9 +16,10 @@ final class ConnectionTreeRenderer extends DefaultTreeCellRenderer {
     ConnectionTreeRenderer(DesktopRuntime runtime) {
         this.runtime = runtime;
         setBackgroundNonSelectionColor(NativeTheme.SURFACE);
-        setBackgroundSelectionColor(NativeTheme.ACCENT.darker());
+        setBackgroundSelectionColor(NativeTheme.ACCENT_SOFT);
         setTextNonSelectionColor(NativeTheme.FOREGROUND);
-        setTextSelectionColor(java.awt.Color.WHITE);
+        setTextSelectionColor(NativeTheme.FOREGROUND);
+        setBorderSelectionColor(NativeTheme.ACCENT);
     }
 
     @Override
@@ -32,33 +33,37 @@ final class ConnectionTreeRenderer extends DefaultTreeCellRenderer {
             if (item.connectionRoot) {
                 boolean connected =
                         runtime.connectionManager().isConnected(item.connectionId);
-                setText((connected ? "●  " : "○  ") + item);
+                setText(item.connection.getName() + "  ·  "
+                        + item.connection.getDbType());
+                setIcon(LyraIcons.databaseEngine(
+                        item.connection.getDbType(), 20, connected));
+                setOpenIcon(getIcon());
+                setClosedIcon(getIcon());
                 if (!selected) {
-                    setForeground(connected ? NativeTheme.SUCCESS : NativeTheme.MUTED);
+                    setForeground(connected
+                            ? NativeTheme.FOREGROUND : NativeTheme.MUTED);
                 }
-                setToolTipText(connected ? "已连接" : "未连接");
+                setToolTipText(item.connection.getDbType()
+                        + " · " + (connected ? "已连接" : "未连接"));
             } else if (item.node != null) {
-                setText(icon(item.node.getType()) + "  " + item.node.getName());
+                setText(item.node.getName());
+                setIcon(LyraIcons.treeNode(
+                        item.node.getType(), item.node.getProperties(), 16));
+                setOpenIcon(getIcon());
+                setClosedIcon(getIcon());
+                if (!selected) {
+                    setForeground(NativeTheme.FOREGROUND);
+                }
                 setToolTipText(item.node.getType() + " · " + item.node.getPath());
+            }
+        } else {
+            setIcon(null);
+            setOpenIcon(null);
+            setClosedIcon(null);
+            if (!selected) {
+                setForeground(NativeTheme.MUTED);
             }
         }
         return this;
-    }
-
-    private static String icon(String type) {
-        if (type == null) {
-            return "•";
-        }
-        return switch (type) {
-            case "DATABASE" -> "▣";
-            case "SCHEMA" -> "◇";
-            case "TABLE" -> "▦";
-            case "VIEW" -> "◫";
-            case "PROCEDURE", "FUNCTION" -> "ƒ";
-            case "TRIGGER" -> "⚡";
-            case "COLLECTION" -> "▤";
-            case "KEY" -> "🔑";
-            default -> "•";
-        };
     }
 }

@@ -2,6 +2,7 @@ package io.github.lexaquila.lyradb.driver;
 
 import io.github.lexaquila.lyradb.model.dto.ColumnMetadata;
 import io.github.lexaquila.lyradb.model.dto.QueryResult;
+import io.github.lexaquila.lyradb.model.dto.TableConstraintMetadata;
 import io.github.lexaquila.lyradb.model.dto.TreeNode;
 import io.github.lexaquila.lyradb.model.entity.DriverCapability;
 import io.github.lexaquila.lyradb.model.entity.DriverInfo;
@@ -84,6 +85,22 @@ public interface DatabaseDriver {
     List<TreeNode> getTreeNodes(Object connection, String parentPath) throws Exception;
 
     /**
+     * 按名称搜索数据库对象。
+     *
+     * <p>该接口面向未展开的元数据，不要求调用方先递归加载导航树。
+     * 默认实现返回空列表；支持全局元数据搜索的驱动应覆盖此方法。</p>
+     *
+     * @param connection 数据库连接
+     * @param query      数据库、Schema、表或视图名称片段
+     * @param limit      最大返回数量
+     * @return 与导航树路径兼容的对象节点
+     */
+    default List<TreeNode> searchTreeNodes(
+            Object connection, String query, int limit) throws Exception {
+        return List.of();
+    }
+
+    /**
      * 获取表结构元数据
      *
      * @param connection 数据库连接
@@ -92,6 +109,39 @@ public interface DatabaseDriver {
      * @return 列信息列表
      */
     List<ColumnMetadata> getTableColumns(Object connection, String schemaName, String tableName) throws Exception;
+
+    /**
+     * 获取表的主键、外键与索引信息。
+     *
+     * <p>NoSQL 或不支持该能力的驱动默认返回空列表。</p>
+     */
+    default List<TableConstraintMetadata> getTableConstraints(
+            Object connection, String schemaName, String tableName)
+            throws Exception {
+        return List.of();
+    }
+
+    /**
+     * 构建安全、带行数上限的表预览查询。
+     *
+     * <p>实现必须将命名空间和表名作为标识符转义，禁止直接拼接为裸 SQL。</p>
+     */
+    default String buildTablePreviewSql(
+            Object connection, String schemaName, String tableName, int limit)
+            throws Exception {
+        throw new UnsupportedOperationException("当前驱动不支持表数据预览");
+    }
+
+    /**
+     * 只读预览表数据。
+     */
+    default QueryResult previewTable(
+            Object connection, String schemaName, String tableName, int limit)
+            throws Exception {
+        String sql = buildTablePreviewSql(
+                connection, schemaName, tableName, limit);
+        return executeQuery(connection, sql, limit);
+    }
 
     /**
      * 执行查询SQL，返回结果

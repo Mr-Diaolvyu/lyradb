@@ -38,7 +38,7 @@ final class UiKit {
         JButton button = new JButton(text, icon);
         button.setIconTextGap(8);
         button.setMargin(style == ButtonStyle.TOOLBAR
-                ? new Insets(7, 10, 7, 10)
+                ? new Insets(7, 9, 7, 9)
                 : new Insets(8, 14, 8, 14));
         button.putClientProperty("JButton.buttonType",
                 style == ButtonStyle.TOOLBAR ? "toolBarButton" : "roundRect");
@@ -56,7 +56,7 @@ final class UiKit {
                 button.setForeground(NativeTheme.FOREGROUND);
             }
             case GHOST, TOOLBAR -> {
-                button.setBackground(NativeTheme.SURFACE);
+                button.setBackground(NativeTheme.BACKGROUND);
                 button.setForeground(NativeTheme.FOREGROUND);
             }
         }
@@ -73,15 +73,15 @@ final class UiKit {
     }
 
     static JPanel card(LayoutManager layout) {
-        JPanel panel = new JPanel(layout);
-        panel.setOpaque(true);
-        panel.setBackground(NativeTheme.SURFACE);
-        panel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(NativeTheme.BORDER),
-                BorderFactory.createEmptyBorder(16, 16, 16, 16)));
+        JPanel panel = glass(layout, 12);
+        panel.setBorder(BorderFactory.createEmptyBorder(16, 16, 17, 16));
         panel.putClientProperty("FlatLaf.style", "arc: 12");
         return panel;
     }
+    static JPanel glass(LayoutManager layout, int arc) {
+        return new GlassPanel(layout, arc);
+    }
+
 
     static JPanel section(String title, String subtitle, Component content) {
         JPanel panel = card(new BorderLayout(0, 12));

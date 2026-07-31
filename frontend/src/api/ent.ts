@@ -2,7 +2,7 @@
  * 企业治理 API（数据源/授权/查询/审批/审计/管理）
  */
 import apiClient from './index'
-import type { QueryResult } from '@/types/metadata'
+import type { QueryResult, TableInspection } from '@/types/metadata'
 
 export interface LogicalGrant {
     id: string
@@ -178,6 +178,19 @@ export const entApi = {
     // 企业查询
     query(grantedSourceName: string, sql: string, defaultDatabase?: string): Promise<QueryResult> {
         return apiClient.post('/ent/query', { grantedSourceName, sql, defaultDatabase })
+    },
+
+    inspectTable(
+        grantedSourceName: string,
+        schema: string,
+        table: string,
+        objectType = 'TABLE',
+        limit = 200,
+    ): Promise<TableInspection> {
+        return apiClient.post('/ent/table-inspection', {
+            grantedSourceName, schema, table, objectType,
+            limit: Math.min(200, Math.max(1, limit)),
+        })
     },
 
     // 企业导出（需已批准 approvalRequestId，返回 blob）

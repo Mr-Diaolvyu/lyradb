@@ -2,6 +2,7 @@ package io.github.lexaquila.lyradb.driver;
 
 import io.github.lexaquila.lyradb.model.dto.ColumnMetadata;
 import io.github.lexaquila.lyradb.model.dto.QueryResult;
+import io.github.lexaquila.lyradb.model.dto.TableConstraintMetadata;
 import io.github.lexaquila.lyradb.model.dto.TreeNode;
 import io.github.lexaquila.lyradb.model.entity.DriverCapability;
 import io.github.lexaquila.lyradb.model.entity.DriverInfo;
@@ -183,6 +184,221 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         }
 
         return getSchemaChildren(conn, parentPath);
+    }
+
+    @Override
+    public List<TreeNode> searchTreeNodes(
+            Object connection, String query, int limit) throws Exception {
+        if (!(connection instanceof Connection conn)) {
+            return List.of();
+        }
+        String keyword = query == null ? "" : query.trim();
+        if (keyword.isEmpty()) {
+            return List.of();
+        }
+
+        int safeLimit = Math.max(1, Math.min(limit, 200));
+        int collectionLimit = Math.min(800, Math.max(safeLimit * 4, safeLimit));
+        String normalized = keyword.toLowerCase(Locale.ROOT);
+        DatabaseMetaData metadata = conn.getMetaData();
+        Map<String, TreeNode> matches = new LinkedHashMap<>();
+
+        if (!"SQLITE".equalsIgnoreCase(driverInfo.getDbType())
+                && !"MAXCOMPUTE".equalsIgnoreCase(driverInfo.getDbType())) {
+            collectNamespaceMatches(
+                    metadata, normalized, collectionLimit, matches);
+        }
+        collectTableMatches(
+                metadata, keyword, normalized, collectionLimit, matches);
+
+        return matches.values().stream()
+                .sorted(Comparator
+                        .comparingInt((TreeNode node) ->
+                                matchRank(node.getName(), normalized))
+                        .thenComparingInt(node -> typeRank(node.getType()))
+                        .thenComparing(node -> node.getName()
+                                .toLowerCase(Locale.ROOT)))
+                .limit(safeLimit)
+                .toList();
+    }
+
+    private void collectNamespaceMatches(
+            DatabaseMetaData metadata,
+            String normalized,
+            int limit,
+            Map<String, TreeNode> matches) throws SQLException {
+        if (usesCatalogAsNamespace()) {
+            try (ResultSet catalogs = metadata.getCatalogs()) {
+                while (catalogs.next() && matches.size() < limit) {
+                    addNamespaceMatch(
+                            matches,
+                            catalogs.getString("TABLE_CAT"),
+                            "DATABASE",
+                            normalized);
+                }
+            }
+            if (isSqlServer() && matches.size() < limit) {
+                try (ResultSet schemas = metadata.getSchemas()) {
+                    while (schemas.next() && matches.size() < limit) {
+                        String schema = schemas.getString("TABLE_SCHEM");
+                        String catalog = schemas.getString("TABLE_CATALOG");
+                        if (schema == null || schema.isBlank()
+                                || !schema.toLowerCase(Locale.ROOT)
+                                        .contains(normalized)) {
+                            continue;
+                        }
+                        String path = joinPath(catalog, schema);
+                        TreeNode node = TreeNode.of(path, schema, "SCHEMA", path);
+                        node.setIconType("schema");
+                        node.setHasChildren(true);
+                        matches.putIfAbsent("SCHEMA:" + path, node);
+                    }
+                }
+            }
+            return;
+        }
+
+        try (ResultSet schemas = metadata.getSchemas()) {
+            while (schemas.next() && matches.size() < limit) {
+                addNamespaceMatch(
+                        matches,
+                        schemas.getString("TABLE_SCHEM"),
+                        "SCHEMA",
+                        normalized);
+            }
+        }
+    }
+
+    private static void addNamespaceMatch(
+            Map<String, TreeNode> matches,
+            String name,
+            String type,
+            String normalized) {
+        if (name == null || name.isBlank()
+                || !name.toLowerCase(Locale.ROOT).contains(normalized)) {
+            return;
+        }
+        TreeNode node = TreeNode.of(name, name, type, name);
+        node.setIconType(type.toLowerCase(Locale.ROOT));
+        node.setHasChildren(true);
+        matches.putIfAbsent(type + ":" + name, node);
+    }
+
+    private void collectTableMatches(
+            DatabaseMetaData metadata,
+            String keyword,
+            String normalized,
+            int limit,
+            Map<String, TreeNode> matches) throws SQLException {
+        String escape = metadata.getSearchStringEscape();
+        String pattern = "%" + escapeMetadataPattern(keyword, escape) + "%";
+        String[] tableTypes = capabilities.isSupportsViews()
+                ? new String[]{"TABLE", "VIEW"}
+                : new String[]{"TABLE"};
+        if (usesCatalogAsNamespace()) {
+            try (ResultSet catalogs = metadata.getCatalogs()) {
+                while (catalogs.next() && matches.size() < limit) {
+                    collectTableMatches(
+                            metadata,
+                            catalogs.getString("TABLE_CAT"),
+                            pattern,
+                            normalized,
+                            tableTypes,
+                            limit,
+                            matches);
+                }
+            }
+            return;
+        }
+        collectTableMatches(
+                metadata, null, pattern, normalized,
+                tableTypes, limit, matches);
+    }
+
+    private void collectTableMatches(
+            DatabaseMetaData metadata, String catalogFilter, String pattern,
+            String normalized, String[] tableTypes, int limit,
+            Map<String, TreeNode> matches) throws SQLException {
+        try (ResultSet tables = metadata.getTables(
+                catalogFilter, null, pattern, tableTypes)) {
+            while (tables.next() && matches.size() < limit) {
+                String name = tables.getString("TABLE_NAME");
+                if (name == null || name.isBlank()
+                        || !name.toLowerCase(Locale.ROOT).contains(normalized)) {
+                    continue;
+                }
+                String catalog = tables.getString("TABLE_CAT");
+                String schema = tables.getString("TABLE_SCHEM");
+                String rawType = tables.getString("TABLE_TYPE");
+                String type = rawType != null
+                        && rawType.toUpperCase(Locale.ROOT).contains("VIEW")
+                        ? "VIEW" : "TABLE";
+                String path = searchResultPath(catalog, schema, name);
+                TreeNode node = TreeNode.of(path, name, type, path);
+                node.setIconType(type.toLowerCase(Locale.ROOT));
+                node.setHasChildren(true);
+                if (catalog != null && !catalog.isBlank()) {
+                    node.getProperties().put("catalog", catalog);
+                }
+                if (schema != null && !schema.isBlank()) {
+                    node.getProperties().put("schema", schema);
+                }
+                matches.putIfAbsent(type + ":" + path, node);
+            }
+        }
+    }
+
+    private String searchResultPath(
+            String catalog, String schema, String table) {
+        if ("MAXCOMPUTE".equalsIgnoreCase(driverInfo.getDbType())) {
+            return table;
+        }
+        if (isSqlServer()) {
+            return joinPath(catalog, schema, table);
+        }
+        if (usesCatalogAsNamespace()) {
+            return joinPath(catalog, table);
+        }
+        return joinPath(schema, table);
+    }
+
+    private static String joinPath(String... parts) {
+        return Arrays.stream(parts)
+                .filter(part -> part != null && !part.isBlank())
+                .collect(java.util.stream.Collectors.joining("/"));
+    }
+
+    private static String escapeMetadataPattern(
+            String value, String escape) {
+        if (escape == null || escape.isEmpty()) {
+            return value;
+        }
+        return value
+                .replace(escape, escape + escape)
+                .replace("%", escape + "%")
+                .replace("_", escape + "_");
+    }
+
+    private static int matchRank(String name, String normalized) {
+        String candidate = name == null
+                ? "" : name.toLowerCase(Locale.ROOT);
+        if (candidate.equals(normalized)) {
+            return 0;
+        }
+        if (candidate.startsWith(normalized)) {
+            return 1;
+        }
+        return 2;
+    }
+
+    private static int typeRank(String type) {
+        return switch (type == null ? "" : type.toUpperCase(Locale.ROOT)) {
+            case "DATABASE" -> 0;
+            case "SCHEMA" -> 1;
+            case "TABLE" -> 2;
+            case "VIEW" -> 3;
+            default -> 4;
+        };
     }
 
     /** 元数据组路径后缀 */
@@ -496,6 +712,28 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
             deduped.putIfAbsent(col.getName(), col);
         }
         return new ArrayList<>(deduped.values());
+    }
+
+    @Override
+    public List<TableConstraintMetadata> getTableConstraints(
+            Object connection, String schemaName, String tableName)
+            throws Exception {
+        Connection conn = (Connection) connection;
+        return JdbcTableInspector.constraints(
+                conn,
+                metadataCatalog(schemaName),
+                metadataSchema(schemaName),
+                tableName);
+    }
+
+    @Override
+    public String buildTablePreviewSql(
+            Object connection, String schemaName, String tableName, int limit)
+            throws Exception {
+        Connection conn = (Connection) connection;
+        return JdbcTableInspector.previewSql(
+                conn, driverInfo.getDbType(),
+                schemaName, tableName, limit);
     }
 
     @Override

@@ -35,20 +35,53 @@ public final class NativeDesktopApplication {
             runSmokeTest(arguments);
             return;
         }
-        NativeTheme.install();
+        DesktopRuntime runtime = null;
+        try {
+            runtime = arguments.dataDirectory == null
+                    ? DesktopRuntime.openDefault()
+                    : DesktopRuntime.open(arguments.dataDirectory);
+            NativeTheme.install(NativeTheme.Mode.from(
+                    runtime.stateStore().getThemeMode()));
+        } catch (Throwable throwable) {
+            NativeTheme.install();
+            if (runtime != null) {
+                try {
+                    runtime.close();
+                } catch (Throwable closeFailure) {
+                    throwable.addSuppressed(closeFailure);
+                }
+            }
+            showStartupFailure(throwable);
+            return;
+        }
+
+        DesktopRuntime startedRuntime = runtime;
         SwingUtilities.invokeLater(() -> {
             try {
-                DesktopRuntime runtime = arguments.dataDirectory == null
-                        ? DesktopRuntime.openDefault()
-                        : DesktopRuntime.open(arguments.dataDirectory);
-                new MainFrame(runtime).setVisible(true);
+                new MainFrame(startedRuntime).setVisible(true);
             } catch (Throwable throwable) {
-                JOptionPane.showMessageDialog(null,
-                        "LyraDB 启动失败：\n" + rootCause(throwable).getMessage(),
-                        "LyraDB 启动错误", JOptionPane.ERROR_MESSAGE);
-                System.exit(1);
+                try {
+                    startedRuntime.close();
+                } catch (Throwable closeFailure) {
+                    throwable.addSuppressed(closeFailure);
+                }
+                showStartupFailure(throwable);
             }
         });
+    }
+
+    private static void showStartupFailure(Throwable throwable) {
+        Runnable show = () -> {
+            JOptionPane.showMessageDialog(null,
+                    "LyraDB 启动失败：\n" + rootCause(throwable).getMessage(),
+                    "LyraDB 启动错误", JOptionPane.ERROR_MESSAGE);
+            System.exit(1);
+        };
+        if (SwingUtilities.isEventDispatchThread()) {
+            show.run();
+        } else {
+            SwingUtilities.invokeLater(show);
+        }
     }
 
     private static void runSmokeTest(Arguments arguments) {

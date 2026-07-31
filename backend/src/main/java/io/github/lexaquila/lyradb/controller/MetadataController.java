@@ -1,6 +1,7 @@
 package io.github.lexaquila.lyradb.controller;
 
 import io.github.lexaquila.lyradb.model.dto.ColumnMetadata;
+import io.github.lexaquila.lyradb.model.dto.TableInspection;
 import io.github.lexaquila.lyradb.model.dto.TreeNode;
 import io.github.lexaquila.lyradb.model.entity.DriverCapability;
 import io.github.lexaquila.lyradb.service.MetadataService;
@@ -91,6 +92,29 @@ public class MetadataController {
             return ResponseEntity.ok(ddl);
         } catch (Exception e) {
             log.error("获取DDL失败: {} - {}", table, e.getMessage(), e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    /**
+     * 获取表工作台快照。预览最多 200 行，各区域可独立降级。
+     */
+    @GetMapping("/{connectionId}/inspect")
+    public ResponseEntity<TableInspection> inspectTable(
+            @PathVariable String connectionId,
+            @RequestParam(value = "schema", required = false) String schema,
+            @RequestParam("table") String table,
+            @RequestParam(value = "type", defaultValue = "TABLE") String type,
+            @RequestParam(value = "limit", defaultValue = "200") int limit) {
+        try {
+            return ResponseEntity.ok(metadataService.inspectTable(
+                    connectionId, schema, table, type, limit));
+        } catch (IllegalArgumentException exception) {
+            log.warn("表工作台参数无效: {}", exception.getMessage());
+            return ResponseEntity.badRequest().build();
+        } catch (Exception exception) {
+            log.error("加载表工作台失败: {} - {}",
+                    table, exception.getMessage(), exception);
             return ResponseEntity.internalServerError().build();
         }
     }

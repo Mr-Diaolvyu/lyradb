@@ -1,6 +1,7 @@
 package io.github.lexaquila.lyradb.service;
 
 import io.github.lexaquila.lyradb.config.AppProperties;
+import io.github.lexaquila.lyradb.driver.ConnectionFailureAdvisor;
 import io.github.lexaquila.lyradb.driver.DatabaseDriver;
 import io.github.lexaquila.lyradb.driver.DriverFactory;
 import io.github.lexaquila.lyradb.driver.DriverRegistry;
@@ -213,19 +214,25 @@ public class ConnectionService {
      */
     public Map<String, Object> testConnection(String dbType, Map<String, Object> params) {
         Map<String, Object> result = new HashMap<>();
+        DatabaseDriver driver = null;
+        Object connection = null;
         try {
-            DatabaseDriver driver = driverFactory.createDriver(dbType);
-            boolean success = driver.testConnection(params);
-            result.put("success", success);
-            if (success) {
-                result.put("message", "连接成功");
-            } else {
-                result.put("message", "连接失败");
+            driver = driverFactory.createDriver(dbType);
+            connection = driver.connect(params);
+            if (connection == null) {
+                throw new IllegalStateException("驱动未返回有效连接");
             }
+            result.put("success", true);
+            result.put("message", "连接成功");
         } catch (Exception e) {
-            log.error("测试连接失败: {} - {}", dbType, e.getMessage());
+            log.error("测试连接失败: {} - {}", dbType,
+                    e.getClass().getSimpleName());
             result.put("success", false);
-            result.put("message", "连接失败，请检查地址、网络和凭证");
+            result.put("message", ConnectionFailureAdvisor.message(dbType, e));
+        } finally {
+            if (driver != null && connection != null) {
+                driver.disconnect(connection);
+            }
         }
         return result;
     }
@@ -244,9 +251,11 @@ public class ConnectionService {
         }
 
         Object openedSshTunnel = null;
+        String dbType = null;
         try {
             ConnectionConfig config = repository.findById(connectionId)
                     .orElseThrow(() -> new RuntimeException("连接不存在: " + connectionId));
+            dbType = config.getDbType();
 
             Map<String, Object> params = parseParams(config.getConnectionParamsJson());
             params = credentialService.decryptSensitiveFields(params);
@@ -293,9 +302,10 @@ public class ConnectionService {
                     log.debug("清理失败连接的 SSH 隧道异常: {}", connectionId);
                 }
             }
-            log.error("连接失败: {} - {}", connectionId, e.getClass().getSimpleName(), e);
+            log.error("连接失败: {} - {}", connectionId,
+                    e.getClass().getSimpleName());
             result.put("success", false);
-            result.put("message", "连接失败，请检查地址、网络和凭证");
+            result.put("message", ConnectionFailureAdvisor.message(dbType, e));
         }
 
         return result;

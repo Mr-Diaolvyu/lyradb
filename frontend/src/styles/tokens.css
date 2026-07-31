@@ -1,82 +1,110 @@
 /**
- * 设计系统 - CSS变量定义
- * 基于 UI-UX设计指南.md 的设计规范
- * 风格：Micro-interactions（微交互）
+ * LyraDB 星空数据工作台设计令牌。
+ * 数据内容保持高对比和低干扰；星轨只用于画布与品牌区域。
  */
 
-/* === 亮色主题 === */
+/* === 亮色主题：冷白画布 + 石墨文字 + 天琴紫 === */
 :root[data-theme="light"] {
-    /* 主色 */
-    --color-primary: #1E3A5F;
+    --color-primary: #171923;
     --color-on-primary: #FFFFFF;
-    --color-secondary: #2563EB;
-    --color-accent: #059669;
+    --color-brand: #6F5BDC;
+    --color-secondary: #6F5BDC;
+    --color-accent: #0F845E;
 
-    /* 背景 */
-    --color-background: #F8FAFC;
-    --color-foreground: #0F172A;
-    --color-text-muted: #64748B;
-    --color-muted: #F1F3F5;
-    --color-border: #E4E7EB;
+    --color-background: #F5F6FA;
+    --color-canvas: #F8F9FC;
+    --color-foreground: #1B1D27;
+    --color-text-muted: #626B7D;
+    --color-muted: #EFF1F7;
+    --color-border: #D9DEE9;
+    --color-border-strong: #BBC3D3;
 
-    /* 语义色 */
-    --color-destructive: #DC2626;
-    --color-ring: #1E3A5F;
-    --color-success: #059669;
-    --color-warning: #D97706;
-    --color-info: #2563EB;
+    --color-destructive: #CD3A4E;
+    --color-ring: #6F5BDC;
+    --color-success: #0F845E;
+    --color-warning: #A3640A;
+    --color-info: #356FC2;
 
-    /* 面板色 */
     --color-panel: #FFFFFF;
-    --color-panel-header: #F8FAFC;
-    --color-panel-border: #E4E7EB;
-    --color-hover: #F1F5F9;
-    --color-active: #E0E7FF;
+    --color-panel-raised: #FFFFFF;
+    --color-panel-translucent: rgba(255, 255, 255, 0.84);
+    --color-panel-header: #F4F5F9;
+    --color-panel-border: #D9DEE9;
+    --color-hover: #EAEDF4;
+    --color-active: #EAE6FF;
 
-    /* 状态色 */
-    --color-connected: #059669;
-    --color-disconnected: #94A3B8;
-    --color-error: #DC2626;
+    --color-connected: #0F9668;
+    --color-disconnected: #929BAE;
+    --color-error: #CD3A4E;
 
-    /* 主操作色（按钮/选中态）：独立于顶栏品牌色，亮色沿用深海军蓝 */
-    --color-action: #1E3A5F;
-    --color-action-hover: #2C4F7C;
-    --shadow-overlay: 0 10px 30px rgba(15, 23, 42, 0.12);
+    --color-action: #6F5BDC;
+    --color-action-hover: #5B48CA;
+    --color-star: rgba(93, 76, 197, 0.22);
+    --color-constellation: rgba(111, 91, 220, 0.09);
+    --color-chart-grid: rgba(72, 80, 101, 0.14);
+    --color-chart-fill: rgba(111, 91, 220, 0.14);
+    --color-chart-1: #6F5BDC;
+    --color-chart-2: #2485A8;
+    --color-chart-3: #0F9668;
+    --color-chart-4: #D08B24;
+    --color-chart-5: #C44D75;
+    --color-chart-6: #4D72C4;
+    --color-chart-7: #7F5A3C;
+    --color-chart-8: #596275;
+    --shadow-overlay: 0 18px 48px rgba(30, 34, 48, 0.13);
+    --shadow-panel: 0 8px 28px rgba(34, 38, 54, 0.08);
 }
 
-/* === 暗色主题 === */
+/* === 暗色主题：近黑星幕 + 中性石墨面板 === */
 :root[data-theme="dark"] {
-    --color-primary: #1E293B;
-    --color-on-primary: #FFFFFF;
-    --color-secondary: #3B82F6;
-    --color-accent: #22C55E;
+    --color-primary: #111622;
+    --color-on-primary: #F2F0FF;
+    --color-brand: #9787FF;
+    --color-secondary: #9787FF;
+    --color-accent: #42D7A3;
 
-    --color-background: #0F172A;
-    --color-foreground: #F8FAFC;
-    --color-text-muted: #94A3B8;
-    --color-muted: #272F42;
-    --color-border: #475569;
+    --color-background: #090B12;
+    --color-canvas: #0C0F18;
+    --color-foreground: #E8EBF3;
+    --color-text-muted: #929CB1;
+    --color-muted: #181E2D;
+    --color-border: #303A50;
+    --color-border-strong: #46536E;
 
-    --color-destructive: #EF4444;
-    --color-ring: #60A5FA;
-    --color-success: #22C55E;
-    --color-warning: #FBBF24;
-    --color-info: #3B82F6;
+    --color-destructive: #FF6B7A;
+    --color-ring: #A99BFF;
+    --color-success: #42D7A3;
+    --color-warning: #F6C56C;
+    --color-info: #72A5E8;
 
-    --color-panel: #1E293B;
-    --color-panel-header: #272F42;
-    --color-panel-border: #475569;
-    --color-hover: #334155;
-    --color-active: #3730A3;
+    --color-panel: #111622;
+    --color-panel-raised: #171D2B;
+    --color-panel-translucent: rgba(17, 22, 34, 0.86);
+    --color-panel-header: #181E2D;
+    --color-panel-border: #303A50;
+    --color-hover: #20283A;
+    --color-active: #2B2451;
 
-    --color-connected: #22C55E;
-    --color-disconnected: #64748B;
-    --color-error: #EF4444;
+    --color-connected: #42D7A3;
+    --color-disconnected: #69748A;
+    --color-error: #FF6B7A;
 
-    /* A3 修正：暗色主操作色不再与面板同色，改用可辨识的品牌蓝 */
-    --color-action: #3B82F6;
-    --color-action-hover: #60A5FA;
-    --shadow-overlay: 0 10px 30px rgba(0, 0, 0, 0.5);
+    --color-action: #7D68F2;
+    --color-action-hover: #9787FF;
+    --color-star: rgba(226, 222, 255, 0.42);
+    --color-constellation: rgba(151, 135, 255, 0.10);
+    --color-chart-grid: rgba(146, 156, 177, 0.16);
+    --color-chart-fill: rgba(151, 135, 255, 0.16);
+    --color-chart-1: #9787FF;
+    --color-chart-2: #5FC0D8;
+    --color-chart-3: #42D7A3;
+    --color-chart-4: #F6C56C;
+    --color-chart-5: #F07FA1;
+    --color-chart-6: #79A9F2;
+    --color-chart-7: #C79A75;
+    --color-chart-8: #9CA6BA;
+    --shadow-overlay: 0 22px 60px rgba(0, 0, 0, 0.48);
+    --shadow-panel: 0 10px 36px rgba(0, 0, 0, 0.26);
 }
 
 /* === V6 强调色预设：仅替换主操作色系变量 === */

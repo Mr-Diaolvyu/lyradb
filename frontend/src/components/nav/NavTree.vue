@@ -5,7 +5,7 @@
       <el-input
         v-model="searchKeyword"
         size="small"
-        placeholder="搜索表名/视图名..."
+        placeholder="跨连接搜索数据库 / 模式 / 表"
         :prefix-icon="Search"
         clearable
         @input="handleSearchInput"
@@ -31,6 +31,7 @@
         >
           <span class="node-icon" :class="getIconClass(node)"><NavIcon :type="node.type" /></span>
           <span class="node-label">{{ node.name }}</span>
+          <span class="search-result-source">{{ node.properties?.__connectionName }}</span>
           <span class="search-result-path">{{ node.path }}</span>
         </div>
       </div>
@@ -60,12 +61,10 @@
           >
             <!-- 连接节点 -->
             <template v-if="data.treeNodeType === 'connection'">
-              <span class="node-icon connection-dot"
-                :class="data.status === 'CONNECTED' ? 'connected' : 'disconnected'"
-              ></span>
+              <DatabaseIcon :db-type="data.dbType" :size="24" :connected="data.status === 'CONNECTED'" />
               <el-icon v-if="data.favorite" class="favorite-star"><Star /></el-icon>
               <span class="node-label">{{ data.name }}</span>
-              <span class="node-type-badge" :class="`db-text-${data.dbType}`">{{ data.displayName }}</span>
+              <span class="node-type-badge">{{ data.displayName }}</span>
             </template>
             <!-- 树节点 -->
             <template v-else>
@@ -90,7 +89,7 @@
         class="disconnected-item"
         @click="handleConnect(conn)"
       >
-        <span class="node-icon connection-dot disconnected"></span>
+        <DatabaseIcon :db-type="conn.dbType" :size="24" :connected="false" />
         <el-icon v-if="conn.favorite" class="favorite-star"><Star /></el-icon>
         <span class="node-label">{{ conn.name }}</span>
         <el-button
@@ -149,6 +148,7 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ImportDialog from '@/components/editor/ImportDialog.vue'
 import NavIcon from '@/components/nav/NavIcon.vue'
+import DatabaseIcon from '@/components/common/DatabaseIcon.vue'
 import type Node from 'element-plus/es/components/tree/src/model/node'
 import { useConnectionStore } from '@/stores/connection'
 import { useUiStore } from '@/stores/ui'
@@ -182,15 +182,39 @@ function handleSearchInput() {
 }
 
 async function doSearch(keyword: string) {
-  const connId = connectionStore.activeConnectionId
-  if (!connId) {
+  const targets = connectionStore.connectedConnections
+  if (!targets.length) {
     searchResults.value = []
     return
   }
   searchLoading.value = true
   try {
-    searchResults.value = await metadataApi.searchNodes(connId, keyword)
-  } catch (e: any) {
+    const groups = await Promise.all(targets.map(async (conn) => {
+      try {
+        const nodes = await metadataApi.searchNodes(conn.id, keyword)
+        return nodes.map(node => ({
+          ...node,
+          id: `${conn.id}:${node.id}`,
+          properties: {
+            ...(node.properties || {}),
+            __connectionId: conn.id,
+            __connectionName: conn.name,
+          },
+        }))
+      } catch {
+        return [] as TreeNode[]
+      }
+    }))
+    const normalized = keyword.toLocaleLowerCase()
+    searchResults.value = groups.flat()
+      .sort((a, b) => {
+        const aName = a.name.toLocaleLowerCase()
+        const bName = b.name.toLocaleLowerCase()
+        const score = (name: string) => name === normalized ? 0 : name.startsWith(normalized) ? 1 : 2
+        return score(aName) - score(bName) || a.name.localeCompare(b.name)
+      })
+      .slice(0, 200)
+  } catch {
     searchResults.value = []
   } finally {
     searchLoading.value = false
@@ -204,9 +228,51 @@ function clearSearch() {
   if (searchTimer) clearTimeout(searchTimer)
 }
 
-function handleSearchResultClick(node: TreeNode) {
+/**
+ * 表节点的 path 末段是表名；SQL Server 等驱动前面可能同时包含
+ * catalog/schema，必须保留完整命名空间，不能只取第一段。
+ */
+function namespaceFromNode(data: TreeNode | any): string | null {
+  const catalog = String(data.properties?.catalog || '').trim()
+  const schema = String(data.properties?.schema || '').trim()
+  if (catalog && schema) return `${catalog}/${schema}`
+  if (schema) return schema
+  if (catalog) return catalog
+
+  const parts = String(data.path || '')
+    .split('/')
+    .map((part: string) => part.trim())
+    .filter(Boolean)
+  if (parts.length && parts[parts.length - 1] === data.name) {
+    parts.pop()
+  }
+  return parts.length ? parts.join('/') : null
+}
+
+async function handleSearchResultClick(node: TreeNode) {
+  const resultConnectionId = node.properties?.__connectionId as string | undefined
+  if (resultConnectionId && connectionStore.activeConnectionId !== resultConnectionId) {
+    connectionStore.activeConnectionId = resultConnectionId
+    await uiStore.loadDatabases(resultConnectionId)
+    await uiStore.loadCapabilities(resultConnectionId)
+  }
   uiStore.setSelectedNode(node)
   const type = node.type
+  if (type === 'DATABASE' || type === 'SCHEMA') {
+    uiStore.setCurrentDatabase(node.name)
+    clearSearch()
+    return
+  }
+  if ((type === 'TABLE' || type === 'VIEW') && resultConnectionId) {
+    await editorStore.createTableDetailTab(
+      resultConnectionId,
+      node.name,
+      namespaceFromNode(node),
+      type,
+    )
+    clearSearch()
+    return
+  }
   if (type === 'TABLE' || type === 'VIEW' || type === 'COLLECTION') {
     const pathSegments = (node.path || '').split('/').filter((p: string) => p)
     if (pathSegments.length > 0) {
@@ -230,7 +296,7 @@ function isDraggable(data: any): boolean {
 function handleDragStart(e: DragEvent, data: any, node: Node) {
   if (!isDraggable(data)) return
   const tableName = data.name
-  const schema = data.path?.split('/').find((p: string) => p) || null
+  const schema = namespaceFromNode(data)
   const dragData = {
     name: tableName,
     schema,
@@ -349,8 +415,8 @@ function handleNodeDblClick(data: any, node: Node) {
   if (type === 'TABLE' || type === 'VIEW') {
     const connId = getConnectionId(node)
     if (!connId) return
-    const schema = data.path?.split('/').find((p: string) => p) || null
-    editorStore.createTableDetailTab(connId, data.name, schema)
+    const schema = namespaceFromNode(data)
+    editorStore.createTableDetailTab(connId, data.name, schema, type)
   }
 }
 
@@ -361,7 +427,7 @@ async function loadColumns(node: Node) {
 
   uiStore.columnsLoading = true
   try {
-    const schema = data.path?.split('/').find((p: string) => p) || null
+    const schema = namespaceFromNode(data)
     const tableName = data.name
     const cols = await metadataApi.getTableColumns(connectionId, schema, tableName)
     uiStore.setColumns(cols)
@@ -379,7 +445,7 @@ async function loadDdl(node: Node) {
 
   uiStore.ddlLoading = true
   try {
-    const schema = data.path?.split('/').find((p: string) => p) || null
+    const schema = namespaceFromNode(data)
     const tableName = data.name
     const ddlText = await metadataApi.getTableDDL(connectionId, schema, tableName)
     uiStore.setDdl(ddlText)
@@ -396,7 +462,7 @@ async function handleConnect(conn: ConnectionDTO) {
   if (success) {
     ElMessage.success(`已连接: ${conn.name}`)
   } else {
-    ElMessage.error('连接失败')
+    ElMessage.error(connectionStore.lastConnectionMessage || '连接失败')
   }
 }
 
@@ -515,21 +581,19 @@ async function handleContextAction(action: string) {
   switch (action) {
     case 'view-detail': {
       const tableName = node.name
-      const schema = node.path?.split('/').find((p: string) => p) || null
-      editorStore.createTableDetailTab(connId, tableName, schema)
+      const schema = namespaceFromNode(node)
+      editorStore.createTableDetailTab(connId, tableName, schema, node.type)
       break
     }
     case 'view-data': {
       const tableName = node.name
-      const schema = node.path?.split('/').find((p: string) => p) || null
-      const sql = `SELECT * FROM ${schema ? `${schema}.` : ''}${tableName} LIMIT 100`
-      const tabId = editorStore.createTab(connId, `查询: ${tableName}`)
-      editorStore.updateSql(tabId, sql)
+      const schema = namespaceFromNode(node)
+      editorStore.createTableDetailTab(connId, tableName, schema, node.type)
       break
     }
     case 'import-data': {
       importTarget.connectionId = connId
-      importTarget.schema = node.path?.split('/').find((p: string) => p) || null
+      importTarget.schema = namespaceFromNode(node)
       importTarget.table = node.name
       importVisible.value = true
       break
@@ -544,16 +608,24 @@ async function handleContextAction(action: string) {
       break
     case 'gen-select': {
       const tableName = node.name
-      const schema = node.path?.split('/').find((p: string) => p) || null
-      const sql = `SELECT *\nFROM ${schema ? `${schema}.` : ''}${tableName}\nLIMIT 100;`
-      const tabId = editorStore.createTab(connId, `SELECT: ${tableName}`)
-      editorStore.updateSql(tabId, sql)
+      const schema = namespaceFromNode(node)
+      try {
+        const inspection = await metadataApi.inspectTable(
+          connId, schema, tableName, node.type, 200)
+        if (!inspection.preview?.sql) {
+          throw new Error(inspection.errors?.preview || '当前驱动未生成预览 SQL')
+        }
+        const tabId = editorStore.createTab(connId, `SELECT: ${tableName}`)
+        editorStore.updateSql(tabId, inspection.preview.sql)
+      } catch (error: any) {
+        ElMessage.error(error.message || '生成 SELECT 失败')
+      }
       break
     }
     case 'view-ddl': {
       const tableName = node.name
-      const schema = node.path?.split('/').find((p: string) => p) || null
-      editorStore.createTableDetailTab(connId, tableName, schema)
+      const schema = namespaceFromNode(node)
+      editorStore.createTableDetailTab(connId, tableName, schema, node.type)
       break
     }
     case 'refresh':
@@ -675,6 +747,20 @@ onUnmounted(() => {
   max-width: 120px;
 }
 
+.search-result-source {
+  flex: 0 1 auto;
+  max-width: 84px;
+  padding: 1px 5px;
+  overflow: hidden;
+  border: 1px solid var(--color-panel-border);
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  background: var(--color-panel-header);
+  font-size: 9px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .tree-connections {
   padding: var(--space-1) 0;
 }
@@ -698,22 +784,6 @@ onUnmounted(() => {
   font-weight: 700;
   border-radius: var(--radius-sm);
   flex-shrink: 0;
-}
-
-.connection-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-disconnected);
-}
-
-.connection-dot.connected {
-  background: var(--color-connected);
-  box-shadow: 0 0 4px var(--color-connected);
-}
-
-.connection-dot.disconnected {
-  background: var(--color-disconnected);
 }
 
 .favorite-star {
@@ -758,17 +828,6 @@ html.dark .icon-key-group { background: rgba(236, 72, 153, 0.16); color: #F472B6
 html.dark .icon-key { background: rgba(239, 68, 68, 0.16); color: #F87171; }
 html.dark .icon-index-group { background: rgba(99, 102, 241, 0.16); color: #818CF8; }
 html.dark .icon-index { background: rgba(99, 102, 241, 0.24); color: #A5B4FC; }
-
-/* 数据库文字颜色 */
-.db-text-mysql { color: var(--db-mysql); }
-.db-text-postgresql { color: var(--db-postgresql); }
-.db-text-oracle { color: var(--db-oracle); }
-.db-text-mssql { color: var(--db-mssql); }
-.db-text-sqlite { color: var(--db-sqlite); }
-.db-text-maxcompute { color: var(--db-maxcompute); }
-.db-text-clickhouse { color: var(--db-clickhouse); }
-.db-text-mongodb { color: var(--db-mongodb); }
-.db-text-redis { color: var(--db-redis); }
 
 .disconnected-section {
   margin-top: var(--space-2);

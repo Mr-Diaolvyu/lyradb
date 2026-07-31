@@ -7,9 +7,9 @@
         "mavenCoordinates": {
             "groupId": "com.mysql",
             "artifactId": "mysql-connector-j",
-            "version": "8.0.33"
+            "version": "8.2.0"
         },
-        "connectionUrlTemplate": "jdbc:mysql://{host}:{port}/{database}?useUnicode=true&characterEncoding=utf8&useSSL={ssl}&serverTimezone=Asia/Shanghai",
+        "connectionUrlTemplate": "jdbc:mysql://{host}:{port}/{database}",
         "defaultPort": 3306,
         "capabilities": {
             "supportsTransaction": true,
@@ -40,10 +40,17 @@
                 "defaultValue": 3306
             },
             {
+                "name": "connectTimeoutSeconds",
+                "label": "\u8fde\u63a5\u8d85\u65f6\uff08\u79d2\uff09",
+                "type": "number",
+                "required": true,
+                "defaultValue": 10
+            },
+            {
                 "name": "database",
                 "label": "数据库名",
                 "type": "text",
-                "required": true
+                "required": false
             },
             {
                 "name": "username",
@@ -58,8 +65,37 @@
                 "required": false
             },
             {
-                "name": "ssl",
-                "label": "启用SSL",
+                "name": "sslMode",
+                "label": "SSL 模式",
+                "type": "select",
+                "required": false,
+                "defaultValue": "PREFERRED",
+                "options": [
+                    {
+                        "label": "首选 SSL（兼容 DBeaver）",
+                        "value": "PREFERRED"
+                    },
+                    {
+                        "label": "必须使用 SSL",
+                        "value": "REQUIRED"
+                    },
+                    {
+                        "label": "校验证书",
+                        "value": "VERIFY_CA"
+                    },
+                    {
+                        "label": "校验证书和主机名",
+                        "value": "VERIFY_IDENTITY"
+                    },
+                    {
+                        "label": "禁用 SSL",
+                        "value": "DISABLED"
+                    }
+                ]
+            },
+            {
+                "name": "allowPublicKeyRetrieval",
+                "label": "允许获取服务器 RSA 公钥（仅可信网络）",
                 "type": "boolean",
                 "required": false,
                 "defaultValue": false
@@ -203,7 +239,7 @@
             "artifactId": "mssql-jdbc",
             "version": "12.6.1.jre11"
         },
-        "connectionUrlTemplate": "jdbc:sqlserver://{host}:{port};databaseName={database};encrypt={ssl}",
+        "connectionUrlTemplate": "jdbc:sqlserver://{host}:{port};databaseName={database};encrypt={ssl};trustServerCertificate={trustServerCertificate}",
         "defaultPort": 1433,
         "capabilities": {
             "supportsTransaction": true,
@@ -234,6 +270,13 @@
                 "defaultValue": 1433
             },
             {
+                "name": "connectTimeoutSeconds",
+                "label": "\u8fde\u63a5\u8d85\u65f6\uff08\u79d2\uff09",
+                "type": "number",
+                "required": true,
+                "defaultValue": 10
+            },
+            {
                 "name": "database",
                 "label": "数据库名",
                 "type": "text",
@@ -257,6 +300,13 @@
                 "type": "boolean",
                 "required": false,
                 "defaultValue": true
+            },
+            {
+                "name": "trustServerCertificate",
+                "label": "\u4fe1\u4efb\u670d\u52a1\u5668\u8bc1\u4e66",
+                "type": "boolean",
+                "required": false,
+                "defaultValue": false
             }
         ]
     },
@@ -388,7 +438,8 @@
         "mavenCoordinates": {
             "groupId": "com.aliyun.odps",
             "artifactId": "odps-jdbc",
-            "version": "3.6.10-public"
+            "version": "3.8.6",
+            "classifier": "jar-with-dependencies"
         },
         "connectionUrlTemplate": "jdbc:odps:{endpoint}?project={project}",
         "defaultPort": 0,
@@ -445,9 +496,43 @@
             },
             {
                 "name": "project",
-                "label": "Project名",
+                "label": "执行 Project（非公共数据集/工作空间名）",
                 "type": "text",
                 "required": true
+            },
+            {
+                "name": "schema",
+                "label": "默认 Schema（可选）",
+                "type": "text",
+                "required": false
+            },
+            {
+                "name": "schemaMode",
+                "label": "Schema 模式",
+                "type": "select",
+                "required": false,
+                "defaultValue": "AUTO",
+                "options": [
+                    {
+                        "label": "自动识别（推荐）",
+                        "value": "AUTO"
+                    },
+                    {
+                        "label": "已启用 Schema",
+                        "value": "ENABLED"
+                    },
+                    {
+                        "label": "未启用 Schema",
+                        "value": "DISABLED"
+                    }
+                ]
+            },
+            {
+                "name": "connectTimeoutSeconds",
+                "label": "连接超时（秒）",
+                "type": "number",
+                "required": true,
+                "defaultValue": 15
             },
             {
                 "name": "accessKeyId",

@@ -10,15 +10,20 @@ import io.github.lexaquila.lyradb.transfer.connection.ConnectionPackageException
 import io.github.lexaquila.lyradb.transfer.connection.CredentialExportPolicy;
 
 import javax.swing.BorderFactory;
+import javax.swing.ButtonGroup;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.DefaultListCellRenderer;
+import javax.swing.DefaultListModel;
 import javax.swing.JFrame;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
+import javax.swing.JList;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
+import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
@@ -26,12 +31,17 @@ import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
+import javax.swing.JTextField;
 import javax.swing.JToolBar;
 import javax.swing.JTree;
 import javax.swing.KeyStroke;
+import javax.swing.ListSelectionModel;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
+import javax.swing.Timer;
 import javax.swing.WindowConstants;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.event.TreeExpansionEvent;
 import javax.swing.event.TreeWillExpandListener;
 import javax.swing.tree.DefaultMutableTreeNode;
@@ -50,7 +60,9 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -71,16 +83,32 @@ public final class MainFrame extends JFrame {
     private final JTabbedPane workspaces = new JTabbedPane();
     private final CardLayout navigatorLayout = new CardLayout();
     private final JPanel navigatorCards = new JPanel(navigatorLayout);
+    private final JTextField navigatorSearch = new JTextField();
+    private final DefaultListModel<SearchResult> searchResultModel =
+            new DefaultListModel<>();
+    private final JList<SearchResult> searchResults =
+            new JList<>(searchResultModel);
+    private final JLabel searchSummary = new JLabel(
+            "搜索已连接数据源中的库、Schema、表和视图");
+    private final Timer searchTimer = new Timer(320, event -> performSearch());
     private final JLabel connectionCount = UiKit.badge(
             "0", NativeTheme.MUTED, NativeTheme.SURFACE_ALT);
     private final JLabel statusLabel = new JLabel("就绪");
     private final JLabel connectionSummary = new JLabel("连接 0");
+    private JRadioButtonMenuItem darkThemeItem;
+    private JRadioButtonMenuItem lightThemeItem;
     private final Map<String, SqlWorkspacePanel> workspaceByConnection = new HashMap<>();
+    private final Map<String, TableInspectorPanel> tableWorkspaceByKey =
+            new HashMap<>();
     private final ConnectionTransferService connectionTransfer =
             new ConnectionTransferService();
     private final ConnectionImportPlanner connectionImportPlanner =
             new ConnectionImportPlanner();
     private boolean shuttingDown;
+    private int backgroundOperationCount;
+    private boolean closeStarted;
+    private long searchGeneration;
+    private SwingWorker<List<SearchResult>, Void> searchWorker;
 
     public MainFrame(DesktopRuntime runtime) {
         super("LyraDB "
@@ -103,13 +131,16 @@ public final class MainFrame extends JFrame {
 
     private void buildUi() {
         setJMenuBar(createMenuBar());
+        JPanel canvas = new AuroraPanel(new BorderLayout(8, 8));
+        canvas.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        setContentPane(canvas);
         add(createToolbar(), BorderLayout.NORTH);
-        getContentPane().setBackground(NativeTheme.BACKGROUND);
 
         connectionTree.setRootVisible(false);
+        connectionTree.setOpaque(false);
         connectionTree.setShowsRootHandles(true);
         connectionTree.setBorder(BorderFactory.createEmptyBorder(6, 4, 8, 4));
-        connectionTree.setRowHeight(29);
+        connectionTree.setRowHeight(28);
         connectionTree.setCellRenderer(new ConnectionTreeRenderer(runtime));
         connectionTree.addTreeWillExpandListener(new TreeWillExpandListener() {
             @Override
@@ -142,35 +173,34 @@ public final class MainFrame extends JFrame {
 
         JPanel navigator = createNavigator();
         workspaces.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
+        workspaces.setOpaque(false);
         workspaces.addTab("开始", new WelcomePanel(
                 this::newConnection, this::openAiSettings, this::openAiAssistant));
 
-        JSplitPane split =
-                new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, navigator, workspaces);
-        split.setDividerLocation(282);
-        split.setDividerSize(1);
+        JPanel workspaceShell = UiKit.glass(new BorderLayout(), 16);
+        workspaceShell.setBorder(BorderFactory.createEmptyBorder(1, 1, 2, 1));
+        workspaceShell.add(workspaces, BorderLayout.CENTER);
+        JSplitPane split = new JSplitPane(
+                JSplitPane.HORIZONTAL_SPLIT, navigator, workspaceShell);
+        split.setDividerLocation(322);
+        split.setDividerSize(8);
         split.setResizeWeight(0);
         split.setBorder(BorderFactory.createEmptyBorder());
+        split.setOpaque(false);
         add(split, BorderLayout.CENTER);
 
         add(createStatusBar(), BorderLayout.SOUTH);
     }
 
     private JPanel createNavigator() {
-        JPanel navigator = new JPanel(new BorderLayout());
-        navigator.setBackground(NativeTheme.SURFACE);
-        navigator.setBorder(BorderFactory.createMatteBorder(
-                0, 0, 0, 1, NativeTheme.BORDER_SOFT));
+        JPanel navigator = UiKit.glass(new BorderLayout(), 16);
 
         JPanel header = new JPanel(new BorderLayout(8, 0));
-        header.setBackground(NativeTheme.SURFACE);
-        header.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createMatteBorder(
-                        0, 0, 1, 0, NativeTheme.BORDER_SOFT),
-                BorderFactory.createEmptyBorder(12, 14, 12, 10)));
+        header.setOpaque(false);
+        header.setBorder(BorderFactory.createEmptyBorder(12, 14, 8, 10));
         JPanel titleGroup = new JPanel(new FlowLayout(FlowLayout.LEFT, 7, 0));
         titleGroup.setOpaque(false);
-        JLabel title = new JLabel("数据库导航器");
+        JLabel title = new JLabel("资源管理器");
         title.setFont(NativeTheme.FONT_TITLE);
         title.setForeground(NativeTheme.FOREGROUND);
         titleGroup.add(title);
@@ -181,18 +211,103 @@ public final class MainFrame extends JFrame {
                 "新建数据库连接");
         add.addActionListener(event -> newConnection());
         header.add(add, BorderLayout.EAST);
-        navigator.add(header, BorderLayout.NORTH);
 
-        navigatorCards.setBackground(NativeTheme.SURFACE);
+        navigatorSearch.putClientProperty("JTextField.placeholderText",
+                "搜索库 / Schema / 表 / 视图");
+        navigatorSearch.putClientProperty("JTextField.leadingIcon",
+                LyraIcons.of(LyraIcons.Kind.SEARCH, NativeTheme.MUTED));
+        navigatorSearch.putClientProperty("JTextField.showClearButton", true);
+        navigatorSearch.setToolTipText("搜索未展开的数据库对象（Ctrl+K）");
+        navigatorSearch.getDocument().addDocumentListener(new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent event) { scheduleSearch(); }
+            @Override public void removeUpdate(DocumentEvent event) { scheduleSearch(); }
+            @Override public void changedUpdate(DocumentEvent event) { scheduleSearch(); }
+        });
+
+        JPanel searchShell = new JPanel(new BorderLayout());
+        searchShell.setOpaque(false);
+        searchShell.setBorder(BorderFactory.createEmptyBorder(0, 11, 10, 11));
+        searchShell.add(navigatorSearch, BorderLayout.CENTER);
+
+        JPanel north = new JPanel();
+        north.setOpaque(false);
+        north.setLayout(new BoxLayout(north, BoxLayout.Y_AXIS));
+        north.add(header);
+        north.add(searchShell);
+        navigator.add(north, BorderLayout.NORTH);
+
+        navigatorCards.setOpaque(false);
         navigatorCards.add(createNavigatorEmpty(), "empty");
-        navigatorCards.add(UiKit.scroll(connectionTree), "tree");
+        JScrollPane treeScroll = UiKit.scroll(connectionTree);
+        treeScroll.setOpaque(false);
+        treeScroll.getViewport().setOpaque(false);
+        navigatorCards.add(treeScroll, "tree");
+        navigatorCards.add(createSearchPanel(), "search");
         navigator.add(navigatorCards, BorderLayout.CENTER);
+
+        searchTimer.setRepeats(false);
+        getRootPane().registerKeyboardAction(
+                event -> {
+                    navigatorSearch.requestFocusInWindow();
+                    navigatorSearch.selectAll();
+                },
+                KeyStroke.getKeyStroke(KeyEvent.VK_K, InputEvent.CTRL_DOWN_MASK),
+                javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW);
         return navigator;
+    }
+
+    private JPanel createSearchPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setOpaque(false);
+        searchSummary.setFont(NativeTheme.FONT_CAPTION);
+        searchSummary.setForeground(NativeTheme.MUTED);
+        searchSummary.setBorder(BorderFactory.createEmptyBorder(8, 12, 6, 12));
+        panel.add(searchSummary, BorderLayout.NORTH);
+
+        searchResults.setOpaque(false);
+        searchResults.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        searchResults.setFixedCellHeight(38);
+        searchResults.setCellRenderer((list, value, index, selected, focused) -> {
+            DefaultListCellRenderer renderer = new DefaultListCellRenderer();
+            JLabel label = (JLabel) renderer.getListCellRendererComponent(
+                    list, value, index, selected, focused);
+            label.setText(value.node().getName() + "  ·  "
+                    + value.connection().getName());
+            label.setIcon(LyraIcons.treeNode(value.node().getType(),
+                    value.node().getProperties(), 17));
+            label.setIconTextGap(9);
+            label.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));
+            label.setToolTipText(value.node().getType()
+                    + " · " + value.node().getPath());
+            return label;
+        });
+        searchResults.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                if (event.getClickCount() == 2) {
+                    openSearchResult();
+                }
+            }
+        });
+        searchResults.getInputMap().put(
+                KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "open-result");
+        searchResults.getActionMap().put("open-result",
+                new javax.swing.AbstractAction() {
+                    @Override
+                    public void actionPerformed(java.awt.event.ActionEvent event) {
+                        openSearchResult();
+                    }
+                });
+        JScrollPane scroll = UiKit.scroll(searchResults);
+        scroll.setOpaque(false);
+        scroll.getViewport().setOpaque(false);
+        panel.add(scroll, BorderLayout.CENTER);
+        return panel;
     }
 
     private JPanel createNavigatorEmpty() {
         JPanel empty = new JPanel();
-        empty.setBackground(NativeTheme.SURFACE);
+        empty.setOpaque(false);
         empty.setBorder(BorderFactory.createEmptyBorder(32, 24, 32, 24));
         empty.setLayout(new BoxLayout(empty, BoxLayout.Y_AXIS));
         JLabel icon = new JLabel(LyraIcons.of(
@@ -224,12 +339,8 @@ public final class MainFrame extends JFrame {
     }
 
     private JPanel createStatusBar() {
-        JPanel bar = new JPanel(new BorderLayout(10, 0));
-        bar.setBackground(NativeTheme.SURFACE);
-        bar.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createMatteBorder(
-                        1, 0, 0, 0, NativeTheme.BORDER_SOFT),
-                BorderFactory.createEmptyBorder(6, 12, 6, 12)));
+        JPanel bar = UiKit.glass(new BorderLayout(10, 0), 12);
+        bar.setBorder(BorderFactory.createEmptyBorder(6, 12, 7, 12));
         JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 7, 0));
         left.setOpaque(false);
         JLabel indicator = new JLabel("●");
@@ -247,42 +358,49 @@ public final class MainFrame extends JFrame {
         return bar;
     }
 
-    private JToolBar createToolbar() {
+    private JPanel createToolbar() {
         JToolBar toolbar = new JToolBar();
         toolbar.setFloatable(false);
-        toolbar.setBackground(NativeTheme.SURFACE);
-        toolbar.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createMatteBorder(
-                        0, 0, 1, 0, NativeTheme.BORDER_SOFT),
-                BorderFactory.createEmptyBorder(7, 10, 7, 10)));
+        toolbar.setOpaque(false);
+        toolbar.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
         toolbar.add(toolButton("新建连接", LyraIcons.Kind.ADD_DATABASE,
                 UiKit.ButtonStyle.PRIMARY, this::newConnection));
-        toolbar.add(Box.createHorizontalStrut(5));
-        toolbar.add(toolButton("导入连接", LyraIcons.Kind.DATABASE,
-                UiKit.ButtonStyle.TOOLBAR, this::importConnections));
-        toolbar.add(toolButton("Excel 模板", LyraIcons.Kind.EXPORT,
-                UiKit.ButtonStyle.TOOLBAR, this::downloadConnectionTemplate));
-        toolbar.add(toolButton("导出连接", LyraIcons.Kind.EXPORT,
-                UiKit.ButtonStyle.TOOLBAR, this::exportConnections));
+        toolbar.add(Box.createHorizontalStrut(8));
         toolbar.addSeparator();
         toolbar.add(toolButton("连接", LyraIcons.Kind.CONNECT,
                 UiKit.ButtonStyle.TOOLBAR, this::connectSelected));
         toolbar.add(toolButton("断开", LyraIcons.Kind.DISCONNECT,
                 UiKit.ButtonStyle.TOOLBAR, this::disconnectSelected));
         toolbar.addSeparator();
-        toolbar.add(toolButton("SQL 编辑器", LyraIcons.Kind.SQL,
+        toolbar.add(toolButton("SQL", LyraIcons.Kind.SQL,
                 UiKit.ButtonStyle.TOOLBAR, this::openSqlWorkspace));
         toolbar.add(toolButton("刷新", LyraIcons.Kind.REFRESH,
                 UiKit.ButtonStyle.TOOLBAR, this::refreshSelected));
-        toolbar.addSeparator();
-        toolbar.add(toolButton("AI 助手", LyraIcons.Kind.AI,
-                UiKit.ButtonStyle.TOOLBAR, this::openAiAssistant));
-        toolbar.add(toolButton("AI 设置", LyraIcons.Kind.SETTINGS,
-                UiKit.ButtonStyle.TOOLBAR, this::openAiSettings));
-        toolbar.addSeparator();
         toolbar.add(toolButton("ER 图", LyraIcons.Kind.ER,
                 UiKit.ButtonStyle.TOOLBAR, this::openErDiagram));
-        return toolbar;
+        toolbar.add(toolButton("AI 助手", LyraIcons.Kind.AI,
+                UiKit.ButtonStyle.TOOLBAR, this::openAiAssistant));
+        toolbar.add(Box.createHorizontalGlue());
+        toolbar.add(toolButton("主题", LyraIcons.Kind.THEME,
+                UiKit.ButtonStyle.TOOLBAR, this::toggleTheme));
+
+        JButton more = UiKit.iconButton(
+                LyraIcons.of(LyraIcons.Kind.MORE), "更多工具");
+        JPopupMenu moreMenu = new JPopupMenu();
+        moreMenu.add(item("导入连接配置…", null, this::importConnections));
+        moreMenu.add(item("下载 Excel 导入模板…", null,
+                this::downloadConnectionTemplate));
+        moreMenu.add(item("导出全部连接配置…", null, this::exportConnections));
+        moreMenu.addSeparator();
+        moreMenu.add(item("AI 设置…", null, this::openAiSettings));
+        more.addActionListener(event ->
+                moreMenu.show(more, 0, more.getHeight()));
+        toolbar.add(more);
+
+        JPanel shell = UiKit.glass(new BorderLayout(), 14);
+        shell.setBorder(BorderFactory.createEmptyBorder(2, 3, 3, 3));
+        shell.add(toolbar, BorderLayout.CENTER);
+        return shell;
     }
 
     private JMenuBar createMenuBar() {
@@ -301,6 +419,9 @@ public final class MainFrame extends JFrame {
         file.add(item("退出", null, this::shutdown));
 
         JMenu database = new JMenu("数据库");
+        database.add(item("搜索数据库对象", KeyStroke.getKeyStroke(
+                KeyEvent.VK_K, InputEvent.CTRL_DOWN_MASK),
+                () -> navigatorSearch.requestFocusInWindow()));
         database.add(item("连接", null, this::connectSelected));
         database.add(item("断开", null, this::disconnectSelected));
         database.add(item("编辑连接", null, this::editSelected));
@@ -321,6 +442,20 @@ public final class MainFrame extends JFrame {
         tools.add(item("导出全部连接配置…", null, this::exportConnections));
         tools.addSeparator();
         tools.add(item("ER 关系图", null, this::openErDiagram));
+        tools.addSeparator();
+        JMenu themeMenu = new JMenu("主题");
+        ButtonGroup themeGroup = new ButtonGroup();
+        darkThemeItem = new JRadioButtonMenuItem("深色");
+        lightThemeItem = new JRadioButtonMenuItem("浅色");
+        darkThemeItem.setSelected(NativeTheme.mode() == NativeTheme.Mode.DARK);
+        lightThemeItem.setSelected(NativeTheme.mode() == NativeTheme.Mode.LIGHT);
+        themeGroup.add(darkThemeItem);
+        themeGroup.add(lightThemeItem);
+        darkThemeItem.addActionListener(event -> applyTheme(NativeTheme.Mode.DARK));
+        lightThemeItem.addActionListener(event -> applyTheme(NativeTheme.Mode.LIGHT));
+        themeMenu.add(darkThemeItem);
+        themeMenu.add(lightThemeItem);
+        tools.add(themeMenu);
 
         JMenu help = new JMenu("帮助");
         help.add(item("关于 LyraDB", null, () -> JOptionPane.showMessageDialog(this,
@@ -337,6 +472,49 @@ public final class MainFrame extends JFrame {
         menuBar.add(tools);
         menuBar.add(help);
         return menuBar;
+    }
+
+    private void toggleTheme() {
+        NativeTheme.Mode target = NativeTheme.mode() == NativeTheme.Mode.DARK
+                ? NativeTheme.Mode.LIGHT : NativeTheme.Mode.DARK;
+        applyTheme(target);
+    }
+
+    private void applyTheme(NativeTheme.Mode target) {
+        NativeTheme.Mode previous = NativeTheme.mode();
+        if (target == previous) {
+            updateThemeSelection();
+            return;
+        }
+        try {
+            NativeTheme.apply(target);
+            runtime.stateStore().saveThemeMode(target.name());
+            updateThemeSelection();
+            status("已切换为" + target.displayName() + "主题");
+        } catch (RuntimeException exception) {
+            if (NativeTheme.mode() != previous) {
+                try {
+                    NativeTheme.apply(previous);
+                } catch (RuntimeException rollbackFailure) {
+                    exception.addSuppressed(rollbackFailure);
+                }
+            }
+            updateThemeSelection();
+            Throwable cause = rootCause(exception);
+            status("主题切换失败：" + cause.getMessage());
+            JOptionPane.showMessageDialog(this,
+                    "无法切换主题：\n" + cause.getMessage(),
+                    "主题切换失败", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void updateThemeSelection() {
+        if (darkThemeItem != null) {
+            darkThemeItem.setSelected(NativeTheme.mode() == NativeTheme.Mode.DARK);
+        }
+        if (lightThemeItem != null) {
+            lightThemeItem.setSelected(NativeTheme.mode() == NativeTheme.Mode.LIGHT);
+        }
     }
 
     private void exportConnections() {
@@ -604,9 +782,130 @@ public final class MainFrame extends JFrame {
         treeModel.reload();
         connectionCount.setText("  " + root.getChildCount() + "  ");
         connectionSummary.setText("连接 " + root.getChildCount());
+        showDefaultNavigatorCard();
+        status("已加载 " + root.getChildCount() + " 个本地连接配置");
+    }
+
+    private void scheduleSearch() {
+        String query = navigatorSearch.getText().trim();
+        if (query.isEmpty()) {
+            searchGeneration++;
+            searchTimer.stop();
+            if (searchWorker != null) {
+                searchWorker.cancel(true);
+            }
+            searchResultModel.clear();
+            showDefaultNavigatorCard();
+            return;
+        }
+        navigatorLayout.show(navigatorCards, "search");
+        searchSummary.setText("等待输入完成…");
+        searchTimer.restart();
+    }
+
+    private void showDefaultNavigatorCard() {
         navigatorLayout.show(navigatorCards,
                 root.getChildCount() == 0 ? "empty" : "tree");
-        status("已加载 " + root.getChildCount() + " 个本地连接配置");
+    }
+
+    private void performSearch() {
+        String query = navigatorSearch.getText().trim();
+        if (query.isEmpty()) {
+            showDefaultNavigatorCard();
+            return;
+        }
+        long generation = ++searchGeneration;
+        if (searchWorker != null) {
+            searchWorker.cancel(true);
+        }
+        List<DesktopConnection> connected = runtime.stateStore()
+                .listConnections().stream()
+                .filter(connection -> runtime.connectionManager()
+                        .isConnected(connection.getId()))
+                .toList();
+        if (connected.isEmpty()) {
+            searchResultModel.clear();
+            searchSummary.setText("请先连接至少一个数据源后搜索");
+            status("搜索需要一个已连接的数据源");
+            return;
+        }
+        searchSummary.setText("正在搜索 " + connected.size() + " 个已连接数据源…");
+        searchWorker = new SwingWorker<>() {
+            @Override
+            protected List<SearchResult> doInBackground() {
+                List<SearchResult> matches = new ArrayList<>();
+                for (DesktopConnection connection : connected) {
+                    if (isCancelled()) {
+                        break;
+                    }
+                    try {
+                        for (TreeNode node : runtime.connectionManager().search(
+                                connection.getId(), query, 80)) {
+                            matches.add(new SearchResult(connection, node));
+                            if (matches.size() >= 160) {
+                                break;
+                            }
+                        }
+                    } catch (Exception ignored) {
+                        // 单个数据源失败不阻断其他已连接数据源的搜索。
+                    }
+                    if (matches.size() >= 160) {
+                        break;
+                    }
+                }
+                String normalized = query.toLowerCase(Locale.ROOT);
+                matches.sort(Comparator
+                        .comparingInt((SearchResult result) -> {
+                            String name = result.node().getName()
+                                    .toLowerCase(Locale.ROOT);
+                            if (name.equals(normalized)) {
+                                return 0;
+                            }
+                            return name.startsWith(normalized) ? 1 : 2;
+                        })
+                        .thenComparing(result -> result.node().getName(),
+                                String.CASE_INSENSITIVE_ORDER));
+                return matches;
+            }
+
+            @Override
+            protected void done() {
+                if (isCancelled() || generation != searchGeneration
+                        || !query.equals(navigatorSearch.getText().trim())) {
+                    return;
+                }
+                try {
+                    List<SearchResult> matches = get();
+                    searchResultModel.clear();
+                    matches.forEach(searchResultModel::addElement);
+                    searchSummary.setText(matches.isEmpty()
+                            ? "未找到匹配的数据库对象"
+                            : "找到 " + matches.size() + " 个结果");
+                    status(matches.isEmpty()
+                            ? "搜索完成，未找到匹配对象"
+                            : "搜索完成：" + matches.size() + " 个对象");
+                } catch (Exception exception) {
+                    searchResultModel.clear();
+                    searchSummary.setText("搜索失败，请检查连接状态");
+                    status("数据库对象搜索失败");
+                }
+            }
+        };
+        searchWorker.execute();
+    }
+
+    private void openSearchResult() {
+        SearchResult result = searchResults.getSelectedValue();
+        if (result == null) {
+            return;
+        }
+        TreeNode node = result.node();
+        status(node.getType() + " · " + node.getPath());
+        if ("TABLE".equals(node.getType()) || "VIEW".equals(node.getType())) {
+            connectAsync(result.connection().getId(),
+                    () -> openTableWorkspace(BrowserItem.node(
+                            result.connection().getId(), node)));
+        }
     }
 
     private void newConnection() {
@@ -686,6 +985,14 @@ public final class MainFrame extends JFrame {
                         if (panel != null) {
                             workspaces.remove(panel);
                         }
+                        tableWorkspaceByKey.entrySet().removeIf(entry -> {
+                            if (!entry.getKey().startsWith(
+                                    id + "\u0000")) {
+                                return false;
+                            }
+                            workspaces.remove(entry.getValue());
+                            return true;
+                        });
                         refreshConnections();
                     });
         }
@@ -847,22 +1154,51 @@ public final class MainFrame extends JFrame {
         if (item.node != null
                 && ("TABLE".equals(item.node.getType())
                 || "VIEW".equals(item.node.getType()))) {
-            connectAsync(item.connectionId, () -> openDdl(item));
+            connectAsync(item.connectionId, () -> openTableWorkspace(item));
         } else if (item.node != null && item.node.isHasChildren()) {
             TreePath path = new TreePath(node.getPath());
             connectionTree.expandPath(path);
         }
     }
 
-    private void openDdl(BrowserItem item) {
+    private void openTableWorkspace(BrowserItem item) {
         String path = item.node.getPath();
         String[] parts = path == null ? new String[0] : path.split("/");
-        String table = parts.length == 0 ? item.node.getName() : parts[parts.length - 1];
+        String table = parts.length == 0
+                ? item.node.getName() : parts[parts.length - 1];
         String schema = namespaceFromPath(parts);
-        runAsync("正在读取表 DDL…",
-                () -> runtime.connectionManager().ddl(
-                        item.connectionId, schema, table),
-                ddl -> openWorkspace(item.connectionId, ddl));
+        String key = item.connectionId + "\u0000"
+                + (schema == null ? "" : schema) + "\u0000" + table;
+        TableInspectorPanel existing = tableWorkspaceByKey.get(key);
+        if (existing == null) {
+            DesktopConnection connection = runtime.stateStore()
+                    .findConnection(item.connectionId)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "连接配置不存在: " + item.connectionId));
+            existing = new TableInspectorPanel(
+                    runtime,
+                    item.connectionId,
+                    connection.getName(),
+                    connection.getDbType(),
+                    schema,
+                    table,
+                    item.node.getType(),
+                    this::status,
+                    sql -> openWorkspace(item.connectionId, sql));
+            tableWorkspaceByKey.put(key, existing);
+            String tabTitle = schema == null || schema.isBlank()
+                    ? table : schema.replace('/', '.') + "." + table;
+            workspaces.addTab(
+                    tabTitle,
+                    LyraIcons.treeNode(
+                            item.node.getType(),
+                            item.node.getProperties(), 16),
+                    existing);
+            int tabIndex = workspaces.indexOfComponent(existing);
+            workspaces.setToolTipTextAt(
+                    tabIndex, "表工作台 · " + tabTitle);
+        }
+        workspaces.setSelectedComponent(existing);
     }
 
     private void refreshSelected() {
@@ -949,6 +1285,8 @@ public final class MainFrame extends JFrame {
             after.run();
             return;
         }
+        DesktopConnection definition =
+                runtime.connectionManager().requireSaved(connectionId);
         runAsync("正在加载驱动并连接数据库…",
                 () -> {
                     runtime.connectionManager().connect(connectionId);
@@ -957,11 +1295,19 @@ public final class MainFrame extends JFrame {
                 ignored -> {
                     refreshConnectionNode(connectionId);
                     after.run();
+                }, exception -> {
+                    status("连接失败：" + definition.getName());
+                    ConnectionErrorAdvisor.show(
+                            MainFrame.this, definition, exception);
                 });
     }
 
     private <T> void runAsync(String busyMessage,
             CheckedSupplier<T> action, java.util.function.Consumer<T> success) {
+        if (shuttingDown) {
+            return;
+        }
+        backgroundOperationCount++;
         status(busyMessage);
         new SwingWorker<T, Void>() {
             @Override
@@ -971,6 +1317,11 @@ public final class MainFrame extends JFrame {
 
             @Override
             protected void done() {
+                backgroundOperationCount--;
+                if (shuttingDown) {
+                    closeRuntimeWhenIdle();
+                    return;
+                }
                 try {
                     success.accept(get());
                 } catch (Exception exception) {
@@ -978,6 +1329,37 @@ public final class MainFrame extends JFrame {
                     status("操作失败：" + cause.getMessage());
                     JOptionPane.showMessageDialog(MainFrame.this,
                             cause.getMessage(), "操作失败", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        }.execute();
+    }
+
+    private <T> void runAsync(String busyMessage,
+            CheckedSupplier<T> action,
+            java.util.function.Consumer<T> success,
+            java.util.function.Consumer<Throwable> failure) {
+        if (shuttingDown) {
+            return;
+        }
+        backgroundOperationCount++;
+        status(busyMessage);
+        new SwingWorker<T, Void>() {
+            @Override
+            protected T doInBackground() throws Exception {
+                return action.get();
+            }
+
+            @Override
+            protected void done() {
+                backgroundOperationCount--;
+                if (shuttingDown) {
+                    closeRuntimeWhenIdle();
+                    return;
+                }
+                try {
+                    success.accept(get());
+                } catch (Exception exception) {
+                    failure.accept(exception);
                 }
             }
         }.execute();
@@ -1022,6 +1404,10 @@ public final class MainFrame extends JFrame {
     }
 
     private String selectedConnectionId() {
+        SearchResult searchResult = searchResults.getSelectedValue();
+        if (!navigatorSearch.getText().isBlank() && searchResult != null) {
+            return searchResult.connection().getId();
+        }
         DefaultMutableTreeNode node = selectedNode();
         if (node != null && node.getUserObject() instanceof BrowserItem item) {
             return item.connectionId;
@@ -1057,6 +1443,20 @@ public final class MainFrame extends JFrame {
         shuttingDown = true;
         setEnabled(false);
         status("正在安全回滚事务并关闭连接…");
+        if (backgroundOperationCount > 0) {
+            status("正在等待 " + backgroundOperationCount
+                    + " 个后台任务完成后安全退出…");
+        }
+        closeRuntimeWhenIdle();
+    }
+
+    private void closeRuntimeWhenIdle() {
+        if (!shuttingDown || backgroundOperationCount > 0 || closeStarted) {
+            return;
+        }
+        closeStarted = true;
+        status("正在安全回滚事务并关闭连接…");
+
         new SwingWorker<Void, Void>() {
             @Override
             protected Void doInBackground() {
@@ -1071,6 +1471,7 @@ public final class MainFrame extends JFrame {
                     dispose();
                     System.exit(0);
                 } catch (Exception exception) {
+                    closeStarted = false;
                     shuttingDown = false;
                     setEnabled(true);
                     Throwable cause = rootCause(exception);
@@ -1133,6 +1534,9 @@ public final class MainFrame extends JFrame {
     @FunctionalInterface
     private interface CheckedSupplier<T> {
         T get() throws Exception;
+    }
+
+    private record SearchResult(DesktopConnection connection, TreeNode node) {
     }
 
     static final class BrowserItem {

@@ -1,7 +1,17 @@
 <template>
-  <div class="app-header">
+  <div class="app-header glass-surface">
     <div class="header-left">
-      <span class="logo">LyraDB</span>
+      <svg class="logo-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="1" y="1" width="30" height="30" rx="9" class="logo-tile" />
+        <ellipse cx="14" cy="10" rx="6.5" ry="2.8" class="logo-db" />
+        <path d="M7.5 10v8.5c0 1.6 2.9 2.9 6.5 2.9s6.5-1.3 6.5-2.9V10M7.5 14.3c0 1.6 2.9 2.9 6.5 2.9 2.2 0 4.1-.5 5.3-1.2" class="logo-db" />
+        <circle cx="23.5" cy="22.5" r="2" class="logo-star" />
+        <path d="m20.9 20.2 1.1 1m3.8-1.1-1.1 1.1" class="logo-orbit" />
+      </svg>
+      <span class="logo-copy">
+        <span class="logo">LyraDB</span>
+        <span class="logo-edition">DATA WORKSPACE</span>
+      </span>
     </div>
 
     <div class="header-center">
@@ -245,16 +255,46 @@ const reportVisible = ref(false)
   justify-content: space-between;
   height: var(--header-height);
   padding: 0 var(--space-4);
-  background: var(--color-panel);
-  border-bottom: 1px solid var(--color-border);
+  border-width: 0 0 1px;
+  box-shadow: none;
   flex-shrink: 0;
 }
 
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logo-mark {
+  width: 28px;
+  height: 28px;
+}
+
+.logo-tile { fill: var(--color-active); stroke: var(--color-panel-border); }
+.logo-db { fill: none; stroke: var(--color-brand); stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; }
+.logo-star { fill: var(--color-accent); }
+.logo-orbit { fill: none; stroke: var(--color-accent); stroke-width: 1.2; stroke-linecap: round; }
+
+.logo-copy {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+}
+
 .header-left .logo {
-  font-size: var(--text-title);
+  color: var(--color-foreground);
+  font-size: 14px;
+  font-weight: 720;
+  letter-spacing: -0.01em;
+}
+
+.logo-edition {
+  margin-top: 3px;
+  color: var(--color-text-muted);
+  font-size: 7px;
   font-weight: 700;
-  color: var(--color-primary);
-  letter-spacing: 0.5px;
+  letter-spacing: 0.12em;
 }
 
 .header-center {

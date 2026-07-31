@@ -2,6 +2,7 @@ package io.github.lexaquila.lyradb.service;
 
 import io.github.lexaquila.lyradb.driver.DatabaseDriver;
 import io.github.lexaquila.lyradb.model.dto.ColumnMetadata;
+import io.github.lexaquila.lyradb.model.dto.TableInspection;
 import io.github.lexaquila.lyradb.model.dto.TreeNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -85,6 +86,70 @@ public class MetadataService {
     }
 
     /**
+     * 一次加载表工作台所需的数据预览、字段、索引约束和 DDL。
+     *
+     * <p>单个区域失败不会阻断其他区域，前端可在对应页签展示错误。</p>
+     */
+    public TableInspection inspectTable(
+            String connectionId,
+            String schemaName,
+            String tableName,
+            String objectType,
+            int requestedLimit) throws Exception {
+        if (tableName == null || tableName.isBlank()) {
+            throw new IllegalArgumentException("table 不能为空");
+        }
+        int limit = Math.max(1, Math.min(200, requestedLimit));
+        ConnectionService.ActiveConnection active =
+                connectionService.getActiveConnection(connectionId);
+        TableInspection inspection = new TableInspection();
+        inspection.setSchema(schemaName);
+        inspection.setTable(tableName);
+        inspection.setObjectType(
+                objectType == null || objectType.isBlank()
+                        ? "TABLE" : objectType.toUpperCase());
+
+        log.debug("加载表工作台: connectionId={}, schema={}, table={}, limit={}",
+                connectionId, schemaName, tableName, limit);
+        try (ConnectionService.ActiveConnection.Lease ignored =
+                     active.acquire()) {
+            try {
+                inspection.setPreview(active.driver.previewTable(
+                        active.connection, schemaName, tableName, limit));
+            } catch (Exception exception) {
+                inspection.addError("preview", safeMessage(exception));
+            }
+            try {
+                inspection.setColumns(active.driver.getTableColumns(
+                        active.connection, schemaName, tableName));
+            } catch (Exception exception) {
+                inspection.addError("columns", safeMessage(exception));
+            }
+            try {
+                inspection.setConstraints(active.driver.getTableConstraints(
+                        active.connection, schemaName, tableName));
+            } catch (Exception exception) {
+                inspection.addError("constraints", safeMessage(exception));
+            }
+            try {
+                inspection.setDdl(active.driver.getTableDDL(
+                        active.connection, schemaName, tableName));
+            } catch (Exception exception) {
+                inspection.addError("ddl", safeMessage(exception));
+            }
+        }
+        return inspection;
+    }
+
+    private String safeMessage(Exception exception) {
+        String message = exception.getMessage();
+        if (message == null || message.isBlank()) {
+            return exception.getClass().getSimpleName();
+        }
+        return message.length() <= 600 ? message : message.substring(0, 600);
+    }
+
+    /**
      * 获取数据库列表
      *
      * <p>
@@ -111,14 +176,12 @@ public class MetadataService {
     /**
      * 搜索导航树节点
      *
-     * <p>
-     * 递归遍历已加载的树节点，按关键字过滤匹配的节点（表名/视图名/集合名等）。
-     * 搜索深度限制为3层以避免性能问题，返回前100条匹配结果。
-     * </p>
+     * <p>JDBC 驱动直接使用 DatabaseMetaData 搜索未展开的数据库、Schema、
+     * 表和视图；不再递归扫描整棵导航树。</p>
      *
      * @param connectionId 连接ID
      * @param keyword      搜索关键字
-     * @param type         可选节点类型过滤 (TABLE/VIEW/COLLECTION/KEY)
+     * @param type         可选节点类型过滤
      * @return 匹配的节点列表
      */
     public List<TreeNode> searchNodes(String connectionId, String keyword, String type) throws Exception {
@@ -126,67 +189,18 @@ public class MetadataService {
         log.debug("搜索节点: connectionId={}, keyword={}, type={}", connectionId, keyword, type);
 
         try (ConnectionService.ActiveConnection.Lease ignored = active.acquire()) {
-        List<TreeNode> results = new ArrayList<>();
-        String lowerKeyword = keyword.toLowerCase();
-
-        // 获取根节点（通常是 DATABASE / Project / DB_INDEX 层级）
-        List<TreeNode> rootNodes = active.driver.getTreeNodes(active.connection, null);
-
-        for (TreeNode root : rootNodes) {
-            if (results.size() >= 100)
-                break;
-
-            // 根节点本身匹配
-            if (matchesNode(root, lowerKeyword, type)) {
-                results.add(root);
-                if (results.size() >= 100)
-                    break;
+            if (keyword == null || keyword.isBlank()) {
+                return List.of();
             }
-
-            // 遍历第二层（DATABASE 下的 Schema/Table/Collection 等）
-            try {
-                List<TreeNode> level2 = active.driver.getTreeNodes(active.connection, root.getPath());
-                for (TreeNode l2 : level2) {
-                    if (results.size() >= 100)
-                        break;
-
-                    if (matchesNode(l2, lowerKeyword, type)) {
-                        results.add(l2);
-                    }
-
-                    // 第三层（Schema 下的 Table/View 等）
-                    if (l2.isHasChildren() && ("SCHEMA".equals(l2.getType()) || "DATABASE".equals(l2.getType()))) {
-                        try {
-                            List<TreeNode> level3 = active.driver.getTreeNodes(active.connection, l2.getPath());
-                            for (TreeNode l3 : level3) {
-                                if (results.size() >= 100)
-                                    break;
-                                if (matchesNode(l3, lowerKeyword, type)) {
-                                    results.add(l3);
-                                }
-                            }
-                        } catch (Exception e) {
-                            log.debug("搜索第三层失败: {} - {}", l2.getPath(), e.getMessage());
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                log.debug("搜索第二层失败: {} - {}", root.getPath(), e.getMessage());
+            List<TreeNode> results = active.driver.searchTreeNodes(
+                    active.connection, keyword, 100);
+            if (type == null || type.isBlank()) {
+                return results;
             }
+            return results.stream()
+                    .filter(node -> type.equalsIgnoreCase(node.getType()))
+                    .toList();
         }
-
-        return results;
-        }
-    }
-
-    /**
-     * 判断节点是否匹配搜索条件
-     */
-    private boolean matchesNode(TreeNode node, String lowerKeyword, String type) {
-        if (type != null && !type.isEmpty() && !type.equals(node.getType())) {
-            return false;
-        }
-        return node.getName() != null && node.getName().toLowerCase().contains(lowerKeyword);
     }
 
     /**

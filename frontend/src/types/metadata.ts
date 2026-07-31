@@ -27,6 +27,25 @@ export interface ColumnMetadata {
     schemaName: string | null
 }
 
+export interface TableConstraintMetadata {
+    name: string
+    type: 'PRIMARY_KEY' | 'FOREIGN_KEY' | 'UNIQUE_INDEX' | 'INDEX' | string
+    columns: string[]
+    referencedTable?: string | null
+    referencedColumns: string[]
+}
+
+export interface TableInspection {
+    schema: string | null
+    table: string
+    objectType: string
+    columns: ColumnMetadata[]
+    constraints: TableConstraintMetadata[]
+    preview: QueryResult | null
+    ddl: string
+    errors: Record<string, string>
+}
+
 /** SQL 审核命中条目（迭代二 E2） */
 export interface SqlReviewFinding {
     ruleId: string

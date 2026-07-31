@@ -1,5 +1,7 @@
 package io.github.lexaquila.lyradb.desktop.model;
 
+import io.github.lexaquila.lyradb.driver.DriverRegistry;
+
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -51,6 +53,10 @@ public final class DesktopConnection {
         return name;
     }
 
+    public String getDisplayName() {
+        return getName();
+    }
+
     public void setName(String name) {
         this.name = Objects.requireNonNullElse(name, "").trim();
     }
@@ -60,7 +66,7 @@ public final class DesktopConnection {
     }
 
     public void setDbType(String dbType) {
-        this.dbType = Objects.requireNonNullElse(dbType, "").trim().toUpperCase();
+        this.dbType = DriverRegistry.normalizeDbType(dbType);
     }
 
     public Map<String, Object> getParams() {

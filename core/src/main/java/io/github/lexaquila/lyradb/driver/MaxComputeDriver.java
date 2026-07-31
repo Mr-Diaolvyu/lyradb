@@ -1,5 +1,7 @@
 package io.github.lexaquila.lyradb.driver;
 
+import io.github.lexaquila.lyradb.model.dto.ColumnMetadata;
+import io.github.lexaquila.lyradb.model.dto.TableConstraintMetadata;
 import io.github.lexaquila.lyradb.model.dto.TreeNode;
 import io.github.lexaquila.lyradb.model.entity.DriverInfo;
 
@@ -8,9 +10,15 @@ import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Properties;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * MaxCompute驱动实现
@@ -33,8 +41,17 @@ import java.util.Map;
  */
 public class MaxComputeDriver extends AbstractJdbcDriver {
 
+    private static final Pattern PRIMARY_KEY_PATTERN = Pattern.compile(
+            "(?is)\\bPRIMARY\\s+KEY\\s*\\(([^)]*)\\)");
+
     public MaxComputeDriver(DriverInfo driverInfo, ClassLoader driverClassLoader) {
         super(driverInfo, driverClassLoader);
+    }
+
+    @Override
+    protected void setExtraConnectionProperties(
+            Properties props, Map<String, Object> params) {
+        MaxComputeConnectionOptions.apply(props, params);
     }
 
     @Override
@@ -42,9 +59,7 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
         Connection conn = (Connection) connection;
 
         if (parentPath == null || parentPath.isEmpty()) {
-            // 顶层：返回Project下的表列表
-            // MaxCompute的JDBC连接URL中已包含project参数，直接获取表
-            return getTables(conn, null, null);
+            return getProjectTables(conn);
         }
 
         // 表级以下：展示分区信息
@@ -60,6 +75,29 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
         return getPartitions(conn, parentPath);
     }
 
+    @Override
+    public List<TreeNode> searchTreeNodes(
+            Object connection, String query, int limit) throws Exception {
+        if (query == null || query.isBlank()) {
+            return List.of();
+        }
+        String keyword = query.trim();
+        if (!keyword.matches("[A-Za-z0-9_]+")) {
+            return List.of();
+        }
+        String normalized = keyword.toLowerCase(Locale.ROOT);
+        int safeLimit = Math.max(1, Math.min(limit, 500));
+        // 让服务端先按名称收敛结果，避免数千张表的 Project 在每次搜索时
+        // 都传输完整清单；MaxCompute SHOW TABLES LIKE 使用 * 作为通配符。
+        return getProjectTables(
+                (Connection) connection, keyword).stream()
+                .filter(node -> node.getName() != null
+                        && node.getName().toLowerCase(Locale.ROOT)
+                                .contains(normalized))
+                .limit(safeLimit)
+                .toList();
+    }
+
     /**
      * 获取表列表 (MaxCompute覆盖父类方法)
      * 
@@ -70,17 +108,67 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
      */
     @Override
     protected List<TreeNode> getTables(Connection conn, String catalog, String schema) throws SQLException {
-        List<TreeNode> nodes = super.getTables(conn, catalog, schema);
+        return getProjectTables(conn);
+    }
 
-        // 为每个表添加MaxCompute特有属性
-        for (TreeNode node : nodes) {
-            try {
-                enrichTableNode(conn, node);
-            } catch (Exception e) {
-                // 属性获取失败不影响列表展示
+    /**
+     * 按当前 JDBC URL 中的执行 Project 直接列出表。
+     *
+     * <p>MaxCompute JDBC 的 DatabaseMetaData 在部分版本中会额外枚举旧公共
+     * Project（MAXCOMPUTE_PUBLIC_DATA），从而让有效连接在导航阶段误报
+     * Schema 不存在。SHOW TABLES 只作用于当前执行 Project，可避开该兼容性
+     * 路径，也避免为每张表发起分区/扩展信息 N+1 查询。</p>
+     */
+    private List<TreeNode> getProjectTables(Connection conn) throws SQLException {
+        return readShowTables(conn, "SHOW TABLES");
+    }
+
+    private List<TreeNode> getProjectTables(
+            Connection conn, String keyword) throws SQLException {
+        return readShowTables(
+                conn, "SHOW TABLES LIKE '*" + keyword + "*'");
+    }
+
+    private List<TreeNode> readShowTables(
+            Connection conn, String sql) throws SQLException {
+        List<TreeNode> nodes = new ArrayList<>();
+        try (Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(sql)) {
+            while (rs.next()) {
+                String payload = rs.getString(1);
+                if (payload == null || payload.isBlank()) {
+                    continue;
+                }
+                for (String line : payload.split("\\R")) {
+                    String tableName = showTablesName(line);
+                    if (tableName.isBlank()) {
+                        continue;
+                    }
+                    TreeNode node = TreeNode.of(
+                            tableName, tableName, "TABLE", tableName);
+                    node.setIconType("table");
+                    node.setHasChildren(true);
+                    nodes.add(node);
+                }
             }
         }
+        nodes.sort(Comparator.comparing(
+                TreeNode::getName, String.CASE_INSENSITIVE_ORDER));
         return nodes;
+    }
+
+    /**
+     * JDBC SHOW 结果使用“身份前缀:对象名”并可能将多行放在单个单元格中。
+     */
+    private static String showTablesName(String line) {
+        if (line == null) {
+            return "";
+        }
+        String normalized = line.trim();
+        int promptSeparator = normalized.lastIndexOf(':');
+        return (promptSeparator >= 0
+                ? normalized.substring(promptSeparator + 1)
+                : normalized).trim();
     }
 
     /**
@@ -247,17 +335,122 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
     }
 
     @Override
+    public List<ColumnMetadata> getTableColumns(
+            Object connection, String schemaName, String tableName)
+            throws Exception {
+        Connection conn = (Connection) connection;
+
+        // 精确到表名的 JDBC 列元数据查询不会触发旧公共 Project 枚举，
+        // 且能完整保留字段类型、长度、可空和注释。部分 MaxCompute JDBC
+        // 版本会把 DESCRIBE 的整张文本表压成单个多行单元格，因此仅将
+        // DESCRIBE 保留为元数据为空或不受支持时的降级路径。
+        try {
+            List<ColumnMetadata> jdbcColumns = super.getTableColumns(
+                    connection, null, tableName);
+            if (!jdbcColumns.isEmpty()) {
+                return jdbcColumns;
+            }
+        } catch (SQLException ignored) {
+            // 继续使用 DESCRIBE 降级。
+        }
+        String tableRef = qualifiedTableIdentifier(schemaName, tableName);
+        List<ColumnMetadata> columns = new ArrayList<>();
+        boolean partitionSection = false;
+
+        try (Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery("DESCRIBE " + tableRef)) {
+            int columnCount = rs.getMetaData().getColumnCount();
+            while (rs.next()) {
+                String name = rs.getString(1);
+                String typeName = columnCount >= 2 ? rs.getString(2) : null;
+                String remarks = columnCount >= 3 ? rs.getString(3) : null;
+                if (name == null || name.isBlank()) {
+                    continue;
+                }
+                String normalizedName = name.trim();
+                if (normalizedName.startsWith("#")) {
+                    if (normalizedName.toLowerCase(Locale.ROOT)
+                            .contains("partition")) {
+                        partitionSection = true;
+                    }
+                    continue;
+                }
+                if (typeName == null || typeName.isBlank()) {
+                    continue;
+                }
+
+                ColumnMetadata column = new ColumnMetadata();
+                column.setName(normalizedName);
+                column.setDataType(String.valueOf(Types.OTHER));
+                column.setTypeName(typeName.trim());
+                column.setNullable(!typeName.toUpperCase(Locale.ROOT)
+                        .contains("NOT NULL"));
+                column.setRemarks(partitionSection
+                        ? mergeRemark("分区字段", remarks) : remarks);
+                column.setSchemaName(schemaName);
+                column.setTableName(tableName);
+                columns.add(column);
+            }
+        }
+        return columns;
+    }
+
+    @Override
+    public List<TableConstraintMetadata> getTableConstraints(
+            Object connection, String schemaName, String tableName)
+            throws Exception {
+        String ddl = getTableDDL(connection, schemaName, tableName);
+        Matcher matcher = PRIMARY_KEY_PATTERN.matcher(ddl);
+        if (!matcher.find()) {
+            return List.of();
+        }
+        List<String> primaryColumns = new ArrayList<>();
+        for (String rawColumn : matcher.group(1).split(",")) {
+            String column = rawColumn.trim()
+                    .replace("`", "")
+                    .replace("\"", "");
+            if (!column.isBlank()) {
+                primaryColumns.add(column);
+            }
+        }
+        if (primaryColumns.isEmpty()) {
+            return List.of();
+        }
+        TableConstraintMetadata primaryKey = new TableConstraintMetadata();
+        primaryKey.setName("PRIMARY");
+        primaryKey.setType("PRIMARY_KEY");
+        primaryKey.setColumns(primaryColumns);
+        return List.of(primaryKey);
+    }
+
+    @Override
+    public String buildTablePreviewSql(
+            Object connection, String schemaName, String tableName, int limit) {
+        int safeLimit = Math.max(
+                1, Math.min(limit, JdbcTableInspector.MAX_PREVIEW_ROWS));
+        return "SELECT * FROM "
+                + qualifiedTableIdentifier(schemaName, tableName)
+                + " LIMIT " + safeLimit;
+    }
+
+    @Override
     public String getTableDDL(Object connection, String schemaName, String tableName) throws Exception {
         Connection conn = (Connection) connection;
         StringBuilder ddl = new StringBuilder();
 
-        // 获取列信息
-        List<io.github.lexaquila.lyradb.model.dto.ColumnMetadata> columns = getTableColumns(conn, schemaName,
-                tableName);
+        String tableRef = qualifiedTableIdentifier(schemaName, tableName);
+        try {
+            String nativeDdl = getNativeTableDdl(conn, tableRef);
+            if (!nativeDdl.isBlank()) {
+                return nativeDdl;
+            }
+        } catch (SQLException ignored) {
+            // 老版本服务端不支持 SHOW CREATE TABLE 时，继续使用 DESCRIBE 降级。
+        }
 
         // MaxCompute特有的DDL查询
         try (Statement stmt = conn.createStatement()) {
-            try (ResultSet rs = stmt.executeQuery("DESCRIBE " + safeIdentifier(tableName))) {
+            try (ResultSet rs = stmt.executeQuery("DESCRIBE " + tableRef)) {
                 ddl.append("-- MaxCompute Table: ").append(tableName).append("\n");
 
                 // 收集列信息和分区信息
@@ -327,10 +520,63 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
                 }
             }
         } catch (SQLException e) {
-            // 降级到标准DDL生成
-            return super.getTableDDL(connection, schemaName, tableName);
+            // 不再回退 JDBC DatabaseMetaData，避免再次触发旧公共 Project 枚举。
+            throw new SQLException("读取 MaxCompute 表 DDL 失败: " + tableRef, e);
         }
 
         return ddl.toString();
+    }
+
+    private String getNativeTableDdl(
+            Connection conn, String tableRef) throws SQLException {
+        StringBuilder ddl = new StringBuilder();
+        try (Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SHOW CREATE TABLE " + tableRef)) {
+            int columnCount = rs.getMetaData().getColumnCount();
+            while (rs.next()) {
+                String rowText = null;
+                for (int index = 1; index <= columnCount; index++) {
+                    String candidate = rs.getString(index);
+                    if (candidate == null || candidate.isBlank()) {
+                        continue;
+                    }
+                    rowText = candidate;
+                    if (candidate.toUpperCase(Locale.ROOT)
+                            .contains("CREATE")) {
+                        break;
+                    }
+                }
+                if (rowText != null) {
+                    if (!ddl.isEmpty()) {
+                        ddl.append('\n');
+                    }
+                    ddl.append(rowText.trim());
+                }
+            }
+        }
+        return ddl.toString();
+    }
+
+    private static String qualifiedTableIdentifier(
+            String namespace, String tableName) {
+        if (tableName == null || tableName.isBlank()) {
+            throw new IllegalArgumentException("表名不能为空");
+        }
+        String normalizedNamespace = namespace == null
+                ? "" : namespace.trim().replace('/', '.');
+        String qualified = normalizedNamespace.isBlank()
+                ? tableName.trim()
+                : normalizedNamespace + "." + tableName.trim();
+        try {
+            return safeIdentifier(qualified);
+        } catch (SQLException e) {
+            throw new IllegalArgumentException(e.getMessage(), e);
+        }
+    }
+
+    private static String mergeRemark(String prefix, String value) {
+        return value == null || value.isBlank()
+                ? prefix : prefix + " · " + value.trim();
     }
 }

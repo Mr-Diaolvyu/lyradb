@@ -366,7 +366,8 @@ public final class ConnectionDialog extends JDialog {
                 } catch (Exception exception) {
                     statusLabel.setForeground(NativeTheme.ERROR);
                     statusLabel.setText("连接失败");
-                    showError(rootCause(exception));
+                    ConnectionErrorAdvisor.show(
+                            ConnectionDialog.this, connection, exception);
                 }
             }
         }.execute();

@@ -8,6 +8,7 @@ import io.github.lexaquila.lyradb.config.AppProperties;
 import io.github.lexaquila.lyradb.driver.StatementRegistry;
 import io.github.lexaquila.lyradb.model.dto.QueryResult;
 import io.github.lexaquila.lyradb.model.dto.SqlReviewFinding;
+import io.github.lexaquila.lyradb.model.dto.TableInspection;
 import io.github.lexaquila.lyradb.model.entity.ApprovalRequest;
 import io.github.lexaquila.lyradb.model.entity.DataSource;
 import io.github.lexaquila.lyradb.model.entity.Grant;
@@ -173,6 +174,99 @@ public class EnterpriseQueryService {
                     approvalId, finalAuditFailure);
         }
         return result;
+    }
+
+    /**
+     * 企业版表工作台：先执行 Grant 白名单校验，再复用企业查询链路完成
+     * 预览、脱敏与审计；元数据同样只在授权通过后读取。
+     */
+    public TableInspection inspectTable(
+            String grantedSourceName,
+            String schema,
+            String table,
+            String objectType,
+            int requestedLimit) throws Exception {
+        AccessContext access = requireAccess(grantedSourceName);
+        Grant grant = access.grant();
+        authorizeTableInspection(grant, schema, table);
+
+        int limit = Math.max(1, Math.min(200,
+                Math.min(requestedLimit,
+                        Math.max(1, grant.getMaxRowsPerQuery()))));
+        TableInspection inspection = new TableInspection();
+        inspection.setSchema(schema);
+        inspection.setTable(table);
+        inspection.setObjectType(
+                objectType == null || objectType.isBlank()
+                        ? "TABLE" : objectType.toUpperCase(Locale.ROOT));
+
+        ConnectionService.ActiveConnection active =
+                dataSourceService.resolveActiveConnection(
+                        grant.getDataSourceId());
+        String previewSql;
+        try (ConnectionService.ActiveConnection.Lease ignored =
+                     active.acquire()) {
+            previewSql = active.driver.buildTablePreviewSql(
+                    active.connection, schema, table, limit);
+        }
+        try {
+            inspection.setPreview(executeQuery(
+                    grantedSourceName, previewSql, null));
+        } catch (Exception exception) {
+            inspection.addError("preview", safeMessage(exception));
+        }
+
+        try (ConnectionService.ActiveConnection.Lease ignored =
+                     active.acquire()) {
+            try {
+                inspection.setColumns(active.driver.getTableColumns(
+                        active.connection, schema, table));
+            } catch (Exception exception) {
+                inspection.addError("columns", safeMessage(exception));
+            }
+            try {
+                inspection.setConstraints(active.driver.getTableConstraints(
+                        active.connection, schema, table));
+            } catch (Exception exception) {
+                inspection.addError(
+                        "constraints", safeMessage(exception));
+            }
+            try {
+                inspection.setDdl(active.driver.getTableDDL(
+                        active.connection, schema, table));
+            } catch (Exception exception) {
+                inspection.addError("ddl", safeMessage(exception));
+            }
+        }
+        return inspection;
+    }
+
+    private void authorizeTableInspection(
+            Grant grant, String schema, String table) {
+        if (schema == null || schema.isBlank()
+                || table == null || table.isBlank()) {
+            throw new IllegalArgumentException(
+                    "企业表工作台必须指定 Schema 和表名");
+        }
+        String qualified = schema.trim() + "." + table.trim();
+        Set<String> allowedSchemas =
+                SqlParseUtil.splitCsv(grant.getAllowedSchemas());
+        Set<String> allowedTables =
+                SqlParseUtil.splitCsv(grant.getAllowedTables());
+        Set<String> blockedTables =
+                SqlParseUtil.splitCsv(grant.getBlockedTables());
+        if (!SqlParseUtil.matchAny(schema, allowedSchemas)) {
+            throw new RuntimeException(
+                    "Schema 不在授权范围内: " + schema);
+        }
+        if (SqlParseUtil.matchAny(qualified, blockedTables)) {
+            throw new RuntimeException(
+                    "表在黑名单中，禁止访问: " + qualified);
+        }
+        if (!SqlParseUtil.matchAny(qualified, allowedTables)) {
+            throw new RuntimeException(
+                    "表不在授权白名单内: " + qualified);
+        }
     }
 
     /**
