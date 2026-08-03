@@ -18,7 +18,7 @@
     <description>LyraDB 个人版原生桌面数据库工作台</description>
 
     <properties>
-        <revision>3.1.1</revision>
+        <revision>3.1.2</revision>
         <java.version>17</java.version>
         <main.class>io.github.lexaquila.lyradb.desktop.NativeDesktopApplication</main.class>
         <flatlaf.version>3.7</flatlaf.version>

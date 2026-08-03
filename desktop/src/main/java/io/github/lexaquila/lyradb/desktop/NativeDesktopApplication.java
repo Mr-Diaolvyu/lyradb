@@ -22,7 +22,7 @@ public final class NativeDesktopApplication {
         String implementationVersion = NativeDesktopApplication.class
                 .getPackage().getImplementationVersion();
         return implementationVersion == null || implementationVersion.isBlank()
-                ? "3.1.1"
+                ? "3.1.2"
                 : implementationVersion;
     }
 

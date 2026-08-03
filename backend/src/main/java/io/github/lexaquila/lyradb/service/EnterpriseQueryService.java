@@ -208,6 +208,7 @@ public class EnterpriseQueryService {
                      active.acquire()) {
             previewSql = active.driver.buildTablePreviewSql(
                     active.connection, schema, table, limit);
+            inspection.setPreviewSql(previewSql);
         }
         try {
             inspection.setPreview(executeQuery(
@@ -248,24 +249,60 @@ public class EnterpriseQueryService {
             throw new IllegalArgumentException(
                     "企业表工作台必须指定 Schema 和表名");
         }
-        String qualified = schema.trim() + "." + table.trim();
+        String normalizedSchema = schema.trim()
+                .replace('/', '.');
         Set<String> allowedSchemas =
                 SqlParseUtil.splitCsv(grant.getAllowedSchemas());
         Set<String> allowedTables =
                 SqlParseUtil.splitCsv(grant.getAllowedTables());
         Set<String> blockedTables =
                 SqlParseUtil.splitCsv(grant.getBlockedTables());
-        if (!SqlParseUtil.matchAny(schema, allowedSchemas)) {
-            throw new RuntimeException(
-                    "Schema 不在授权范围内: " + schema);
+        LinkedHashSet<String> schemaCandidates =
+                new LinkedHashSet<>();
+        schemaCandidates.add(normalizedSchema);
+        int separator = normalizedSchema.lastIndexOf('.');
+        if (separator >= 0
+                && separator + 1 < normalizedSchema.length()) {
+            schemaCandidates.add(
+                    normalizedSchema.substring(separator + 1));
         }
-        if (SqlParseUtil.matchAny(qualified, blockedTables)) {
-            throw new RuntimeException(
-                    "表在黑名单中，禁止访问: " + qualified);
+        boolean authorized = false;
+        boolean schemaMatched = false;
+        boolean whitelistMatched = false;
+        boolean blacklistMatched = false;
+        for (String candidate : schemaCandidates) {
+            String qualified =
+                    candidate + "." + table.trim();
+            if (!SqlParseUtil.matchAny(
+                    candidate, allowedSchemas)) {
+                continue;
+            }
+            schemaMatched = true;
+            boolean candidateWhitelisted =
+                    SqlParseUtil.matchAny(
+                    qualified, allowedTables);
+            boolean candidateBlacklisted =
+                    SqlParseUtil.matchAny(
+                    qualified, blockedTables);
+            whitelistMatched |= candidateWhitelisted;
+            blacklistMatched |= candidateBlacklisted;
+            if (candidateWhitelisted
+                    && !candidateBlacklisted) {
+                authorized = true;
+                break;
+            }
         }
-        if (!SqlParseUtil.matchAny(qualified, allowedTables)) {
+        if (!authorized) {
+            if (!schemaMatched) {
+                throw new RuntimeException(
+                        "Schema 不在授权范围内");
+            }
+            if (blacklistMatched) {
+                throw new RuntimeException(
+                        "表在黑名单中，禁止访问");
+            }
             throw new RuntimeException(
-                    "表不在授权白名单内: " + qualified);
+                    "表不在授权白名单内");
         }
     }
 

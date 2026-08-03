@@ -153,7 +153,7 @@ public final class ConnectionExcelTemplateCodec {
                 : CredentialExportPolicy.OMIT;
         return new ConnectionPackageReadResult(
                 ConnectionPackageCodec.FORMAT_VERSION, Instant.now(),
-                "3.1.1-excel", policy,
+                "3.1.2-excel", policy,
                 ConnectionPackageRisk.forPolicy(policy), entries);
     }
 

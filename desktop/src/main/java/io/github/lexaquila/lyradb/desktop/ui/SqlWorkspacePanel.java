@@ -2,12 +2,16 @@ package io.github.lexaquila.lyradb.desktop.ui;
 
 import io.github.lexaquila.lyradb.desktop.DesktopRuntime;
 import io.github.lexaquila.lyradb.desktop.db.NativeConnectionManager.ExecutionResult;
+import io.github.lexaquila.lyradb.model.dto.ColumnMetadata;
 import io.github.lexaquila.lyradb.model.dto.QueryResult;
 import io.github.lexaquila.lyradb.model.dto.SqlReviewFinding;
+import io.github.lexaquila.lyradb.model.dto.TreeNode;
+import io.github.lexaquila.lyradb.service.SqlTextFormatter;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.JButton;
+import javax.swing.JComboBox;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -32,8 +36,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -52,6 +60,8 @@ public final class SqlWorkspacePanel extends JPanel {
     private final JTextArea messages = new JTextArea();
     private final JSpinner limitSpinner =
             new JSpinner(new SpinnerNumberModel(1000, 1, 10000, 100));
+    private final JComboBox<FieldDisplayMode> fieldDisplayMode =
+            new JComboBox<>(FieldDisplayMode.values());
     private final JButton executeButton = UiKit.button(
             "执行", LyraIcons.of(LyraIcons.Kind.PLAY),
             UiKit.ButtonStyle.PRIMARY);
@@ -66,6 +76,15 @@ public final class SqlWorkspacePanel extends JPanel {
             "回滚", null, UiKit.ButtonStyle.TOOLBAR);
     private volatile String runningExecutionId;
     private boolean operationBusy;
+    private SqlCompletionSupport completionSupport;
+    private List<String> resultPhysicalColumns = List.of();
+    private List<List<Object>> resultRows = List.of();
+    private Map<String, String> resultRemarks = Map.of();
+    private String lastResultSql = "";
+    private SwingWorker<Map<String, String>, Void> remarksWorker;
+    private SwingWorker<ExecutionResult, Void> executionWorker;
+    private long remarksGeneration;
+    private boolean disposed;
 
     public SqlWorkspacePanel(DesktopRuntime runtime, String connectionId,
             String connectionName, String dbType, Consumer<String> statusConsumer) {
@@ -88,6 +107,29 @@ public final class SqlWorkspacePanel extends JPanel {
 
     public String dbType() {
         return dbType;
+    }
+
+    void disposeWorkspace() {
+        disposed = true;
+        cancelRemarksLoad();
+        if (completionSupport != null) {
+            completionSupport.dispose();
+        }
+        String executionId = runningExecutionId;
+        runningExecutionId = null;
+        if (executionWorker != null && !executionWorker.isDone()) {
+            executionWorker.cancel(true);
+        }
+        executionWorker = null;
+        if (executionId != null) {
+            new SwingWorker<Void, Void>() {
+                @Override
+                protected Void doInBackground() {
+                    runtime.connectionManager().cancel(executionId);
+                    return null;
+                }
+            }.execute();
+        }
     }
 
     public String currentSql() {
@@ -148,6 +190,11 @@ public final class SqlWorkspacePanel extends JPanel {
                 "导出 CSV", LyraIcons.of(LyraIcons.Kind.EXPORT),
                 UiKit.ButtonStyle.TOOLBAR);
         export.addActionListener(event -> exportCsv());
+        JButton format = UiKit.button(
+                "美化 SQL", LyraIcons.of(LyraIcons.Kind.FORMAT),
+                UiKit.ButtonStyle.TOOLBAR);
+        format.setToolTipText("规范缩进和关键字（Ctrl+Shift+F）");
+        format.addActionListener(event -> formatSql());
 
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 0));
         actions.setOpaque(false);
@@ -163,6 +210,7 @@ public final class SqlWorkspacePanel extends JPanel {
         limitSpinner.setPreferredSize(new Dimension(88, 34));
         actions.add(limitSpinner);
         actions.add(export);
+        actions.add(format);
         header.add(actions, BorderLayout.EAST);
 
         editor.setFont(NativeTheme.FONT_MONO);
@@ -178,6 +226,19 @@ public final class SqlWorkspacePanel extends JPanel {
                         execute(false);
                     }
                 });
+        editor.getInputMap().put(KeyStroke.getKeyStroke(
+                KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK
+                        | InputEvent.SHIFT_DOWN_MASK), "formatSql");
+        editor.getActionMap().put("formatSql",
+                new javax.swing.AbstractAction() {
+                    @Override
+                    public void actionPerformed(
+                            java.awt.event.ActionEvent event) {
+                        formatSql();
+                    }
+                });
+        completionSupport = new SqlCompletionSupport(
+                editor, dbType, this::completeSql);
 
         resultTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         resultTable.setFillsViewportHeight(true);
@@ -192,7 +253,26 @@ public final class SqlWorkspacePanel extends JPanel {
         messages.setMargin(new java.awt.Insets(10, 10, 10, 10));
 
         JTabbedPane outputTabs = new JTabbedPane();
-        outputTabs.addTab("结果", UiKit.scroll(resultTable));
+        JPanel resultPanel = new JPanel(new BorderLayout());
+        resultPanel.setOpaque(false);
+        JPanel resultTools = new JPanel(new FlowLayout(
+                FlowLayout.RIGHT, 7, 4));
+        resultTools.setOpaque(false);
+        JLabel fieldLabel = new JLabel("表头显示");
+        fieldLabel.setFont(NativeTheme.FONT_CAPTION);
+        fieldLabel.setForeground(NativeTheme.MUTED);
+        fieldDisplayMode.setSelectedItem(FieldDisplayMode.PHYSICAL);
+        fieldDisplayMode.setToolTipText(
+                "只改变界面表头；SQL 和导出的数据键仍使用真实字段名");
+        fieldDisplayMode.addActionListener(event -> {
+            applyResultHeaders();
+            loadResultRemarksIfNeeded();
+        });
+        resultTools.add(fieldLabel);
+        resultTools.add(fieldDisplayMode);
+        resultPanel.add(resultTools, BorderLayout.NORTH);
+        resultPanel.add(UiKit.scroll(resultTable), BorderLayout.CENTER);
+        outputTabs.addTab("结果", resultPanel);
         outputTabs.addTab("消息与安全审核", UiKit.scroll(messages));
 
         JSplitPane split = new JSplitPane(
@@ -212,7 +292,7 @@ public final class SqlWorkspacePanel extends JPanel {
     }
 
     private void executeSql(String sql, boolean force) {
-        if (operationBusy || runningExecutionId != null) {
+        if (disposed || operationBusy || runningExecutionId != null) {
             return;
         }
         if (sql == null || sql.isBlank()) {
@@ -228,7 +308,7 @@ public final class SqlWorkspacePanel extends JPanel {
         long started = System.currentTimeMillis();
         status("正在 " + connectionName + " 执行 SQL…");
 
-        new SwingWorker<ExecutionResult, Void>() {
+        executionWorker = new SwingWorker<>() {
             @Override
             protected ExecutionResult doInBackground() throws Exception {
                 return runtime.connectionManager().execute(
@@ -237,6 +317,10 @@ public final class SqlWorkspacePanel extends JPanel {
 
             @Override
             protected void done() {
+                if (isCancelled() || disposed) {
+                    return;
+                }
+                executionWorker = null;
                 runningExecutionId = null;
                 setOperationBusy(false, false);
                 try {
@@ -275,7 +359,8 @@ public final class SqlWorkspacePanel extends JPanel {
                             cause.getMessage(), "SQL 执行失败", JOptionPane.ERROR_MESSAGE);
                 }
             }
-        }.execute();
+        };
+        executionWorker.execute();
     }
 
     private void cancel() {
@@ -367,22 +452,19 @@ public final class SqlWorkspacePanel extends JPanel {
     }
 
     private void showQuery(QueryResult result) {
-        DefaultTableModel model = new DefaultTableModel(
-                result.getColumns().toArray(), 0) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
-        };
+        cancelRemarksLoad();
+        resultPhysicalColumns = List.copyOf(result.getColumns());
+        resultRows = new ArrayList<>();
         for (Map<String, Object> row : result.getRows()) {
-            Object[] values = result.getColumns().stream()
-                    .map(row::get).toArray();
-            model.addRow(values);
+            List<Object> values = result.getColumns().stream()
+                    .map(row::get).toList();
+            resultRows.add(values);
         }
-        resultTable.setModel(model);
-        for (int column = 0; column < resultTable.getColumnCount(); column++) {
-            resultTable.getColumnModel().getColumn(column).setPreferredWidth(150);
-        }
+        resultRemarks = Map.of();
+        lastResultSql = result.getSql() == null
+                ? currentSql() : result.getSql();
+        applyResultHeaders();
+        loadResultRemarksIfNeeded();
         StringBuilder text = new StringBuilder()
                 .append("查询完成：").append(result.getRows().size()).append(" 行，")
                 .append(result.getElapsedMs()).append(" ms");
@@ -393,11 +475,38 @@ public final class SqlWorkspacePanel extends JPanel {
         showFindings(result.getReviewFindings(), false);
     }
 
+    private void applyResultHeaders() {
+        FieldDisplayMode mode = (FieldDisplayMode)
+                fieldDisplayMode.getSelectedItem();
+        List<String> headers = displayHeaders(
+                resultPhysicalColumns, resultRemarks,
+                mode == null ? FieldDisplayMode.PHYSICAL : mode);
+        DefaultTableModel model = new DefaultTableModel(
+                headers.toArray(), 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        for (List<Object> row : resultRows) {
+            model.addRow(row.toArray());
+        }
+        resultTable.setModel(model);
+        for (int column = 0; column < resultTable.getColumnCount(); column++) {
+            resultTable.getColumnModel().getColumn(column).setPreferredWidth(150);
+        }
+    }
+
     private void showUpdate(Integer affected, List<SqlReviewFinding> findings, long elapsed) {
+        cancelRemarksLoad();
         DefaultTableModel model = new DefaultTableModel(
                 new Object[]{"影响行数", "耗时(ms)"}, 0);
         model.addRow(new Object[]{affected, elapsed});
         resultTable.setModel(model);
+        resultPhysicalColumns = List.of();
+        resultRows = List.of();
+        resultRemarks = Map.of();
+        lastResultSql = "";
         messages.setText("语句执行完成，影响 " + affected + " 行。");
         showFindings(findings, false);
     }
@@ -534,6 +643,202 @@ public final class SqlWorkspacePanel extends JPanel {
         }
         int end = value.offsetByCodePoints(0, Math.max(1, maxCodePoints - 1));
         return value.substring(0, end) + "…";
+    }
+
+    private void formatSql() {
+        String selected = editor.getSelectedText();
+        boolean selection = selected != null && !selected.isBlank();
+        String source = selection ? selected : editor.getText();
+        if (source == null || source.isBlank()) {
+            status("没有可美化的 SQL");
+            return;
+        }
+        int start = editor.getSelectionStart();
+        String formatted = SqlTextFormatter.format(source);
+        if (selection) {
+            editor.replaceRange(formatted,
+                    editor.getSelectionStart(), editor.getSelectionEnd());
+            editor.select(start, start + formatted.length());
+        } else {
+            int caret = editor.getCaretPosition();
+            editor.setText(formatted);
+            editor.setCaretPosition(Math.min(caret, formatted.length()));
+        }
+        status("SQL 已美化；字符串、注释和引号标识符保持原样");
+    }
+
+    private List<SqlCompletionSupport.Suggestion> completeSql(
+            SqlCompletionContext context) throws Exception {
+        SqlCompletionContext.TableReference reference =
+                context.resolveQualifier();
+        if (reference != null) {
+            return runtime.connectionManager().columns(
+                            connectionId,
+                            reference.schema(), reference.table()).stream()
+                    .filter(column -> startsWithIgnoreCase(
+                            column.getName(), context.prefix()))
+                    .map(column -> new SqlCompletionSupport.Suggestion(
+                            column.getName(), column.getName(),
+                            column.getTypeName()
+                                    + remarksSuffix(column.getRemarks()),
+                            SqlCompletionSupport.Kind.COLUMN))
+                    .limit(100)
+                    .toList();
+        }
+
+        String prefix = context.prefix();
+        if (prefix == null || prefix.isBlank()) {
+            return List.of();
+        }
+        Map<String, TreeNode> nodes = new LinkedHashMap<>();
+        for (TreeNode node : runtime.connectionManager()
+                .searchCached(connectionId, prefix, 80)) {
+            nodes.put(nodeKey(node), node);
+        }
+        if (nodes.isEmpty()) {
+            for (TreeNode node : runtime.connectionManager()
+                    .search(connectionId, prefix, 80)) {
+                nodes.putIfAbsent(nodeKey(node), node);
+            }
+        }
+        return nodes.values().stream()
+                .map(this::toSuggestion)
+                .filter(java.util.Objects::nonNull)
+                .limit(100)
+                .toList();
+    }
+
+    private SqlCompletionSupport.Suggestion toSuggestion(TreeNode node) {
+        String type = node.getType() == null
+                ? "" : node.getType().toUpperCase(Locale.ROOT);
+        SqlCompletionSupport.Kind kind = switch (type) {
+            case "TABLE", "COLLECTION" ->
+                    SqlCompletionSupport.Kind.TABLE;
+            case "VIEW" -> SqlCompletionSupport.Kind.VIEW;
+            case "SCHEMA", "DATABASE", "PROJECT" ->
+                    SqlCompletionSupport.Kind.SCHEMA;
+            default -> null;
+        };
+        if (kind == null) {
+            return null;
+        }
+        return new SqlCompletionSupport.Suggestion(
+                node.getName(), node.getName(),
+                type + (node.getPath() == null
+                        ? "" : " · " + node.getPath()), kind);
+    }
+
+    private void cancelRemarksLoad() {
+        remarksGeneration++;
+        if (remarksWorker != null && !remarksWorker.isDone()) {
+            remarksWorker.cancel(true);
+        }
+        remarksWorker = null;
+        fieldDisplayMode.setEnabled(true);
+    }
+
+    private void loadResultRemarksIfNeeded() {
+        FieldDisplayMode mode = (FieldDisplayMode)
+                fieldDisplayMode.getSelectedItem();
+        if (mode == null || mode == FieldDisplayMode.PHYSICAL
+                || resultPhysicalColumns.isEmpty()
+                || !resultRemarks.isEmpty()) {
+            return;
+        }
+        SqlCompletionContext context = SqlCompletionContext.at(
+                lastResultSql, lastResultSql.length());
+        Set<SqlCompletionContext.TableReference> references =
+                new LinkedHashSet<>(context.tableReferences().values());
+        if (references.size() != 1) {
+            status("注释表头仅自动解析单表查询；复杂查询请使用 AS 别名");
+            return;
+        }
+        if (remarksWorker != null && !remarksWorker.isDone()) {
+            return;
+        }
+        long request = ++remarksGeneration;
+        SqlCompletionContext.TableReference reference =
+                references.iterator().next();
+        fieldDisplayMode.setEnabled(false);
+        remarksWorker = new SwingWorker<>() {
+            @Override
+            protected Map<String, String> doInBackground()
+                    throws Exception {
+                Map<String, String> remarks = new LinkedHashMap<>();
+                for (ColumnMetadata column :
+                        runtime.connectionManager().columns(
+                                connectionId,
+                                reference.schema(), reference.table())) {
+                    if (column.getRemarks() != null
+                            && !column.getRemarks().isBlank()) {
+                        remarks.put(column.getName(), column.getRemarks());
+                    }
+                }
+                return remarks;
+            }
+
+            @Override
+            protected void done() {
+                if (isCancelled() || request != remarksGeneration) {
+                    return;
+                }
+                remarksWorker = null;
+                fieldDisplayMode.setEnabled(true);
+                try {
+                    resultRemarks = get();
+                    applyResultHeaders();
+                    status(resultRemarks.isEmpty()
+                            ? "当前单表没有可用字段注释"
+                            : "已切换查询结果字段显示方式");
+                } catch (Exception exception) {
+                    resultRemarks = Map.of();
+                    status("字段注释读取失败，继续显示物理字段名");
+                }
+            }
+        };
+        remarksWorker.execute();
+    }
+
+    static List<String> displayHeaders(
+            List<String> physicalColumns,
+            Map<String, String> remarks,
+            FieldDisplayMode mode) {
+        Map<String, String> normalizedRemarks = new LinkedHashMap<>();
+        if (remarks != null) {
+            remarks.forEach((key, value) ->
+                    normalizedRemarks.put(
+                            key.toLowerCase(Locale.ROOT), value));
+        }
+        List<String> result = new ArrayList<>();
+        Map<String, Integer> occurrences = new LinkedHashMap<>();
+        for (String physical : physicalColumns) {
+            String rendered = mode.title(physical,
+                    normalizedRemarks.get(
+                            physical.toLowerCase(Locale.ROOT)));
+            int occurrence = occurrences.merge(
+                    rendered.toLowerCase(Locale.ROOT), 1, Integer::sum);
+            result.add(occurrence == 1 ? rendered
+                    : rendered + " [" + physical + "]");
+        }
+        return List.copyOf(result);
+    }
+
+    private static boolean startsWithIgnoreCase(
+            String value, String prefix) {
+        return prefix == null || prefix.isBlank()
+                || value.toLowerCase(Locale.ROOT)
+                .startsWith(prefix.toLowerCase(Locale.ROOT));
+    }
+
+    private static String remarksSuffix(String remarks) {
+        return remarks == null || remarks.isBlank()
+                ? "" : " · " + remarks;
+    }
+
+    private static String nodeKey(TreeNode node) {
+        return (node.getType() == null ? "" : node.getType())
+                + ":" + (node.getPath() == null
+                ? node.getName() : node.getPath());
     }
 
     private void status(String message) {

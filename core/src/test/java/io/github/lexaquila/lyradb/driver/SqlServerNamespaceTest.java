@@ -31,6 +31,9 @@ class SqlServerNamespaceTest {
         when(tables.next()).thenReturn(true, false);
         when(tables.getString("TABLE_NAME")).thenReturn("orders");
         when(tables.getString("TABLE_TYPE")).thenReturn("TABLE");
+        when(tables.getString("TABLE_CAT")).thenReturn("sales");
+        when(tables.getString("TABLE_SCHEM")).thenReturn("dbo");
+        when(tables.getString("REMARKS")).thenReturn("销售订单");
         when(metadata.getTables(
                 eq("sales"), eq("dbo"), eq("%"), any(String[].class)))
                 .thenReturn(tables);
@@ -47,6 +50,10 @@ class SqlServerNamespaceTest {
         assertThat(tableNodes).singleElement().satisfies(node -> {
             assertThat(node.getName()).isEqualTo("orders");
             assertThat(node.getPath()).isEqualTo("sales/dbo/orders");
+            assertThat(node.getProperties())
+                    .containsEntry("catalog", "sales")
+                    .containsEntry("schema", "dbo")
+                    .containsEntry("remarks", "销售订单");
         });
     }
 
@@ -68,6 +75,39 @@ class SqlServerNamespaceTest {
 
         verify(metadata).getColumns("sales", "dbo", "orders", "%");
         verify(metadata).getPrimaryKeys("sales", "dbo", "orders");
+    }
+
+    @Test
+    void shouldPushScopedSearchToExactCatalogAndSchema() throws Exception {
+        DatabaseMetaData metadata = mock(DatabaseMetaData.class);
+        Connection connection = mock(Connection.class);
+        ResultSet tables = mock(ResultSet.class);
+        when(connection.getMetaData()).thenReturn(metadata);
+        when(metadata.getSearchStringEscape()).thenReturn("\\");
+        when(metadata.getTables(
+                eq("sales"), eq("dbo"), eq("%ord%"),
+                any(String[].class))).thenReturn(tables);
+        when(tables.next()).thenReturn(true, false);
+        when(tables.getString("TABLE_NAME")).thenReturn("orders");
+        when(tables.getString("TABLE_CAT")).thenReturn("sales");
+        when(tables.getString("TABLE_SCHEM")).thenReturn("dbo");
+        when(tables.getString("TABLE_TYPE")).thenReturn("TABLE");
+
+        GenericJdbcDriver driver = new GenericJdbcDriver(
+                sqlServerInfo(), getClass().getClassLoader());
+        List<TreeNode> nodes = driver.searchTreeNodes(
+                connection, "sales/dbo", "ord", 20);
+
+        assertThat(nodes).singleElement().satisfies(node -> {
+            assertThat(node.getName()).isEqualTo("orders");
+            assertThat(node.getPath()).isEqualTo("sales/dbo/orders");
+            assertThat(node.getProperties())
+                    .containsEntry("catalog", "sales")
+                    .containsEntry("schema", "dbo");
+        });
+        verify(metadata).getTables(
+                eq("sales"), eq("dbo"), eq("%ord%"),
+                any(String[].class));
     }
 
     private static ResultSet resultSetWithSingleString(

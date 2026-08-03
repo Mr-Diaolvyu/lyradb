@@ -5,7 +5,7 @@
 [![Java](https://img.shields.io/badge/Java-17-orange)]()
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.5-brightgreen)]()
 [![Vue](https://img.shields.io/badge/Vue-3.4-42b883)]()
-[![Version](https://img.shields.io/badge/version-3.1.1-334155)]()
+[![Version](https://img.shields.io/badge/version-3.1.2-334155)]()
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue)]()
 
 **简体中文** | [English](README.en.md)
@@ -54,7 +54,7 @@ LyraDB 支持 MySQL、PostgreSQL、Oracle、SQL Server、SQLite、ClickHouse、M
 
 ### Windows 个人版
 
-从 GitHub Release 下载 `LyraDB-3.1.1-windows-x64-portable.zip`，完整解压后运行：
+从 GitHub Release 下载 `LyraDB-3.1.2-windows-x64-portable.zip`，完整解压后运行：
 
 ```text
 LyraDB\LyraDB.exe
@@ -65,7 +65,7 @@ LyraDB\LyraDB.exe
 从源码构建需要带 `jpackage` 的 JDK 21 与 Maven：
 
 ```powershell
-.\package-desktop.ps1 -Version 3.1.1
+.\package-desktop.ps1 -Version 3.1.2
 ```
 
 脚本会运行 core/desktop 测试，生成原生 app-image，真实启动 EXE 并验证：
@@ -88,7 +88,7 @@ npm run dev
 ```bash
 # 仓库根目录
 mvn -B -ntp -pl backend -am clean package
-java -jar backend/target/lyradb-backend-3.1.1.jar
+java -jar backend/target/lyradb-backend-3.1.2.jar
 ```
 
 前端开发服务器默认位于 `http://localhost:5173`，并把 `/api` 代理到后端 `8080`。
@@ -142,10 +142,10 @@ lyradb/
 
 ```bash
 # 企业版服务端（包含 Vue 前端）
-bash package-server.sh 3.1.1
+bash package-server.sh 3.1.2
 
 # 个人版原生桌面
-bash package-desktop.sh 3.1.1
+bash package-desktop.sh 3.1.2
 ```
 
 Windows 使用同名 `.ps1` 脚本。服务端与桌面端是两条独立产物链，不会再互相包装。

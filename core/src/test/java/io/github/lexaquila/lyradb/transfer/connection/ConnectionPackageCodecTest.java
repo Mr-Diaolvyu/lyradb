@@ -47,7 +47,7 @@ class ConnectionPackageCodecTest {
         assertThat(json).contains("\"createdAt\"", "\"sourceVersion\"",
                 "\"integrity\"", "\"SHA-256\"");
         assertThat(result.createdAt()).isNotNull();
-        assertThat(result.sourceVersion()).isEqualTo("3.1.1");
+        assertThat(result.sourceVersion()).isEqualTo("3.1.2");
         assertThat(result.credentialPolicy()).isEqualTo(CredentialExportPolicy.PLAINTEXT);
         assertThat(result.risk().hasPlaintextDatabaseCredentials()).isTrue();
         assertThat(result.connections().get(0).credentials())

@@ -101,6 +101,20 @@ public interface DatabaseDriver {
     }
 
     /**
+     * 在指定数据库、Schema 或 Project 内搜索对象。
+     *
+     * <p>默认降级为全局搜索；JDBC 驱动应覆盖此方法，把命名空间直接下推给
+     * DatabaseMetaData，避免先枚举所有库再过滤。</p>
+     */
+    default List<TreeNode> searchTreeNodes(
+            Object connection,
+            String namespace,
+            String query,
+            int limit) throws Exception {
+        return searchTreeNodes(connection, query, limit);
+    }
+
+    /**
      * 获取表结构元数据
      *
      * @param connection 数据库连接

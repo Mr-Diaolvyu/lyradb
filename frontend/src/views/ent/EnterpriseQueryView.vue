@@ -14,8 +14,11 @@
         {{ currentGrant.sqlCapability === 'DML_ALLOWED' ? '可写' : '只读' }} · 上限 {{ currentGrant.maxRowsPerQuery }} 行
       </el-tag>
       <div class="spacer"></div>
-      <el-button :icon="Grid" :disabled="!source" @click="openTableWorkspace">
-        表工作台
+      <el-button :icon="Grid" :disabled="!source" @click="openDatabaseWorkspace">
+        数据库工作区
+      </el-button>
+      <el-button :icon="Share" :disabled="!source" @click="openErFromWorkspace()">
+        ER 图
       </el-button>
       <el-button :icon="Download" :disabled="executing || !source || !sql.trim()" @click="openExportRequest">
         申请导出
@@ -28,7 +31,10 @@
     <div class="editor-wrap data-card">
       <SqlEditor
         :model-value="sql"
-        :db-type="undefined"
+        :db-type="currentGrant?.dbType || catalog?.dbType"
+        :completion-tables="catalog?.tables || []"
+        :columns-loader="loadCompletionColumns"
+        metadata-scope="authorized"
         @update:model-value="(v: string) => sql = v"
         @execute="execute"
       />
@@ -39,13 +45,37 @@
         <span>{{ result.totalRows }} 行 · {{ result.elapsedMs }}ms</span>
         <span v-if="result.truncated" class="warn">结果已截断</span>
       </div>
-      <DataTable :columns="result.columns" :rows="result.rows" />
+      <DataTable
+        :columns="result.columns"
+        :rows="result.rows"
+        :remarks-loader="resultRemarksLoader"
+      />
     </div>
     <el-empty v-else-if="!executing" description="执行查询后在此查看结果" :image-size="60" />
 
     <el-dialog
+      v-model="workspaceDialogOpen"
+      :title="`数据库工作区 · ${source || '未选择数据源'}`"
+      width="94%"
+      top="3vh"
+      destroy-on-close
+      append-to-body
+      class="enterprise-workspace-dialog"
+    >
+      <EnterpriseDatabaseWorkspace
+        :catalog="catalog"
+        :loading="catalogLoading"
+        :error="catalogError"
+        @refresh="loadCatalog(true)"
+        @open-table="openTableFromWorkspace"
+        @open-sql="openSqlFromWorkspace"
+        @open-er="openErFromWorkspace"
+      />
+    </el-dialog>
+
+    <el-dialog
       v-model="tableDialogOpen"
-      title="企业表工作台"
+      :title="`表工作台 · ${tableForm.displaySchema || tableForm.schema}.${tableForm.table}`"
       width="92%"
       top="4vh"
       destroy-on-close
@@ -53,29 +83,6 @@
       class="enterprise-table-dialog"
     >
       <div class="table-dialog-shell">
-        <div class="table-locator glass-surface">
-          <el-input
-            v-model="tableForm.schema"
-            placeholder="Schema"
-            clearable
-            @keyup.enter="loadTableInspection"
-          />
-          <span class="locator-dot">.</span>
-          <el-input
-            v-model="tableForm.table"
-            placeholder="表名"
-            clearable
-            @keyup.enter="loadTableInspection"
-          />
-          <el-button
-            type="primary"
-            :loading="tableInspectionLoading"
-            :disabled="!tableForm.schema.trim() || !tableForm.table.trim()"
-            @click="loadTableInspection"
-          >
-            打开
-          </el-button>
-        </div>
         <div class="enterprise-inspection">
           <TableInspectionView
             :inspection="tableInspection"
@@ -112,20 +119,42 @@
         <el-button type="primary" :loading="submittingExport" @click="submitExportRequest">提交申请</el-button>
       </template>
     </el-dialog>
+
+    <EnterpriseErDiagramView
+      v-model:visible="erDialogOpen"
+      :grants="grants"
+      :initial-source="source"
+      :initial-schema="erInitialSchema"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, shallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Download, Grid, VideoPlay } from '@element-plus/icons-vue'
+import { Download, Grid, Share, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import SqlEditor from '@/components/editor/SqlEditor.vue'
 import DataTable from '@/components/editor/DataTable.vue'
 import TableInspectionView from '@/components/editor/TableInspectionView.vue'
-import { entApi, type LogicalGrant } from '@/api/ent'
-import type { QueryResult, TableInspection } from '@/types/metadata'
+import EnterpriseDatabaseWorkspace from '@/components/editor/EnterpriseDatabaseWorkspace.vue'
+import EnterpriseErDiagramView from '@/components/editor/EnterpriseErDiagramView.vue'
+import {
+  entApi,
+  type EnterpriseMetadataCatalog,
+  type EnterpriseMetadataTable,
+  type LogicalGrant,
+} from '@/api/ent'
+import type {
+  ColumnMetadata,
+  QueryResult,
+  TableInspection,
+} from '@/types/metadata'
 import { LatestRequestGate } from '@/utils/requestControl'
+import {
+  parseSqlCompletionContext,
+  type SqlCompletionTable,
+} from '@/utils/sqlCompletion'
 
 const route = useRoute()
 const router = useRouter()
@@ -137,12 +166,29 @@ const result = ref<QueryResult | null>(null)
 const requestGate = new LatestRequestGate()
 const REQUEST_KEY = 'enterprise-query'
 const TABLE_INSPECTION_KEY = 'enterprise-table-inspection'
+const CATALOG_KEY = 'enterprise-metadata-catalog'
+
+// 授权目录可包含数千张表，不对每个表对象创建深层响应式代理。
+const catalog = shallowRef<EnterpriseMetadataCatalog | null>(null)
+const catalogLoading = ref(false)
+const catalogError = ref<string | null>(null)
+const columnCache = new Map<string, ColumnMetadata[]>()
+const workspaceDialogOpen = ref(false)
+const erDialogOpen = ref(false)
+const erInitialSchema = ref('')
+const selectedWorkspaceTable =
+  ref<EnterpriseMetadataTable | null>(null)
 
 const tableDialogOpen = ref(false)
 const tableInspectionLoading = ref(false)
 const tableInspection = ref<TableInspection | null>(null)
 const tableInspectionError = ref<string | null>(null)
-const tableForm = ref({ schema: '', table: '' })
+const tableForm = ref({
+  schema: '',
+  displaySchema: '',
+  table: '',
+  objectType: 'TABLE',
+})
 
 const exportDialogOpen = ref(false)
 const submittingExport = ref(false)
@@ -154,6 +200,34 @@ const exportForm = ref({
 })
 
 const currentGrant = computed(() => grants.value.find(g => g.grantedSourceName === source.value))
+
+async function loadCatalog(refresh = false) {
+  if (!source.value) {
+    catalog.value = null
+    return
+  }
+  const sourceSnapshot = source.value
+  const version = requestGate.begin(CATALOG_KEY)
+  catalogLoading.value = true
+  catalogError.value = null
+  try {
+    const next = await entApi.metadataCatalog(
+      sourceSnapshot, refresh)
+    if (requestGate.isCurrent(CATALOG_KEY, version)
+      && sourceSnapshot === source.value) {
+      catalog.value = next
+    }
+  } catch (error: any) {
+    if (requestGate.isCurrent(CATALOG_KEY, version)) {
+      catalog.value = null
+      catalogError.value = error.message || '授权元数据目录加载失败'
+    }
+  } finally {
+    if (requestGate.isCurrent(CATALOG_KEY, version)) {
+      catalogLoading.value = false
+    }
+  }
+}
 
 async function loadGrants() {
   try {
@@ -169,32 +243,61 @@ async function loadGrants() {
   }
   const stateSql = window.history.state?.sql
   if (typeof stateSql === 'string') sql.value = stateSql
+  if (source.value) await loadCatalog(false)
 }
 onMounted(loadGrants)
 
 function onSourceChange() {
   requestGate.invalidate(REQUEST_KEY)
   requestGate.invalidate(TABLE_INSPECTION_KEY)
+  requestGate.invalidate(CATALOG_KEY)
   executing.value = false
   result.value = null
   tableInspection.value = null
+  catalog.value = null
+  catalogError.value = null
+  columnCache.clear()
+  void loadCatalog(false)
 }
 
-function openTableWorkspace() {
-  const firstAllowed = (currentGrant.value?.allowedTables || '')
-    .split(',')
-    .map(value => value.trim())
-    .find(value => value.includes('.') && !value.includes('*'))
-  if (firstAllowed && !tableForm.value.table) {
-    const parts = firstAllowed.split('.')
-    tableForm.value = {
-      schema: parts.slice(0, -1).join('.'),
-      table: parts[parts.length - 1] || '',
-    }
+function openDatabaseWorkspace() {
+  workspaceDialogOpen.value = true
+  if (!catalog.value && !catalogLoading.value) {
+    void loadCatalog(false)
+  }
+}
+
+async function openTableFromWorkspace(
+  table: EnterpriseMetadataTable,
+) {
+  selectedWorkspaceTable.value = table
+  tableForm.value = {
+    schema: table.namespace || table.schema,
+    displaySchema: table.schema,
+    table: table.name,
+    objectType: table.type || 'TABLE',
   }
   tableInspection.value = null
   tableInspectionError.value = null
   tableDialogOpen.value = true
+  workspaceDialogOpen.value = false
+  await loadTableInspection()
+}
+
+function openSqlFromWorkspace(
+  table: EnterpriseMetadataTable,
+) {
+  sql.value = `SELECT * FROM ${table.qualifiedName}`
+  result.value = null
+  workspaceDialogOpen.value = false
+}
+
+function openErFromWorkspace(schemaName?: string) {
+  erInitialSchema.value = schemaName
+    || selectedWorkspaceTable.value?.schema
+    || catalog.value?.schemas[0]
+    || ''
+  erDialogOpen.value = true
 }
 
 async function loadTableInspection() {
@@ -206,9 +309,14 @@ async function loadTableInspection() {
   tableInspectionError.value = null
   try {
     const inspection = await entApi.inspectTable(
-      source.value, schema, table, 'TABLE', 200)
+      source.value, schema, table,
+      tableForm.value.objectType || 'TABLE', 200)
     if (requestGate.isCurrent(TABLE_INSPECTION_KEY, version)) {
-      tableInspection.value = inspection
+      tableInspection.value = {
+        ...inspection,
+        schema: tableForm.value.displaySchema
+          || inspection.schema,
+      }
     }
   } catch (error: any) {
     if (requestGate.isCurrent(TABLE_INSPECTION_KEY, version)) {
@@ -227,6 +335,54 @@ function applyInspectionSql(previewSql: string) {
   tableDialogOpen.value = false
   result.value = null
 }
+
+function resultCatalogTable(): SqlCompletionTable | null {
+  const query = result.value?.sql || sql.value
+  if (!query.trim() || !catalog.value?.tables.length) return null
+  const context = parseSqlCompletionContext(query, query.length)
+  const unique = new Map<string, { schema: string | null; table: string }>()
+  for (const reference of Object.values(context.references)) {
+    const key = `${reference.schema || ''}.${reference.table}`
+      .toLocaleLowerCase()
+    unique.set(key, reference)
+  }
+  if (unique.size !== 1) return null
+  const reference = [...unique.values()][0]
+  return catalog.value.tables.find(table =>
+    table.name.toLocaleLowerCase()
+      === reference.table.toLocaleLowerCase()
+    && (!reference.schema
+      || table.schema.toLocaleLowerCase()
+        === reference.schema.toLocaleLowerCase()),
+  ) || null
+}
+
+async function loadCompletionColumns(
+  table: SqlCompletionTable,
+): Promise<ColumnMetadata[]> {
+  const sourceSnapshot = source.value
+  const namespace = table.namespace || table.schema
+  const key = `${sourceSnapshot}:${namespace}:${table.name}`
+  const cached = columnCache.get(key)
+  if (cached) return cached
+  const columns = await entApi.metadataColumns(
+    sourceSnapshot, namespace, table.name)
+  if (sourceSnapshot !== source.value) {
+    return []
+  }
+  columnCache.set(key, columns)
+  return columns
+}
+
+const resultRemarksLoader = computed(() => {
+  const table = resultCatalogTable()
+  if (!table) return null
+  return async () => Object.fromEntries(
+    (await loadCompletionColumns(table))
+      .filter(column => Boolean(column.remarks?.trim()))
+      .map(column => [column.name, column.remarks!.trim()]),
+  )
+})
 
 async function execute() {
   if (executing.value || !source.value || !sql.value.trim()) return

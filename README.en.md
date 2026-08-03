@@ -5,7 +5,7 @@
 [![Java](https://img.shields.io/badge/Java-17-orange)]()
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.5-brightgreen)]()
 [![Vue](https://img.shields.io/badge/Vue-3.4-42b883)]()
-[![Version](https://img.shields.io/badge/version-3.1.1-334155)]()
+[![Version](https://img.shields.io/badge/version-3.1.2-334155)]()
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue)]()
 
 [简体中文](README.md) | **English**
@@ -39,13 +39,13 @@ AI settings are available from `AI → Provider / API Key Settings`. HTTPS is re
 Native Windows package, using JDK 21 with `jpackage`:
 
 ```powershell
-.\package-desktop.ps1 -Version 3.1.1
+.\package-desktop.ps1 -Version 3.1.2
 ```
 
 Enterprise server:
 
 ```bash
-bash package-server.sh 3.1.1
+bash package-server.sh 3.1.2
 ```
 
 Quality gates:

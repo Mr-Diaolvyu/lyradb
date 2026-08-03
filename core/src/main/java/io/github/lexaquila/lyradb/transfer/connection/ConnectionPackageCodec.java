@@ -61,7 +61,7 @@ public final class ConnectionPackageCodec {
     private static final int MIN_EXPORT_PASSWORD_LENGTH = 8;
     private static final int MAX_PASSWORD_LENGTH = 1_024;
     private static final int SHA_256_BYTES = 32;
-    private static final String FALLBACK_SOURCE_VERSION = "3.1.1";
+    private static final String FALLBACK_SOURCE_VERSION = "3.1.2";
     private static final Set<String> ROOT_COMMON_FIELDS = Set.of(
             "format", "version", "createdAt", "sourceVersion",
             "credentialMode", "risk", "integrity");
