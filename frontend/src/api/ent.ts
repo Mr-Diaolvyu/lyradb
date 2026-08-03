@@ -2,7 +2,7 @@
  * 企业治理 API（数据源/授权/查询/审批/审计/管理）
  */
 import apiClient from './index'
-import type { QueryResult, TableInspection } from '@/types/metadata'
+import type { ColumnMetadata, ErDiagram, QueryResult, TableInspection } from '@/types/metadata'
 
 export interface LogicalGrant {
     id: string
@@ -11,6 +11,7 @@ export interface LogicalGrant {
     allowedSchemas?: string
     allowedTables?: string
     blockedTables?: string
+    dbType?: string
     sqlCapability: string
     maxRowsPerQuery: number
     exportApprovedOnly: boolean
@@ -30,6 +31,24 @@ export interface AdminDataSource {
 export interface AdminGrant extends LogicalGrant {
     dataSourceId: string
     userId?: string
+}
+
+export interface EnterpriseMetadataTable {
+    schema: string
+    namespace: string
+    name: string
+    qualifiedName: string
+    type: string
+    remarks?: string | null
+}
+
+export interface EnterpriseMetadataCatalog {
+    grantedSourceName: string
+    dbType: string
+    schemas: string[]
+    tables: EnterpriseMetadataTable[]
+    truncated: boolean
+    refreshedAt: number
 }
 
 export interface ApprovalRequest {
@@ -190,6 +209,35 @@ export const entApi = {
         return apiClient.post('/ent/table-inspection', {
             grantedSourceName, schema, table, objectType,
             limit: Math.min(200, Math.max(1, limit)),
+        })
+    },
+
+    metadataCatalog(
+        grantedSourceName: string,
+        refresh = false,
+    ): Promise<EnterpriseMetadataCatalog> {
+        return apiClient.get('/ent/metadata/catalog', {
+            params: { grantedSourceName, refresh },
+        })
+    },
+
+    metadataColumns(
+        grantedSourceName: string,
+        namespace: string,
+        table: string,
+    ): Promise<ColumnMetadata[]> {
+        return apiClient.get('/ent/metadata/columns', {
+            params: { grantedSourceName, namespace, table },
+        })
+    },
+
+    erDiagram(
+        grantedSourceName: string,
+        schema: string,
+        tables: string[],
+    ): Promise<ErDiagram> {
+        return apiClient.get('/ent/er', {
+            params: { grantedSourceName, schema, tables: tables.join(',') },
         })
     },
 

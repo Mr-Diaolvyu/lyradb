@@ -15,6 +15,7 @@ import io.github.lexaquila.lyradb.service.SqlParseUtil;
 import io.github.lexaquila.lyradb.service.SqlReviewService;
 
 import java.sql.Connection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -48,6 +49,8 @@ public final class NativeConnectionManager implements AutoCloseable {
     private final SqlReviewService sqlReviewService;
     private final AppProperties properties;
     private final Map<String, ActiveSession> sessions = new ConcurrentHashMap<>();
+    private final Map<String, MetadataIndex> metadataIndexes =
+            new ConcurrentHashMap<>();
 
     public NativeConnectionManager(DriverFactory driverFactory,
             DesktopStateStore stateStore,
@@ -120,19 +123,57 @@ public final class NativeConnectionManager implements AutoCloseable {
             }
         }
         driverFactory.removeDriver(connectionId);
+        metadataIndexes.remove(connectionId);
     }
 
     public List<TreeNode> tree(String connectionId, String parentPath) throws Exception {
         ActiveSession session = requireActive(connectionId);
-        return withLock(session,
+        List<TreeNode> nodes = withLock(session,
                 () -> session.driver.getTreeNodes(session.connection, parentPath));
+        metadataIndex(connectionId).remember(nodes);
+        return nodes;
     }
 
     public List<TreeNode> search(
             String connectionId, String query, int limit) throws Exception {
         ActiveSession session = requireActive(connectionId);
-        return withLock(session, () -> session.driver.searchTreeNodes(
+        List<TreeNode> nodes = withLock(session, () -> session.driver.searchTreeNodes(
                 session.connection, query, limit));
+        metadataIndex(connectionId).remember(nodes);
+        return nodes;
+    }
+
+    public List<TreeNode> search(
+            String connectionId,
+            String namespace,
+            String query,
+            int limit) throws Exception {
+        ActiveSession session = requireActive(connectionId);
+        List<TreeNode> nodes = withLock(session, () ->
+                session.driver.searchTreeNodes(
+                        session.connection, namespace, query, limit));
+        metadataIndex(connectionId).remember(nodes);
+        return nodes;
+    }
+
+    /**
+     * 只查询已经加载到本机内存的元数据，不访问数据库。
+     */
+    public List<TreeNode> searchCached(
+            String connectionId, String query, int limit) {
+        MetadataIndex index = metadataIndexes.get(connectionId);
+        return index == null ? List.of() : index.search(query, limit);
+    }
+
+    public void invalidateMetadata(String connectionId) {
+        if (connectionId != null) {
+            metadataIndexes.remove(connectionId);
+        }
+    }
+
+    private MetadataIndex metadataIndex(String connectionId) {
+        return metadataIndexes.computeIfAbsent(
+                connectionId, ignored -> new MetadataIndex());
     }
 
     public List<ColumnMetadata> columns(String connectionId,
@@ -147,6 +188,16 @@ public final class NativeConnectionManager implements AutoCloseable {
         ActiveSession session = requireActive(connectionId);
         return withLock(session, () -> session.driver.getTableConstraints(
                 session.connection, schemaName, tableName));
+    }
+
+    public String previewSql(String connectionId,
+            String schemaName, String tableName, int requestedLimit)
+            throws Exception {
+        ActiveSession session = requireActive(connectionId);
+        int limit = Math.max(1, Math.min(
+                requestedLimit, properties.getMaxQueryRows()));
+        return withLock(session, () -> session.driver.buildTablePreviewSql(
+                session.connection, schemaName, tableName, limit));
     }
 
     public QueryResult previewTable(String connectionId,
@@ -367,6 +418,62 @@ public final class NativeConnectionManager implements AutoCloseable {
         detail = SENSITIVE_LOG_VALUE.matcher(detail).replaceAll("$1=***");
         return detail.length() <= MAX_LOG_DETAIL_LENGTH
                 ? detail : detail.substring(0, MAX_LOG_DETAIL_LENGTH) + "…";
+    }
+
+    private static final class MetadataIndex {
+        private static final int MAX_NODES = 12_000;
+        private final Map<String, TreeNode> nodes =
+                new ConcurrentHashMap<>();
+
+        private void remember(List<TreeNode> values) {
+            if (values == null || values.isEmpty()) {
+                return;
+            }
+            for (TreeNode node : values) {
+                if (node == null || nodes.size() >= MAX_NODES) {
+                    break;
+                }
+                String type = node.getType() == null
+                        ? "" : node.getType().toUpperCase(Locale.ROOT);
+                if (!Set.of("DATABASE", "SCHEMA", "TABLE", "VIEW",
+                        "COLLECTION", "PROJECT").contains(type)) {
+                    continue;
+                }
+                String path = node.getPath() == null
+                        ? node.getName() : node.getPath();
+                nodes.putIfAbsent(type + ":" + path, node);
+            }
+        }
+
+        private List<TreeNode> search(String query, int requestedLimit) {
+            String keyword = query == null ? ""
+                    : query.trim().toLowerCase(Locale.ROOT);
+            if (keyword.isEmpty()) {
+                return List.of();
+            }
+            int limit = Math.max(1, Math.min(200, requestedLimit));
+            return nodes.values().stream()
+                    .filter(node -> searchableText(node).contains(keyword))
+                    .sorted(Comparator
+                            .comparingInt((TreeNode node) -> {
+                                String name = node.getName()
+                                        .toLowerCase(Locale.ROOT);
+                                if (name.equals(keyword)) {
+                                    return 0;
+                                }
+                                return name.startsWith(keyword) ? 1 : 2;
+                            })
+                            .thenComparing(TreeNode::getName,
+                                    String.CASE_INSENSITIVE_ORDER))
+                    .limit(limit)
+                    .toList();
+        }
+
+        private static String searchableText(TreeNode node) {
+            return ((node.getName() == null ? "" : node.getName()) + " "
+                    + (node.getPath() == null ? "" : node.getPath()))
+                    .toLowerCase(Locale.ROOT);
+        }
     }
 
     private static final class ActiveSession {

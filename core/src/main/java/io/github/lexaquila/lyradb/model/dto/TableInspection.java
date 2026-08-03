@@ -18,6 +18,7 @@ public class TableInspection {
     private List<ColumnMetadata> columns = new ArrayList<>();
     private List<TableConstraintMetadata> constraints = new ArrayList<>();
     private QueryResult preview;
+    private String previewSql = "";
     private String ddl = "";
     private Map<String, String> errors = new LinkedHashMap<>();
 
@@ -69,6 +70,14 @@ public class TableInspection {
 
     public void setPreview(QueryResult preview) {
         this.preview = preview;
+    }
+
+    public String getPreviewSql() {
+        return previewSql;
+    }
+
+    public void setPreviewSql(String previewSql) {
+        this.previewSql = previewSql == null ? "" : previewSql;
     }
 
     public String getDdl() {

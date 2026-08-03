@@ -222,6 +222,70 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
                 .toList();
     }
 
+    @Override
+    public List<TreeNode> searchTreeNodes(
+            Object connection,
+            String namespace,
+            String query,
+            int limit) throws Exception {
+        if (namespace == null || namespace.isBlank()) {
+            return searchTreeNodes(connection, query, limit);
+        }
+        if (!(connection instanceof Connection conn)) {
+            return List.of();
+        }
+        String keyword = query == null ? "" : query.trim();
+        if (keyword.isEmpty()) {
+            return List.of();
+        }
+
+        int safeLimit = Math.max(1, Math.min(limit, 200));
+        String normalized = keyword.toLowerCase(Locale.ROOT);
+        DatabaseMetaData metadata = conn.getMetaData();
+        String escape = metadata.getSearchStringEscape();
+        String pattern = "%" + escapeMetadataPattern(keyword, escape) + "%";
+        String[] tableTypes = capabilities.isSupportsViews()
+                ? new String[]{"TABLE", "VIEW"}
+                : new String[]{"TABLE"};
+        MetadataNamespace owner = metadataNamespace(namespace);
+        List<TreeNode> matches = new ArrayList<>();
+        try (ResultSet tables = metadata.getTables(
+                owner.catalog(), owner.schema(), pattern, tableTypes)) {
+            while (tables.next() && matches.size() < safeLimit) {
+                String name = tables.getString("TABLE_NAME");
+                if (name == null || name.isBlank()
+                        || !name.toLowerCase(Locale.ROOT)
+                                .contains(normalized)) {
+                    continue;
+                }
+                String catalog = tables.getString("TABLE_CAT");
+                String schema = tables.getString("TABLE_SCHEM");
+                String rawType = tables.getString("TABLE_TYPE");
+                String type = rawType != null
+                        && rawType.toUpperCase(Locale.ROOT).contains("VIEW")
+                        ? "VIEW" : "TABLE";
+                String path = searchResultPath(catalog, schema, name);
+                TreeNode node = TreeNode.of(path, name, type, path);
+                node.setIconType(type.toLowerCase(Locale.ROOT));
+                node.setHasChildren(true);
+                if (catalog != null && !catalog.isBlank()) {
+                    node.getProperties().put("catalog", catalog);
+                }
+                if (schema != null && !schema.isBlank()) {
+                    node.getProperties().put("schema", schema);
+                }
+                matches.add(node);
+            }
+        }
+        return matches.stream()
+                .sorted(Comparator
+                        .comparingInt((TreeNode node) ->
+                                matchRank(node.getName(), normalized))
+                        .thenComparing(TreeNode::getName,
+                                String.CASE_INSENSITIVE_ORDER))
+                .toList();
+    }
+
     private void collectNamespaceMatches(
             DatabaseMetaData metadata,
             String normalized,
@@ -621,9 +685,16 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         while (rs.next()) {
             String tableName = rs.getString("TABLE_NAME");
             String tableType = rs.getString("TABLE_TYPE");
+            String actualCatalog = rs.getString("TABLE_CAT");
+            String actualSchema = rs.getString("TABLE_SCHEM");
+            String remarks = rs.getString("REMARKS");
             String nodeType = "TABLE".equals(tableType) ? "TABLE" : "VIEW";
 
-            String namespace = catalog != null && schema != null
+            String namespace = actualCatalog != null && actualSchema != null
+                    ? actualCatalog + "/" + actualSchema
+                    : actualSchema != null ? actualSchema
+                    : actualCatalog != null ? actualCatalog
+                    : catalog != null && schema != null
                     ? catalog + "/" + schema
                     : schema != null ? schema : catalog;
             TreeNode node = TreeNode.of(
@@ -633,6 +704,15 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
                     namespace != null ? namespace + "/" + tableName : tableName);
             node.setIconType(nodeType.toLowerCase());
             node.setHasChildren(true);
+            if (actualCatalog != null && !actualCatalog.isBlank()) {
+                node.getProperties().put("catalog", actualCatalog);
+            }
+            if (actualSchema != null && !actualSchema.isBlank()) {
+                node.getProperties().put("schema", actualSchema);
+            }
+            if (remarks != null && !remarks.isBlank()) {
+                node.getProperties().put("remarks", remarks);
+            }
             nodes.add(node);
         }
         rs.close();

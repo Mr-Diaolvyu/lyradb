@@ -1,20 +1,7 @@
 package io.github.lexaquila.lyradb.desktop.ui;
 
-import io.github.lexaquila.lyradb.desktop.DesktopRuntime;
-
-import javax.imageio.ImageIO;
-import javax.swing.BorderFactory;
-import javax.swing.JButton;
-import javax.swing.JDialog;
-import javax.swing.JFileChooser;
-import javax.swing.JFrame;
-import javax.swing.JLabel;
-import javax.swing.JOptionPane;
 import javax.swing.JPanel;
-import javax.swing.JScrollPane;
-import javax.swing.SwingWorker;
 import java.awt.BasicStroke;
-import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
@@ -22,209 +9,26 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.geom.Path2D;
-import java.awt.image.BufferedImage;
-import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.DatabaseMetaData;
-import java.sql.ResultSet;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 基于 JDBC 元数据的原生 ER 关系图。
+ * ER 图的只读渲染模型与画布。
+ *
+ * <p>元数据读取统一由 {@link ErDiagramMetadataLoader} 完成，避免绕过驱动层
+ * 直接调用 JDBC 元数据而混淆 Catalog、Schema 与 MaxCompute Project。</p>
  */
-public final class ErDiagramDialog extends JDialog {
+final class ErDiagramDialog {
 
-    private final DesktopRuntime runtime;
-    private final String connectionId;
-    private final String schema;
-    private final JLabel statusLabel = new JLabel("正在读取元数据…");
-    private final GraphPanel graphPanel = new GraphPanel();
-    private final AtomicBoolean loading = new AtomicBoolean();
-
-    public ErDiagramDialog(JFrame owner, DesktopRuntime runtime,
-            String connectionId, String schema) {
-        super(owner, "ER 图 - " + (schema == null || schema.isBlank() ? "当前目录" : schema),
-                false);
-        this.runtime = runtime;
-        this.connectionId = connectionId;
-        this.schema = schema == null || schema.isBlank() ? null : schema.trim();
-        buildUi();
-        setMinimumSize(new Dimension(800, 600));
-        setSize(1100, 760);
-        setLocationRelativeTo(owner);
-        load();
+    private ErDiagramDialog() {
     }
 
-    private void buildUi() {
-        JButton export = UiKit.button("导出 PNG",
-                LyraIcons.of(LyraIcons.Kind.EXPORT),
-                UiKit.ButtonStyle.SECONDARY);
-        export.addActionListener(event -> export());
-        JButton refresh = UiKit.button("刷新",
-                LyraIcons.of(LyraIcons.Kind.REFRESH),
-                UiKit.ButtonStyle.SECONDARY);
-        refresh.addActionListener(event -> load());
-        JButton close = UiKit.button("关闭",
-                LyraIcons.of(LyraIcons.Kind.CLOSE),
-                UiKit.ButtonStyle.GHOST);
-        close.addActionListener(event -> dispose());
-        JPanel header = UiKit.glass(new BorderLayout(), 0);
-        header.setBorder(BorderFactory.createEmptyBorder(10, 14, 10, 12));
-        statusLabel.setFont(NativeTheme.FONT_CAPTION);
-        header.add(statusLabel, BorderLayout.CENTER);
-        JPanel buttons = new JPanel();
-        buttons.setOpaque(false);
-        buttons.add(refresh);
-        buttons.add(export);
-        buttons.add(close);
-        header.add(buttons, BorderLayout.EAST);
-        add(header, BorderLayout.NORTH);
-        JScrollPane scroll = UiKit.scroll(graphPanel);
-        scroll.setBorder(BorderFactory.createEmptyBorder());
-        add(scroll, BorderLayout.CENTER);
-        getContentPane().setBackground(NativeTheme.BACKGROUND);
-    }
-
-    private void load() {
-        if (!loading.compareAndSet(false, true)) {
-            return;
-        }
-        statusLabel.setForeground(NativeTheme.WARNING);
-        statusLabel.setText("正在读取 JDBC 表、字段与外键元数据…");
-        new SwingWorker<SchemaGraph, Void>() {
-            @Override
-            protected SchemaGraph doInBackground() throws Exception {
-                return runtime.connectionManager().withLockedJdbcConnection(
-                        connectionId, jdbc -> inspect(jdbc, schema));
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    SchemaGraph graph = get();
-                    graphPanel.setGraph(graph);
-                    statusLabel.setForeground(NativeTheme.SUCCESS);
-                    statusLabel.setText("已加载 " + graph.tables.size()
-                            + " 张表、" + graph.relations.size() + " 条外键关系"
-                            + (graph.truncated ? "（表数量已截断）" : ""));
-                } catch (Exception exception) {
-                    statusLabel.setForeground(NativeTheme.ERROR);
-                    statusLabel.setText("ER 图加载失败");
-                    JOptionPane.showMessageDialog(ErDiagramDialog.this,
-                            rootCause(exception).getMessage(),
-                            "ER 图错误", JOptionPane.ERROR_MESSAGE);
-                } finally {
-                    loading.set(false);
-                }
-            }
-        }.execute();
-    }
-
-    static SchemaGraph inspect(Connection connection, String schema) throws Exception {
-        DatabaseMetaData metadata = connection.getMetaData();
-        Map<String, TableNode> tables = new LinkedHashMap<>();
-        boolean truncated = false;
-        try (ResultSet rs = metadata.getTables(connection.getCatalog(), schema, "%",
-                new String[]{"TABLE"})) {
-            while (rs.next()) {
-                if (tables.size() >= 60) {
-                    truncated = true;
-                    break;
-                }
-                String table = rs.getString("TABLE_NAME");
-                String tableSchema = rs.getString("TABLE_SCHEM");
-                Set<String> primaryKeys = new HashSet<>();
-                try (ResultSet pk = metadata.getPrimaryKeys(
-                        connection.getCatalog(), tableSchema, table)) {
-                    while (pk.next()) {
-                        String column = pk.getString("COLUMN_NAME");
-                        if (column != null) {
-                            primaryKeys.add(column.toLowerCase(Locale.ROOT));
-                        }
-                    }
-                }
-                List<ColumnNode> columns = new ArrayList<>();
-                try (ResultSet col = metadata.getColumns(
-                        connection.getCatalog(), tableSchema, table, "%")) {
-                    while (col.next() && columns.size() < 14) {
-                        String name = col.getString("COLUMN_NAME");
-                        columns.add(new ColumnNode(name, col.getString("TYPE_NAME"),
-                                name != null && primaryKeys.contains(
-                                        name.toLowerCase(Locale.ROOT))));
-                    }
-                }
-                tables.put(key(tableSchema, table),
-                        new TableNode(tableSchema, table, columns));
-            }
-        }
-
-        List<Relation> relations = new ArrayList<>();
-        for (TableNode table : tables.values()) {
-            try (ResultSet keys = metadata.getImportedKeys(
-                    connection.getCatalog(), table.schema, table.name)) {
-                while (keys.next()) {
-                    String from = key(keys.getString("FKTABLE_SCHEM"),
-                            keys.getString("FKTABLE_NAME"));
-                    String to = key(keys.getString("PKTABLE_SCHEM"),
-                            keys.getString("PKTABLE_NAME"));
-                    if (tables.containsKey(from) && tables.containsKey(to)) {
-                        relations.add(new Relation(from, to,
-                                keys.getString("FKCOLUMN_NAME"),
-                                keys.getString("PKCOLUMN_NAME")));
-                    }
-                }
-            }
-        }
-        return new SchemaGraph(List.copyOf(tables.values()),
-                List.copyOf(relations), truncated);
-    }
-
-    private void export() {
-        if (graphPanel.graph.tables.isEmpty()) {
-            return;
-        }
-        JFileChooser chooser = new JFileChooser();
-        chooser.setSelectedFile(new java.io.File("lyradb-er-diagram.png"));
-        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
-            return;
-        }
-        Path target = chooser.getSelectedFile().toPath();
-        try {
-            Dimension size = graphPanel.getPreferredSize();
-            BufferedImage image = new BufferedImage(size.width, size.height,
-                    BufferedImage.TYPE_INT_ARGB);
-            Graphics2D graphics = image.createGraphics();
-            try {
-                graphPanel.setSize(size);
-                graphPanel.paint(graphics);
-            } finally {
-                graphics.dispose();
-            }
-            ImageIO.write(image, "png", target.toFile());
-            statusLabel.setText("已导出：" + target.toAbsolutePath());
-        } catch (Exception exception) {
-            JOptionPane.showMessageDialog(this, exception.getMessage(),
-                    "导出失败", JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    private static String key(String schema, String table) {
+    static String key(String schema, String table) {
         return (schema == null ? "" : schema) + "." + table;
-    }
-
-    private static Throwable rootCause(Throwable throwable) {
-        Throwable current = throwable;
-        while (current.getCause() != null) {
-            current = current.getCause();
-        }
-        return current;
     }
 
     static final class GraphPanel extends JPanel {
@@ -235,17 +39,92 @@ public final class ErDiagramDialog extends JDialog {
         private static final int GAP_Y = 70;
         private static final int MAX_BOX_HEIGHT = HEADER_HEIGHT + 14 * ROW_HEIGHT + 14;
         private SchemaGraph graph = new SchemaGraph(List.of(), List.of(), false);
+        private SchemaGraph sourceGraph = graph;
         private final Map<String, java.awt.Rectangle> bounds = new LinkedHashMap<>();
+        private String filter = "";
+        private FieldDisplayMode fieldDisplayMode = FieldDisplayMode.PHYSICAL;
+        private double zoom = 1D;
+        private Dimension logicalSize = new Dimension(900, 620);
 
         GraphPanel() {
             setBackground(NativeTheme.BACKGROUND);
         }
 
         void setGraph(SchemaGraph graph) {
-            this.graph = graph;
+            this.sourceGraph = graph == null
+                    ? new SchemaGraph(List.of(), List.of(), false) : graph;
+            applyFilter();
+        }
+
+        void setFilter(String value) {
+            this.filter = value == null ? ""
+                    : value.trim().toLowerCase(Locale.ROOT);
+            applyFilter();
+        }
+
+        void setFieldDisplayMode(FieldDisplayMode value) {
+            this.fieldDisplayMode = value == null
+                    ? FieldDisplayMode.PHYSICAL : value;
+            repaint();
+        }
+
+        void setZoom(double value) {
+            this.zoom = Math.max(0.45D, Math.min(1.8D, value));
+            updatePreferredSize();
+        }
+
+        double zoom() {
+            return zoom;
+        }
+
+        void fitTo(Dimension viewport) {
+            if (viewport == null || logicalSize.width <= 0
+                    || logicalSize.height <= 0) {
+                return;
+            }
+            double horizontal = Math.max(0.45D,
+                    (viewport.width - 24D) / logicalSize.width);
+            double vertical = Math.max(0.45D,
+                    (viewport.height - 24D) / logicalSize.height);
+            setZoom(Math.min(1D, Math.min(horizontal, vertical)));
+        }
+
+        private void applyFilter() {
+            if (filter.isEmpty()) {
+                graph = sourceGraph;
+            } else {
+                Set<String> visible = new HashSet<>();
+                List<TableNode> tables = sourceGraph.tables.stream()
+                        .filter(table -> matches(table, filter))
+                        .peek(table -> visible.add(
+                                key(table.schema, table.name)))
+                        .toList();
+                List<Relation> relations = sourceGraph.relations.stream()
+                        .filter(relation -> visible.contains(relation.from)
+                                && visible.contains(relation.to))
+                        .toList();
+                graph = new SchemaGraph(
+                        tables, relations, sourceGraph.truncated);
+            }
             layoutGraph();
             revalidate();
             repaint();
+        }
+
+        private static boolean matches(TableNode table, String keyword) {
+            if (table.name != null && table.name.toLowerCase(Locale.ROOT)
+                    .contains(keyword)) {
+                return true;
+            }
+            if (table.schema != null && table.schema.toLowerCase(Locale.ROOT)
+                    .contains(keyword)) {
+                return true;
+            }
+            return table.columns.stream().anyMatch(column ->
+                    (column.name != null && column.name
+                            .toLowerCase(Locale.ROOT).contains(keyword))
+                            || (column.remarks != null && column.remarks
+                            .toLowerCase(Locale.ROOT).contains(keyword)));
         }
 
         private void layoutGraph() {
@@ -264,7 +143,17 @@ public final class ErDiagramDialog extends JDialog {
                 maxX = Math.max(maxX, rectangle.x + rectangle.width + 40);
                 maxY = Math.max(maxY, rectangle.y + rectangle.height + 40);
             }
-            setPreferredSize(new Dimension(Math.max(900, maxX), Math.max(620, maxY)));
+            logicalSize = new Dimension(
+                    Math.max(900, maxX), Math.max(620, maxY));
+            updatePreferredSize();
+        }
+
+        private void updatePreferredSize() {
+            setPreferredSize(new Dimension(
+                    (int) Math.ceil(logicalSize.width * zoom),
+                    (int) Math.ceil(logicalSize.height * zoom)));
+            revalidate();
+            repaint();
         }
 
         private static int boxHeight(TableNode table) {
@@ -278,6 +167,7 @@ public final class ErDiagramDialog extends JDialog {
             try {
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
                         RenderingHints.VALUE_ANTIALIAS_ON);
+                g.scale(zoom, zoom);
                 paintStarfield(g);
                 drawRelations(g);
                 for (TableNode table : graph.tables) {
@@ -289,8 +179,8 @@ public final class ErDiagramDialog extends JDialog {
         }
 
         private void paintStarfield(Graphics2D g) {
-            int width = Math.max(getWidth(), getPreferredSize().width);
-            int height = Math.max(getHeight(), getPreferredSize().height);
+            int width = logicalSize.width;
+            int height = logicalSize.height;
             g.setColor(NativeTheme.BACKGROUND);
             g.fillRect(0, 0, width, height);
             g.setColor(new Color(NativeTheme.ACCENT_LIGHT.getRed(),
@@ -437,7 +327,9 @@ public final class ErDiagramDialog extends JDialog {
                     }
                     g.setFont(getFont().deriveFont(Font.PLAIN, 11F));
                     g.setColor(NativeTheme.FOREGROUND);
-                    g.drawString(clipText(g, column.name, 130),
+                    String displayName = fieldDisplayMode.title(
+                            column.name, column.remarks);
+                    g.drawString(clipText(g, displayName, 130),
                             rectangle.x + 43, y + 15);
                     String type = column.typeName == null ? "" : column.typeName;
                     g.setFont(getFont().deriveFont(Font.PLAIN, 10F));
@@ -472,7 +364,8 @@ public final class ErDiagramDialog extends JDialog {
     record TableNode(String schema, String name, List<ColumnNode> columns) {
     }
 
-    record ColumnNode(String name, String typeName, boolean primaryKey) {
+    record ColumnNode(
+            String name, String typeName, boolean primaryKey, String remarks) {
     }
 
     record Relation(String from, String to, String fromColumn, String toColumn) {

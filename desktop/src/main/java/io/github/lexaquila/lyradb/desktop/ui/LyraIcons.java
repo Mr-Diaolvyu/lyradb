@@ -30,6 +30,11 @@ public final class LyraIcons {
         CONNECT,
         DISCONNECT,
         SQL,
+        FORMAT,
+        WORKSPACE,
+        FIT,
+        ZOOM_IN,
+        ZOOM_OUT,
         REFRESH,
         AI,
         SETTINGS,
@@ -184,6 +189,41 @@ public final class LyraIcons {
                     path.lineTo(2, 12);
                     g.draw(path);
                     g.draw(new Line2D.Double(8, 12, 14, 12));
+                }
+                case FORMAT -> {
+                    g.draw(new Line2D.Double(2, 3, 12.5, 3));
+                    g.draw(new Line2D.Double(5, 7, 14, 7));
+                    g.draw(new Line2D.Double(5, 11, 12, 11));
+                    g.draw(new Line2D.Double(2, 14, 9.5, 14));
+                    Path2D indent = new Path2D.Double();
+                    indent.moveTo(1.5, 6);
+                    indent.lineTo(4, 8.5);
+                    indent.lineTo(1.5, 11);
+                    g.draw(indent);
+                }
+                case WORKSPACE -> {
+                    g.draw(new Rectangle2D.Double(1.5, 2, 13, 12));
+                    g.draw(new Line2D.Double(1.5, 5.5, 14.5, 5.5));
+                    g.draw(new Line2D.Double(6, 5.5, 6, 14));
+                    g.fill(new Ellipse2D.Double(3, 3.1, 1.2, 1.2));
+                }
+                case FIT -> {
+                    g.draw(new Line2D.Double(2, 6, 2, 2));
+                    g.draw(new Line2D.Double(2, 2, 6, 2));
+                    g.draw(new Line2D.Double(10, 2, 14, 2));
+                    g.draw(new Line2D.Double(14, 2, 14, 6));
+                    g.draw(new Line2D.Double(14, 10, 14, 14));
+                    g.draw(new Line2D.Double(14, 14, 10, 14));
+                    g.draw(new Line2D.Double(6, 14, 2, 14));
+                    g.draw(new Line2D.Double(2, 14, 2, 10));
+                }
+                case ZOOM_IN, ZOOM_OUT -> {
+                    g.draw(new Ellipse2D.Double(2, 2, 8.5, 8.5));
+                    g.draw(new Line2D.Double(9.2, 9.2, 14.2, 14.2));
+                    g.draw(new Line2D.Double(4.3, 6.2, 8.2, 6.2));
+                    if (kind == Kind.ZOOM_IN) {
+                        g.draw(new Line2D.Double(6.25, 4.25, 6.25, 8.15));
+                    }
                 }
                 case REFRESH -> {
                     g.draw(new Arc2D.Double(2, 2, 12, 12, 35, 285, Arc2D.OPEN));

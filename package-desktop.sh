@@ -5,7 +5,7 @@ set -Eeuo pipefail
 ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DESKTOP="$ROOT/desktop"
 IMAGE_BASE="$DESKTOP/target/desktop"
-VERSION="${1:-3.1.1}"
+VERSION="${1:-3.1.2}"
 WORKSPACE="$ROOT/数据架构师工作空间"
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then

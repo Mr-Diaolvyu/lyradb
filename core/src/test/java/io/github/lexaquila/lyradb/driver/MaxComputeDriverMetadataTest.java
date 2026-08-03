@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -63,11 +65,38 @@ class MaxComputeDriverMetadataTest {
 
         assertThat(driver.buildTablePreviewSql(
                 mock(Connection.class), null, "orders", 2_000))
-                .isEqualTo("SELECT * FROM orders LIMIT 1000");
+                .isEqualTo("SELECT * FROM orders TABLESAMPLE (1000 ROWS)");
         assertThatThrownBy(() -> driver.buildTablePreviewSql(
                 mock(Connection.class), null, "orders; DROP TABLE x", 20))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("非法的表标识符");
+    }
+
+    @Test
+    void shouldUseOfficialExecuteQueryPathWhenMaxRowsIsUnsupported()
+            throws Exception {
+        Connection connection = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        ResultSet resultSet = mock(ResultSet.class);
+        ResultSetMetaData metadata = mock(ResultSetMetaData.class);
+        when(connection.createStatement()).thenReturn(statement);
+        org.mockito.Mockito.doThrow(new SQLFeatureNotSupportedException())
+                .when(statement).setMaxRows(20);
+        when(statement.executeQuery("SELECT id FROM orders"))
+                .thenReturn(resultSet);
+        when(resultSet.getMetaData()).thenReturn(metadata);
+        when(metadata.getColumnCount()).thenReturn(1);
+        when(metadata.getColumnLabel(1)).thenReturn("id");
+        when(resultSet.next()).thenReturn(true, false);
+        when(resultSet.getObject(1)).thenReturn(42L);
+
+        var result = driver().executeQuery(
+                connection, "SELECT id FROM orders", 20);
+
+        assertThat(result.getColumns()).containsExactly("id");
+        assertThat(result.getRows()).containsExactly(
+                java.util.Map.of("id", 42L));
+        verify(statement, never()).execute("SELECT id FROM orders");
     }
 
     private static MaxComputeDriver driver() {

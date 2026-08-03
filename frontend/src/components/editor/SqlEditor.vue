@@ -1,17 +1,33 @@
 <template>
-  <div ref="editorContainer" class="sql-editor-container"></div>
+  <div class="sql-editor-shell">
+    <div class="sql-editor-toolbar">
+      <el-button size="small" text bg :icon="Operation" @click="formatCurrent">
+        美化 SQL
+      </el-button>
+      <span class="format-shortcut">Ctrl+Shift+F</span>
+      <span class="completion-hint">Ctrl+Space 补全</span>
+    </div>
+    <div ref="editorContainer" class="sql-editor-container"></div>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, shallowRef } from 'vue'
 import * as monaco from 'monaco-editor'
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
+import { Operation } from '@element-plus/icons-vue'
 import { useThemeStore } from '@/stores/theme'
 import { useUiStore } from '@/stores/ui'
 import { useConnectionStore } from '@/stores/connection'
 import { metadataApi } from '@/api/metadata'
 import { registerSqlDialects, getLanguageByDbType } from '@/utils/sqlLanguages'
 import { formatSql } from '@/utils/sqlFormatter'
+import {
+  parseSqlCompletionContext,
+  resolveCompletionTable,
+  type SqlCompletionTable,
+} from '@/utils/sqlCompletion'
+import type { ColumnMetadata } from '@/types/metadata'
 
 // 注册 Monaco Worker
 self.MonacoEnvironment = {
@@ -25,6 +41,10 @@ const props = defineProps<{
   modelValue: string
   dbType?: string
   connectionId?: string
+  /** 企业版传入授权过滤后的目录；个人版缺省时仍读取当前连接元数据。 */
+  completionTables?: SqlCompletionTable[]
+  columnsLoader?: ((table: SqlCompletionTable) => Promise<ColumnMetadata[]>)
+  metadataScope?: 'connection' | 'authorized'
 }>()
 
 const emit = defineEmits<{
@@ -39,6 +59,7 @@ const themeStore = useThemeStore()
 const editorContainer = ref<HTMLElement>()
 // Monaco editor 实例用 shallowRef 避免被 Vue 深度代理
 const editor = shallowRef<monaco.editor.IStandaloneCodeEditor | null>(null)
+const completionDisposables: monaco.IDisposable[] = []
 
 // === 初始化编辑器 ===
 onMounted(() => {
@@ -182,9 +203,13 @@ function registerSqlCompletion() {
   if (completionRegistered) return
   completionRegistered = true
 
-  monaco.languages.registerCompletionItemProvider('sql', {
-    triggerCharacters: [' ', '.', '.'],
-    provideCompletionItems: async (model, position) => {
+  for (const language of ['sql', 'maxcompute', 'clickhouse']) {
+    const disposable = monaco.languages.registerCompletionItemProvider(language, {
+      triggerCharacters: [' ', '.'],
+      provideCompletionItems: async (model, position) => {
+      if (model !== editor.value?.getModel()) {
+        return { suggestions: [] }
+      }
       const word = model.getWordUntilPosition(position)
       const range = {
         startLineNumber: position.lineNumber,
@@ -202,7 +227,63 @@ function registerSqlCompletion() {
         range,
       }))
 
-      // 2. Schema 感知补全（需要激活连接）
+      const context = parseSqlCompletionContext(
+        model.getValue(), model.getOffsetAt(position))
+      const enterpriseTables = props.completionTables || []
+
+      // 2. 企业版只使用后端授权过滤后的逻辑目录。
+      if (props.metadataScope === 'authorized') {
+        const referencedTable =
+          resolveCompletionTable(context, enterpriseTables)
+        if (context.qualifier && referencedTable
+          && props.columnsLoader) {
+          try {
+            const columns = await props.columnsLoader(referencedTable)
+            for (const column of columns) {
+              suggestions.push({
+                label: column.name,
+                kind: monaco.languages.CompletionItemKind.Field,
+                insertText: column.name,
+                detail: [
+                  column.typeName || 'column',
+                  column.remarks || referencedTable.qualifiedName,
+                ].filter(Boolean).join(' · '),
+                documentation: column.remarks || undefined,
+                range,
+              } as monaco.languages.CompletionItem)
+            }
+          } catch {
+            // 元数据补全失败不阻断编辑。
+          }
+          return { suggestions }
+        }
+
+        const schemas = new Set<string>()
+        for (const table of enterpriseTables) {
+          if (table.schema) schemas.add(table.schema)
+          const qualified = table.qualifiedName
+            || `${table.schema}.${table.name}`
+          suggestions.push({
+            label: qualified,
+            kind: monaco.languages.CompletionItemKind.Class,
+            insertText: qualified,
+            detail: `${table.type || 'TABLE'} · 已授权对象`,
+            range,
+          } as monaco.languages.CompletionItem)
+        }
+        for (const schema of schemas) {
+          suggestions.push({
+            label: schema,
+            kind: monaco.languages.CompletionItemKind.Module,
+            insertText: schema,
+            detail: '已授权 Schema',
+            range,
+          } as monaco.languages.CompletionItem)
+        }
+        return { suggestions }
+      }
+
+      // 3. 个人版从当前连接读取 Schema 元数据。
       const uiStore = useUiStore()
       const connectionStore = useConnectionStore()
       const connId = props.connectionId || connectionStore.activeConnectionId
@@ -269,19 +350,53 @@ function registerSqlCompletion() {
 
       return { suggestions }
     },
-  })
+    })
+    completionDisposables.push(disposable)
+  }
 }
 
 // === 销毁 ===
 onUnmounted(() => {
+  completionDisposables.splice(0)
+    .forEach(disposable => disposable.dispose())
   editor.value?.dispose()
 })
 </script>
 
 <style scoped>
-.sql-editor-container {
+.sql-editor-shell {
+  display: flex;
   width: 100%;
   height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.sql-editor-toolbar {
+  display: flex;
+  height: 36px;
+  flex: 0 0 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-panel-header);
+}
+
+.format-shortcut,
+.completion-hint {
+  color: var(--color-text-muted);
+  font: 10px var(--font-mono, monospace);
+}
+
+.completion-hint {
+  margin-left: auto;
+}
+
+.sql-editor-container {
+  width: 100%;
+  min-height: 0;
+  flex: 1;
   overflow: hidden;
 }
 

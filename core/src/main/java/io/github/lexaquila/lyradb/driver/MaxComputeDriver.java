@@ -1,6 +1,7 @@
 package io.github.lexaquila.lyradb.driver;
 
 import io.github.lexaquila.lyradb.model.dto.ColumnMetadata;
+import io.github.lexaquila.lyradb.model.dto.QueryResult;
 import io.github.lexaquila.lyradb.model.dto.TableConstraintMetadata;
 import io.github.lexaquila.lyradb.model.dto.TreeNode;
 import io.github.lexaquila.lyradb.model.entity.DriverInfo;
@@ -8,11 +9,14 @@ import io.github.lexaquila.lyradb.model.entity.DriverInfo;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -430,7 +434,56 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
                 1, Math.min(limit, JdbcTableInspector.MAX_PREVIEW_ROWS));
         return "SELECT * FROM "
                 + qualifiedTableIdentifier(schemaName, tableName)
-                + " LIMIT " + safeLimit;
+                + " TABLESAMPLE (" + safeLimit + " ROWS)";
+    }
+
+    /**
+     * MaxCompute JDBC 官方查询路径使用 {@link Statement#executeQuery(String)}。
+     * 通用 JDBC 的 {@code execute + getResultSet} 在部分 ODPS JDBC 版本中不会
+     * 返回可读结果集；同时 setMaxRows 只是提示能力，读取循环仍执行硬上限。
+     */
+    @Override
+    public QueryResult executeQuery(
+            Object connection, String sql, int limit) throws Exception {
+        Connection conn = (Connection) connection;
+        long started = System.currentTimeMillis();
+        QueryResult result = new QueryResult();
+        result.setSql(sql);
+
+        try (Statement statement = conn.createStatement()) {
+            try {
+                statement.setMaxRows(limit > 0 ? limit : 10_000);
+            } catch (SQLException | UnsupportedOperationException ignored) {
+                // ODPS JDBC 的部分版本不实现 setMaxRows；下方读取循环仍严格限行。
+            }
+            applyQueryTimeout(statement);
+            StatementRegistry.register(conn, statement);
+            try (ResultSet rows = statement.executeQuery(sql)) {
+                ResultSetMetaData metadata = rows.getMetaData();
+                int columnCount = metadata.getColumnCount();
+                HashMap<String, Integer> occurrences = new HashMap<>();
+                for (int index = 1; index <= columnCount; index++) {
+                    result.addColumn(AbstractJdbcDriver.disambiguateColumnLabel(
+                            metadata.getColumnLabel(index), occurrences));
+                }
+                int rowCount = 0;
+                while (rows.next() && (limit <= 0 || rowCount < limit)) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    for (int index = 1; index <= columnCount; index++) {
+                        row.put(result.getColumns().get(index - 1),
+                                rows.getObject(index));
+                    }
+                    result.addRow(row);
+                    rowCount++;
+                }
+                result.setTotalRows(rowCount);
+                result.setTruncated(limit > 0 && rowCount >= limit);
+            }
+        } finally {
+            StatementRegistry.unregister(conn);
+        }
+        result.setElapsedMs(System.currentTimeMillis() - started);
+        return result;
     }
 
     @Override

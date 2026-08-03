@@ -1,6 +1,6 @@
 # LyraDB iOS 外壳
 
-版本：`3.1.1`。工程采用 SwiftUI + WKWebView，连接企业 B/S 服务端，通过 XcodeGen 管理，不提交生成的 `.xcodeproj`。
+版本：`3.1.2`。工程采用 SwiftUI + WKWebView，连接企业 B/S 服务端，通过 XcodeGen 管理，不提交生成的 `.xcodeproj`。
 
 ## 已实现
 

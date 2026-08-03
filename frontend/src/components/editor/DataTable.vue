@@ -11,16 +11,20 @@
           <el-icon><EditPen /></el-icon>
           编辑模式 · 双击单元格编辑
         </el-tag>
-        <el-tooltip v-if="remarksLoader" :content="showRemarks ? '显示原始字段名' : '显示字段注释'" placement="top">
+        <el-tooltip
+          v-if="remarksLoader || remarks"
+          content="切换字段标题：字段名 / 注释名 / 字段名 + 注释"
+          placement="top"
+        >
           <el-button
             size="small"
-            :type="showRemarks ? 'primary' : ''"
+            :type="fieldDisplayMode === 'physical' ? '' : 'primary'"
             :loading="remarksLoading"
             text
             bg
             @click="toggleRemarks"
           >
-            {{ showRemarks ? '注释' : '字段名' }}
+            {{ displayModeLabel }}
           </el-button>
         </el-tooltip>
         <el-input
@@ -126,7 +130,9 @@ const props = defineProps<{
   } | null
   /** 行级 JSON 编辑模式（MongoDB 文档）：双击行触发 row-json-edit 而非单元格内联编辑 */
   jsonRowEdit?: boolean
-  /** 懒加载列注释映射（col → remarks），提供后工具栏显示「字段名/注释」切换按钮 */
+  /** 已知的列注释映射，表工作台可直接传入。 */
+  remarks?: Record<string, string> | null
+  /** 懒加载列注释映射，查询结果可按需读取单表元数据。 */
   remarksLoader?: (() => Promise<Record<string, string>>) | null
 }>()
 
@@ -162,18 +168,33 @@ const filteredRows = computed(() => {
 })
 
 // === 表头字段名/注释切换 ===
-const showRemarks = ref(false)
+type FieldDisplayMode = 'physical' | 'comment' | 'both'
+const fieldDisplayMode = ref<FieldDisplayMode>('physical')
 const remarksLoading = ref(false)
-const remarksMap = ref<Record<string, string> | null>(null)
+const remarksMap = ref<Record<string, string> | null>(
+  props.remarks ? { ...props.remarks } : null)
+const displayModeLabel = computed(() => ({
+  physical: '字段名',
+  comment: '注释名',
+  both: '字段名 + 注释',
+})[fieldDisplayMode.value])
 
 function headerTitle(col: string): string {
-  if (showRemarks.value && remarksMap.value?.[col]) return remarksMap.value[col]
+  const remark = remarksMap.value?.[col]
+  if (fieldDisplayMode.value === 'comment' && remark) return remark
+  if (fieldDisplayMode.value === 'both' && remark) {
+    return `${col} · ${remark}`
+  }
   return col
 }
 
 async function toggleRemarks() {
-  if (showRemarks.value) {
-    showRemarks.value = false
+  if (fieldDisplayMode.value === 'both') {
+    fieldDisplayMode.value = 'physical'
+    return
+  }
+  if (fieldDisplayMode.value === 'comment') {
+    fieldDisplayMode.value = 'both'
     return
   }
   if (remarksMap.value === null && props.remarksLoader) {
@@ -190,13 +211,19 @@ async function toggleRemarks() {
     ElMessage.warning('未获取到字段注释（仅支持单表查询且表字段含注释）')
     return
   }
-  showRemarks.value = true
+  fieldDisplayMode.value = 'comment'
 }
 
 // 结果列变化（新查询）时重置注释状态，避免跨表错配
 watch(() => props.columns, () => {
-  showRemarks.value = false
-  remarksMap.value = null
+  fieldDisplayMode.value = 'physical'
+  remarksMap.value = props.remarks
+    ? { ...props.remarks } : null
+})
+
+watch(() => props.remarks, value => {
+  remarksMap.value = value ? { ...value } : null
+  fieldDisplayMode.value = 'physical'
 })
 
 // === 列类型推断（V3）：抽样非空值判定 number/boolean/date/json/text ===

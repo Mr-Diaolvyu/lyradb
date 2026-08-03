@@ -13,6 +13,11 @@ import java.util.List;
 @Data
 public class ErDiagram {
 
+    private String sourceName;
+    private String dbType;
+    private String schema;
+    private boolean truncated;
+
     /** 表节点 */
     private List<Table> tables = new ArrayList<>();
 
@@ -24,12 +29,33 @@ public class ErDiagram {
         private String name;
         private List<String> columns = new ArrayList<>();
         private String schema;
+        private String remarks;
+        private List<Column> columnDetails = new ArrayList<>();
 
         public Table() {}
 
         public Table(String name, String schema) {
             this.name = name;
             this.schema = schema;
+        }
+    }
+
+    @Data
+    public static class Column {
+        private String name;
+        private String typeName;
+        private String remarks;
+        private boolean primaryKey;
+
+        public Column() {
+        }
+
+        public Column(String name, String typeName,
+                      String remarks, boolean primaryKey) {
+            this.name = name;
+            this.typeName = typeName;
+            this.remarks = remarks;
+            this.primaryKey = primaryKey;
         }
     }
 

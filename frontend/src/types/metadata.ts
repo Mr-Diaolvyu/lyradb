@@ -42,6 +42,7 @@ export interface TableInspection {
     columns: ColumnMetadata[]
     constraints: TableConstraintMetadata[]
     preview: QueryResult | null
+    previewSql: string
     ddl: string
     errors: Record<string, string>
 }
@@ -81,10 +82,19 @@ export interface ExecuteUpdateResult {
     reviewFindings?: SqlReviewFinding[]
 }
 
+export interface ErColumn {
+    name: string
+    typeName?: string | null
+    remarks?: string | null
+    primaryKey?: boolean
+}
+
 export interface ErTable {
     name: string
     columns: string[]
     schema?: string | null
+    remarks?: string | null
+    columnDetails?: ErColumn[]
 }
 
 export interface ErEdge {
@@ -95,6 +105,10 @@ export interface ErEdge {
 }
 
 export interface ErDiagram {
+    sourceName?: string | null
+    dbType?: string | null
+    schema?: string | null
+    truncated?: boolean
     tables: ErTable[]
     edges: ErEdge[]
 }

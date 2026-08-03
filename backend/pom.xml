@@ -19,7 +19,7 @@
 
     <properties>
         <!-- CI 通过 -Drevision=<tag> 覆盖，作为后端包与桌面包的单一版本源。 -->
-        <revision>3.1.1</revision>
+        <revision>3.1.2</revision>
         <java.version>17</java.version>
         <maven-resolver.version>1.9.18</maven-resolver.version>
         <jasypt.version>3.0.5</jasypt.version>

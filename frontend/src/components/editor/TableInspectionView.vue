@@ -22,7 +22,7 @@
         </el-tooltip>
         <el-button
           :icon="Position"
-          :disabled="!preview?.sql"
+          :disabled="!inspection?.previewSql && !preview?.sql"
           @click="emitOpenSql"
         >
           在 SQL 中打开
@@ -59,6 +59,7 @@
             v-else-if="preview"
             :columns="preview.columns"
             :rows="preview.rows"
+            :remarks="columnRemarks"
           />
           <el-empty v-else description="暂无可预览数据" :image-size="68" />
         </div>
@@ -228,6 +229,13 @@ const emit = defineEmits<{
 const activeSection = ref('preview')
 const columnFilter = ref('')
 const columns = computed(() => props.inspection?.columns ?? [])
+const columnRemarks = computed<Record<string, string>>(() =>
+  Object.fromEntries(
+    columns.value
+      .filter(column => Boolean(column.remarks?.trim()))
+      .map(column => [column.name, column.remarks!.trim()]),
+  ),
+)
 const constraints = computed(() => props.inspection?.constraints ?? [])
 const preview = computed(() => props.inspection?.preview ?? null)
 const qualifiedName = computed(() => {
@@ -284,7 +292,8 @@ async function copyText(value: string, message: string) {
 }
 
 function emitOpenSql() {
-  if (preview.value?.sql) emit('openSql', preview.value.sql)
+  const sql = props.inspection?.previewSql || preview.value?.sql
+  if (sql) emit('openSql', sql)
 }
 </script>
 

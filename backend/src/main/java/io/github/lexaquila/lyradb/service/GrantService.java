@@ -191,6 +191,10 @@ public class GrantService {
         view.put("maxRowsPerQuery", grant.getMaxRowsPerQuery());
         view.put("exportApprovedOnly", grant.isExportApprovedOnly());
         view.put("expiresAt", grant.getExpiresAt());
+        dataSourceRepository.findById(grant.getDataSourceId())
+                .ifPresent(dataSource ->
+                        view.put("dbType",
+                                dataSource.getDbType()));
         return view;
     }
 

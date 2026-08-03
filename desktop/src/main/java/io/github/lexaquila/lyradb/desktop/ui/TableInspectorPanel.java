@@ -9,6 +9,7 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
@@ -58,6 +59,8 @@ final class TableInspectorPanel extends JPanel {
     private final JButton openSqlButton = UiKit.button(
             "在 SQL 中打开", LyraIcons.of(LyraIcons.Kind.SQL),
             UiKit.ButtonStyle.PRIMARY);
+    private final JComboBox<FieldDisplayMode> fieldDisplayMode =
+            new JComboBox<>(FieldDisplayMode.values());
     private final JTable previewTable = table();
     private final JTable columnsTable = table();
     private final JTable constraintsTable = table();
@@ -75,6 +78,7 @@ final class TableInspectorPanel extends JPanel {
     private SwingWorker<TableSnapshot, Void> worker;
     private long generation;
     private String previewSql;
+    private TableSnapshot currentSnapshot;
 
     TableInspectorPanel(
             DesktopRuntime runtime,
@@ -103,12 +107,27 @@ final class TableInspectorPanel extends JPanel {
         add(createTabs(), BorderLayout.CENTER);
         refreshButton.addActionListener(event -> refresh());
         openSqlButton.addActionListener(event -> openSql());
+        fieldDisplayMode.setSelectedItem(FieldDisplayMode.PHYSICAL);
+        fieldDisplayMode.setToolTipText(
+                "切换物理字段名、字段注释或两者；不会修改真实 SQL");
+        fieldDisplayMode.addActionListener(event -> {
+            if (currentSnapshot != null) {
+                applyFieldDisplay(currentSnapshot);
+            }
+        });
         refresh();
     }
 
     String workspaceKey() {
         return connectionId + "\u0000"
                 + (schema == null ? "" : schema) + "\u0000" + table;
+    }
+
+    void disposeWorkspace() {
+        generation++;
+        if (worker != null && !worker.isDone()) {
+            worker.cancel(true);
+        }
     }
 
     void refresh() {
@@ -127,12 +146,20 @@ final class TableInspectorPanel extends JPanel {
         worker = new SwingWorker<>() {
             @Override
             protected TableSnapshot doInBackground() {
+                String generatedPreviewSql = "";
                 QueryResult preview = null;
                 List<ColumnMetadata> columns = List.of();
                 List<TableConstraintMetadata> constraints = List.of();
                 String ddl = "";
                 Map<String, String> errors = new LinkedHashMap<>();
 
+                try {
+                    generatedPreviewSql = runtime.connectionManager()
+                            .previewSql(connectionId, schema, table,
+                                    PREVIEW_LIMIT);
+                } catch (Exception exception) {
+                    errors.put("previewSql", safeMessage(exception));
+                }
                 try {
                     preview = runtime.connectionManager().previewTable(
                             connectionId, schema, table, PREVIEW_LIMIT);
@@ -167,7 +194,8 @@ final class TableInspectorPanel extends JPanel {
                     errors.put("ddl", safeMessage(exception));
                 }
                 return new TableSnapshot(
-                        preview, columns, constraints, ddl, errors);
+                        generatedPreviewSql, preview, columns,
+                        constraints, ddl, errors);
             }
 
             @Override
@@ -182,7 +210,7 @@ final class TableInspectorPanel extends JPanel {
                     }
                 } catch (Exception exception) {
                     apply(new TableSnapshot(
-                            null, List.of(), List.of(), "",
+                            "", null, List.of(), List.of(), "",
                             Map.of("preview", safeMessage(exception))));
                 } finally {
                     if (request == generation) {
@@ -270,12 +298,22 @@ final class TableInspectorPanel extends JPanel {
         stateLabel.setFont(NativeTheme.FONT_CAPTION);
         stateLabel.setForeground(NativeTheme.MUTED);
         bar.add(stateLabel, BorderLayout.WEST);
+        JPanel displayTools = new JPanel(new FlowLayout(
+                FlowLayout.RIGHT, 8, 0));
+        displayTools.setOpaque(false);
         JLabel note = new JLabel(
                 "为保护数据库，预览不会执行全表导出",
                 SwingConstants.RIGHT);
         note.setFont(NativeTheme.FONT_CAPTION);
         note.setForeground(NativeTheme.MUTED);
-        bar.add(note, BorderLayout.EAST);
+        JLabel displayLabel = new JLabel("表头");
+        displayLabel.setFont(NativeTheme.FONT_CAPTION);
+        displayLabel.setForeground(NativeTheme.MUTED);
+        displayTools.add(note);
+        displayTools.add(Box.createHorizontalStrut(8));
+        displayTools.add(displayLabel);
+        displayTools.add(fieldDisplayMode);
+        bar.add(displayTools, BorderLayout.EAST);
         panel.add(bar, BorderLayout.NORTH);
         panel.add(scroll(previewTable), BorderLayout.CENTER);
         return panel;
@@ -320,9 +358,13 @@ final class TableInspectorPanel extends JPanel {
     }
 
     private void apply(TableSnapshot snapshot) {
+        currentSnapshot = snapshot;
         QueryResult preview = snapshot.preview();
+        previewSql = snapshot.previewSql();
         if (preview != null) {
-            previewSql = preview.getSql();
+            if (previewSql == null || previewSql.isBlank()) {
+                previewSql = preview.getSql();
+            }
             List<List<Object>> rows = new ArrayList<>();
             for (Map<String, Object> row : preview.getRows()) {
                 List<Object> values = new ArrayList<>();
@@ -331,37 +373,26 @@ final class TableInspectorPanel extends JPanel {
                 }
                 rows.add(values);
             }
-            previewModel.setData(preview.getColumns(), rows);
-            configurePreviewWidths(preview.getColumns());
+            List<String> headers = displayHeaders(
+                    preview.getColumns(), snapshot.columns());
+            previewModel.setData(headers, rows);
+            configurePreviewWidths(headers);
             rowBadge.setText("  " + preview.getRows().size()
                     + (preview.isTruncated() ? "+ 行  " : " 行  "));
             stateLabel.setText(preview.getRows().size() + " 行"
                     + (preview.isTruncated() ? "（已按上限截断）" : "")
                     + "  ·  " + preview.getElapsedMs() + " ms");
         } else {
+            String previewError = snapshot.errors().getOrDefault(
+                    "preview", "当前驱动不支持");
             previewModel.setData(List.of("状态"), List.of(List.of(
-                    "无法读取数据预览："
-                            + snapshot.errors().getOrDefault(
-                            "preview", "当前驱动不支持"))));
+                    previewFailureMessage(dbType, previewError))));
+            previewTable.setToolTipText(previewError);
             rowBadge.setText("  0 行  ");
-            stateLabel.setText("数据预览不可用");
+            stateLabel.setText("数据预览不可用 · 可在 SQL 中打开并调整条件");
         }
 
-        List<List<Object>> columnRows = new ArrayList<>();
-        int index = 1;
-        for (ColumnMetadata column : snapshot.columns()) {
-            columnRows.add(List.of(
-                    index++,
-                    value(column.getName()),
-                    value(column.getTypeName()),
-                    size(column),
-                    column.isNullable() ? "YES" : "NO",
-                    value(column.getDefaultValue()),
-                    column.isPrimaryKey() ? "PK" : "",
-                    column.isAutoIncrement() ? "YES" : "",
-                    value(column.getRemarks())));
-        }
-        columnsModel.setData(columnsModel.columns(), columnRows);
+        applyColumnRows(snapshot.columns());
         columnBadge.setText("  " + snapshot.columns().size() + " 列  ");
 
         List<List<Object>> constraintRows = new ArrayList<>();
@@ -393,6 +424,67 @@ final class TableInspectorPanel extends JPanel {
             statusSink.accept("表工作台已加载，部分信息不可用："
                     + String.join("、", snapshot.errors().keySet()));
         }
+    }
+
+    private void applyFieldDisplay(TableSnapshot snapshot) {
+        QueryResult preview = snapshot.preview();
+        if (preview != null) {
+            List<List<Object>> rows = new ArrayList<>();
+            for (Map<String, Object> row : preview.getRows()) {
+                List<Object> values = new ArrayList<>();
+                for (String column : preview.getColumns()) {
+                    values.add(row.get(column));
+                }
+                rows.add(values);
+            }
+            List<String> headers = displayHeaders(
+                    preview.getColumns(), snapshot.columns());
+            previewModel.setData(headers, rows);
+            configurePreviewWidths(headers);
+        }
+        applyColumnRows(snapshot.columns());
+        statusSink.accept("字段显示已切换为："
+                + fieldDisplayMode.getSelectedItem());
+    }
+
+    private List<String> displayHeaders(
+            List<String> physicalColumns,
+            List<ColumnMetadata> metadata) {
+        Map<String, String> remarks = new LinkedHashMap<>();
+        for (ColumnMetadata column : metadata) {
+            if (column.getRemarks() != null
+                    && !column.getRemarks().isBlank()) {
+                remarks.put(column.getName(), column.getRemarks());
+            }
+        }
+        FieldDisplayMode mode = (FieldDisplayMode)
+                fieldDisplayMode.getSelectedItem();
+        return SqlWorkspacePanel.displayHeaders(
+                physicalColumns, remarks,
+                mode == null ? FieldDisplayMode.PHYSICAL : mode);
+    }
+
+    private void applyColumnRows(List<ColumnMetadata> columns) {
+        FieldDisplayMode mode = (FieldDisplayMode)
+                fieldDisplayMode.getSelectedItem();
+        FieldDisplayMode safeMode = mode == null
+                ? FieldDisplayMode.PHYSICAL : mode;
+        List<List<Object>> columnRows = new ArrayList<>();
+        int index = 1;
+        for (ColumnMetadata column : columns) {
+            columnRows.add(List.of(
+                    index++,
+                    value(safeMode.title(
+                            column.getName(), column.getRemarks())),
+                    value(column.getTypeName()),
+                    size(column),
+                    column.isNullable() ? "YES" : "NO",
+                    value(column.getDefaultValue()),
+                    column.isPrimaryKey() ? "PK" : "",
+                    column.isAutoIncrement() ? "YES" : "",
+                    value(column.getRemarks())));
+        }
+        columnsModel.setData(columnsModel.columns(), columnRows);
     }
 
     private void openSql() {
@@ -484,7 +576,21 @@ final class TableInspectorPanel extends JPanel {
                 ? root.getClass().getSimpleName() : message;
     }
 
+    static String previewFailureMessage(String dbType, String error) {
+        String message = error == null || error.isBlank()
+                ? "当前驱动不支持" : error;
+        String normalized = message.toLowerCase(java.util.Locale.ROOT);
+        if ("MAXCOMPUTE".equalsIgnoreCase(dbType)
+                && (normalized.contains("fullscan")
+                || normalized.contains("partition"))) {
+            return "MaxCompute 已阻止无分区全表扫描；请在 SQL 中添加分区条件。原始错误："
+                    + message;
+        }
+        return "无法读取数据预览：" + message;
+    }
+
     private record TableSnapshot(
+            String previewSql,
             QueryResult preview,
             List<ColumnMetadata> columns,
             List<TableConstraintMetadata> constraints,

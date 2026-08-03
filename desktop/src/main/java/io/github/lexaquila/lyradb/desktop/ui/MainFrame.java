@@ -17,6 +17,7 @@ import javax.swing.JButton;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.JFrame;
+import javax.swing.Icon;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JList;
@@ -51,6 +52,7 @@ import javax.swing.tree.TreePath;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -98,6 +100,8 @@ public final class MainFrame extends JFrame {
     private JRadioButtonMenuItem darkThemeItem;
     private JRadioButtonMenuItem lightThemeItem;
     private final Map<String, SqlWorkspacePanel> workspaceByConnection = new HashMap<>();
+    private final Map<String, DatabaseWorkspacePanel>
+            databaseWorkspaceByConnection = new HashMap<>();
     private final Map<String, TableInspectorPanel> tableWorkspaceByKey =
             new HashMap<>();
     private final ConnectionTransferService connectionTransfer =
@@ -410,6 +414,8 @@ public final class MainFrame extends JFrame {
                 KeyEvent.VK_N, InputEvent.CTRL_DOWN_MASK), this::newConnection));
         file.add(item("新建 SQL 编辑器", KeyStroke.getKeyStroke(
                 KeyEvent.VK_L, InputEvent.CTRL_DOWN_MASK), this::openSqlWorkspace));
+        file.add(item("关闭当前标签页", KeyStroke.getKeyStroke(
+                KeyEvent.VK_W, InputEvent.CTRL_DOWN_MASK), this::closeCurrentWorkspace));
         file.addSeparator();
         file.add(item("导入连接配置…", null, this::importConnections));
         file.add(item("下载 Excel 导入模板…", null,
@@ -830,42 +836,44 @@ public final class MainFrame extends JFrame {
             return;
         }
         searchSummary.setText("正在搜索 " + connected.size() + " 个已连接数据源…");
+        List<SearchResult> cachedMatches = new ArrayList<>();
+        for (DesktopConnection connection : connected) {
+            for (TreeNode node : runtime.connectionManager()
+                    .searchCached(connection.getId(), query, 80)) {
+                cachedMatches.add(new SearchResult(connection, node));
+            }
+        }
+        List<SearchResult> visibleCached = rankAndDeduplicate(
+                cachedMatches, query, 160);
+        if (!visibleCached.isEmpty()) {
+            searchResultModel.clear();
+            visibleCached.forEach(searchResultModel::addElement);
+            searchSummary.setText("已从本地目录找到 "
+                    + visibleCached.size() + " 个结果，正在后台校验…");
+        }
         searchWorker = new SwingWorker<>() {
             @Override
             protected List<SearchResult> doInBackground() {
-                List<SearchResult> matches = new ArrayList<>();
-                for (DesktopConnection connection : connected) {
-                    if (isCancelled()) {
-                        break;
-                    }
-                    try {
-                        for (TreeNode node : runtime.connectionManager().search(
-                                connection.getId(), query, 80)) {
-                            matches.add(new SearchResult(connection, node));
-                            if (matches.size() >= 160) {
-                                break;
+                List<SearchResult> remote = connected.parallelStream()
+                        .flatMap(connection -> {
+                            if (isCancelled()) {
+                                return java.util.stream.Stream.empty();
                             }
-                        }
-                    } catch (Exception ignored) {
-                        // 单个数据源失败不阻断其他已连接数据源的搜索。
-                    }
-                    if (matches.size() >= 160) {
-                        break;
-                    }
-                }
-                String normalized = query.toLowerCase(Locale.ROOT);
-                matches.sort(Comparator
-                        .comparingInt((SearchResult result) -> {
-                            String name = result.node().getName()
-                                    .toLowerCase(Locale.ROOT);
-                            if (name.equals(normalized)) {
-                                return 0;
+                            try {
+                                return runtime.connectionManager()
+                                        .search(connection.getId(), query, 80)
+                                        .stream()
+                                        .map(node -> new SearchResult(
+                                                connection, node));
+                            } catch (Exception ignored) {
+                                return java.util.stream.Stream.empty();
                             }
-                            return name.startsWith(normalized) ? 1 : 2;
                         })
-                        .thenComparing(result -> result.node().getName(),
-                                String.CASE_INSENSITIVE_ORDER));
-                return matches;
+                        .toList();
+                List<SearchResult> combined =
+                        new ArrayList<>(visibleCached);
+                combined.addAll(remote);
+                return rankAndDeduplicate(combined, query, 160);
             }
 
             @Override
@@ -983,6 +991,7 @@ public final class MainFrame extends JFrame {
                     ignored -> {
                         SqlWorkspacePanel panel = workspaceByConnection.remove(id);
                         if (panel != null) {
+                            panel.disposeWorkspace();
                             workspaces.remove(panel);
                         }
                         tableWorkspaceByKey.entrySet().removeIf(entry -> {
@@ -990,9 +999,16 @@ public final class MainFrame extends JFrame {
                                     id + "\u0000")) {
                                 return false;
                             }
+                            entry.getValue().disposeWorkspace();
                             workspaces.remove(entry.getValue());
                             return true;
                         });
+                        DatabaseWorkspacePanel databasePanel =
+                                databaseWorkspaceByConnection.remove(id);
+                        if (databasePanel != null) {
+                            databasePanel.disposeWorkspace();
+                            workspaces.remove(databasePanel);
+                        }
                         refreshConnections();
                     });
         }
@@ -1054,7 +1070,9 @@ public final class MainFrame extends JFrame {
             existing = new SqlWorkspacePanel(runtime, connectionId,
                     connection.getName(), connection.getDbType(), this::status);
             workspaceByConnection.put(connectionId, existing);
-            workspaces.addTab(connection.getName() + " · SQL", existing);
+            addWorkspaceTab(connection.getName() + " · SQL",
+                    LyraIcons.of(LyraIcons.Kind.SQL), existing,
+                    "SQL 工作区 · " + connection.getName());
         }
         if (initialSql != null) {
             existing.replaceSql(initialSql);
@@ -1124,22 +1142,20 @@ public final class MainFrame extends JFrame {
     }
 
     private void openErDiagram() {
+        openErDiagram(selectedConnectionId());
+    }
+
+    private void openErDiagram(String initialConnectionId) {
         String id = selectedConnectionId();
-        if (id == null && activeWorkspace() != null) {
-            id = activeWorkspace().connectionId();
+        if (initialConnectionId != null) {
+            id = initialConnectionId;
         }
-        if (id == null) {
-            status("请先选择 JDBC 数据库连接");
+        if (runtime.stateStore().listConnections().isEmpty()) {
+            status("请先新建数据库连接");
             return;
         }
-        String connectionId = id;
-        connectAsync(connectionId, () -> {
-            String schema = JOptionPane.showInputDialog(this,
-                    "输入 Schema（留空表示当前目录）：", "");
-            if (schema != null) {
-                new ErDiagramDialog(this, runtime, connectionId, schema).setVisible(true);
-            }
-        });
+        new ErDataMapDialog(
+                this, runtime, id).setVisible(true);
     }
 
     private void openSelected() {
@@ -1148,7 +1164,8 @@ public final class MainFrame extends JFrame {
             return;
         }
         if (item.connectionRoot) {
-            openSqlWorkspace();
+            connectAsync(item.connectionId,
+                    () -> openDatabaseWorkspace(item.connectionId));
             return;
         }
         if (item.node != null
@@ -1159,6 +1176,41 @@ public final class MainFrame extends JFrame {
             TreePath path = new TreePath(node.getPath());
             connectionTree.expandPath(path);
         }
+    }
+
+    private DatabaseWorkspacePanel openDatabaseWorkspace(
+            String connectionId) {
+        DatabaseWorkspacePanel existing =
+                databaseWorkspaceByConnection.get(connectionId);
+        if (existing == null) {
+            DesktopConnection connection = runtime.stateStore()
+                    .findConnection(connectionId)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "连接配置不存在: " + connectionId));
+            existing = new DatabaseWorkspacePanel(
+                    runtime,
+                    connection,
+                    this::status,
+                    node -> openTableWorkspace(
+                            BrowserItem.node(connectionId, node)),
+                    () -> openWorkspace(connectionId, null),
+                    () -> openErDiagram(connectionId));
+            databaseWorkspaceByConnection.put(connectionId, existing);
+            addWorkspaceTab(
+                    connection.getName(),
+                    LyraIcons.databaseEngine(
+                            connection.getDbType(), 16, true),
+                    existing,
+                    "数据库工作区 · " + connection.getName()
+                            + " · 双击表可打开表工作台");
+        }
+        workspaces.setSelectedComponent(existing);
+        String displayName = runtime.stateStore()
+                .findConnection(connectionId)
+                .map(DesktopConnection::getName)
+                .orElse(connectionId);
+        status("已打开数据库工作区：" + displayName);
+        return existing;
     }
 
     private void openTableWorkspace(BrowserItem item) {
@@ -1188,17 +1240,52 @@ public final class MainFrame extends JFrame {
             tableWorkspaceByKey.put(key, existing);
             String tabTitle = schema == null || schema.isBlank()
                     ? table : schema.replace('/', '.') + "." + table;
-            workspaces.addTab(
+            addWorkspaceTab(
                     tabTitle,
                     LyraIcons.treeNode(
                             item.node.getType(),
                             item.node.getProperties(), 16),
-                    existing);
-            int tabIndex = workspaces.indexOfComponent(existing);
-            workspaces.setToolTipTextAt(
-                    tabIndex, "表工作台 · " + tabTitle);
+                    existing, "表工作台 · " + tabTitle);
         }
         workspaces.setSelectedComponent(existing);
+    }
+
+    private void addWorkspaceTab(
+            String title, Icon icon, Component component, String tooltip) {
+        workspaces.addTab(title, icon, component);
+        int index = workspaces.indexOfComponent(component);
+        workspaces.setToolTipTextAt(index, tooltip);
+        workspaces.setTabComponentAt(index, new ClosableTabHeader(
+                workspaces, component, title, icon,
+                () -> closeWorkspace(component)));
+    }
+
+    private void closeCurrentWorkspace() {
+        closeWorkspace(workspaces.getSelectedComponent());
+    }
+
+    private void closeWorkspace(Component component) {
+        int index = workspaces.indexOfComponent(component);
+        if (component == null || index <= 0) {
+            status("“开始”标签页保持打开");
+            return;
+        }
+        if (component instanceof SqlWorkspacePanel sqlWorkspace) {
+            sqlWorkspace.disposeWorkspace();
+            workspaceByConnection.entrySet().removeIf(
+                    entry -> entry.getValue() == component);
+        } else if (component instanceof TableInspectorPanel tableWorkspace) {
+            tableWorkspace.disposeWorkspace();
+            tableWorkspaceByKey.entrySet().removeIf(
+                    entry -> entry.getValue() == component);
+        } else if (component instanceof DatabaseWorkspacePanel databaseWorkspace) {
+            databaseWorkspace.disposeWorkspace();
+            databaseWorkspaceByConnection.entrySet().removeIf(
+                    entry -> entry.getValue() == component);
+        }
+        String title = workspaces.getTitleAt(index);
+        workspaces.remove(component);
+        status("已关闭标签页：" + title);
     }
 
     private void refreshSelected() {
@@ -1208,6 +1295,7 @@ public final class MainFrame extends JFrame {
             return;
         }
         if (node.getUserObject() instanceof BrowserItem item) {
+            runtime.connectionManager().invalidateMetadata(item.connectionId);
             node.removeAllChildren();
             node.add(new DefaultMutableTreeNode(PLACEHOLDER));
             treeModel.reload(node);
@@ -1413,7 +1501,14 @@ public final class MainFrame extends JFrame {
             return item.connectionId;
         }
         SqlWorkspacePanel workspace = activeWorkspace();
-        return workspace == null ? null : workspace.connectionId();
+        if (workspace != null) {
+            return workspace.connectionId();
+        }
+        if (workspaces.getSelectedComponent()
+                instanceof DatabaseWorkspacePanel databaseWorkspace) {
+            return databaseWorkspace.connectionId();
+        }
+        return null;
     }
 
     private SqlWorkspacePanel activeWorkspace() {
@@ -1443,6 +1538,12 @@ public final class MainFrame extends JFrame {
         shuttingDown = true;
         setEnabled(false);
         status("正在安全回滚事务并关闭连接…");
+        workspaceByConnection.values()
+                .forEach(SqlWorkspacePanel::disposeWorkspace);
+        tableWorkspaceByKey.values()
+                .forEach(TableInspectorPanel::disposeWorkspace);
+        databaseWorkspaceByConnection.values()
+                .forEach(DatabaseWorkspacePanel::disposeWorkspace);
         if (backgroundOperationCount > 0) {
             status("正在等待 " + backgroundOperationCount
                     + " 个后台任务完成后安全退出…");
@@ -1529,6 +1630,37 @@ public final class MainFrame extends JFrame {
             current = current.getCause();
         }
         return current;
+    }
+
+    private static List<SearchResult> rankAndDeduplicate(
+            List<SearchResult> source, String query, int requestedLimit) {
+        String normalized = query.toLowerCase(Locale.ROOT);
+        Map<String, SearchResult> unique = new java.util.LinkedHashMap<>();
+        for (SearchResult result : source) {
+            String key = result.connection().getId() + ":"
+                    + result.node().getType() + ":"
+                    + result.node().getPath();
+            unique.putIfAbsent(key, result);
+        }
+        int limit = Math.max(1, requestedLimit);
+        return unique.values().stream()
+                .sorted(Comparator
+                        .comparingInt((SearchResult result) -> {
+                            String name = result.node().getName()
+                                    .toLowerCase(Locale.ROOT);
+                            if (name.equals(normalized)) {
+                                return 0;
+                            }
+                            return name.startsWith(normalized) ? 1 : 2;
+                        })
+                        .thenComparing(result ->
+                                        result.node().getName(),
+                                String.CASE_INSENSITIVE_ORDER)
+                        .thenComparing(result ->
+                                result.connection().getName(),
+                                String.CASE_INSENSITIVE_ORDER))
+                .limit(limit)
+                .toList();
     }
 
     @FunctionalInterface
