@@ -51,6 +51,12 @@ export interface AdminDataSource {
     createdAt?: string
 }
 
+export interface AdminDataSourceTestResponse {
+    success: boolean
+    message: string
+    elapsedMs?: number
+}
+
 export interface AdminGrant extends LogicalGrant {
     dataSourceId: string
     userId?: string
@@ -411,8 +417,12 @@ export const entApi = {
     adminDeleteDataSource(id: string): Promise<void> {
         return apiClient.delete(`/admin/datasources/${id}`)
     },
-    adminTestDataSource(id: string): Promise<{ success: boolean; message: string }> {
-        return apiClient.post(`/admin/datasources/${id}/test`)
+    adminTestDataSource(id: string): Promise<AdminDataSourceTestResponse> {
+        return apiClient.post(
+            `/admin/datasources/${id}/test`,
+            undefined,
+            { timeout: 120_000 },
+        )
     },
     adminRequestDataSourceExport(body: ConnectionExportRequest): Promise<ApprovalRequest> {
         return apiClient.post('/admin/datasources/export-requests', body)

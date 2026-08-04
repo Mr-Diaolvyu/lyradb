@@ -56,6 +56,7 @@ export interface DriverStatus {
     dbType: string
     displayName: string
     downloaded: boolean
+    downloading?: boolean
 }
 
 export interface DatabaseType {

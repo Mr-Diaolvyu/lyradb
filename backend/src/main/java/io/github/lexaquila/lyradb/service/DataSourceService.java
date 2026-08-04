@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 真实数据源服务（管理员持有，连接信息加密；用户不可见）
@@ -184,10 +185,12 @@ public class DataSourceService {
 
     /** 测试连接（不保存） */
     public Map<String, Object> test(String id) {
+        long startedAt = System.nanoTime();
         DataSource ds = getEntity(id);
         Map<String, Object> result = new HashMap<>();
         DatabaseDriver driver = null;
         Object connection = null;
+        log.info("开始测试数据源连接: {} ({})", id, ds.getDbType());
         try {
             Map<String, Object> params = credentialService.decryptSensitiveFields(parseParams(ds.getConnectionParamsJson()));
             driver = driverFactory.createDriver(ds.getDbType());
@@ -204,9 +207,19 @@ public class DataSourceService {
             result.put("message", ConnectionFailureAdvisor.message(ds.getDbType(), e));
         } finally {
             if (driver != null && connection != null) {
-                driver.disconnect(connection);
+                try {
+                    driver.disconnect(connection);
+                } catch (RuntimeException exception) {
+                    log.warn("关闭数据源测试连接失败: {} - {}", id,
+                            exception.getClass().getSimpleName());
+                }
             }
         }
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(
+                System.nanoTime() - startedAt);
+        result.put("elapsedMs", elapsedMs);
+        log.info("数据源连接测试完成: {} ({}) success={} elapsedMs={}",
+                id, ds.getDbType(), result.get("success"), elapsedMs);
         return result;
     }
 

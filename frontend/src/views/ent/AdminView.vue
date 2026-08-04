@@ -13,6 +13,15 @@
           <input ref="importFileInput" class="sr-only" type="file" accept=".json,.lyradb,.xlsx" aria-label="选择连接导入文件" @change="onImportFile" />
           <span v-if="selectedDataSources.length" class="selection-count">已选择 {{ selectedDataSources.length }} 项</span>
         </div>
+        <el-alert
+          v-if="dataSourceTestFeedback.message"
+          :title="dataSourceTestFeedback.message"
+          :type="dataSourceTestFeedback.type"
+          :closable="!testingDataSourceId"
+          show-icon
+          class="data-source-test-feedback"
+          @close="clearDataSourceTestFeedback"
+        />
         <el-table :data="dataSources" border size="small" empty-text="无" @selection-change="onDataSourceSelection">
           <el-table-column type="selection" width="44" />
           <el-table-column prop="displayName" label="名称" width="160" />
@@ -23,8 +32,20 @@
           <el-table-column prop="createdAt" label="创建时间" width="160"><template #default="{ row }">{{ fmt(row.createdAt) }}</template></el-table-column>
           <el-table-column label="操作" width="180">
             <template #default="{ row }">
-              <el-button size="small" @click="testDs(row.id)">测试</el-button>
-              <el-button size="small" type="danger" @click="delDs(row.id)">删除</el-button>
+              <el-button
+                size="small"
+                :loading="testingDataSourceId === row.id"
+                :disabled="Boolean(testingDataSourceId) && testingDataSourceId !== row.id"
+                @click="testDs(row)"
+              >
+                测试
+              </el-button>
+              <el-button
+                size="small"
+                type="danger"
+                :disabled="Boolean(testingDataSourceId)"
+                @click="delDs(row.id)"
+              >删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -347,6 +368,11 @@ import {
 } from '@/utils/enterpriseTransfer'
 import { saveBlob } from '@/utils/download'
 import { driverApi } from '@/api/driver'
+import {
+  ADMIN_DATA_SOURCE_TEST_PHASE_LABELS,
+  runAdminDataSourceTest,
+  type AdminDataSourceTestPhase,
+} from '@/utils/adminDataSourceTest'
 import type { DatabaseType } from '@/types/driver'
 import type { AiProviderDeploymentMode, AiProviderView } from '@/types/ai'
 
@@ -382,6 +408,11 @@ const isExcelImport = computed(() =>
 const importChoices = reactive<Record<string, { action: ImportConflictAction; renameTo: string }>>({})
 let importPreviewController: AbortController | null = null
 
+type DataSourceTestFeedbackType = 'success' | 'info' | 'warning' | 'error'
+const testingDataSourceId = ref('')
+const dataSourceTestFeedback = reactive({
+  type: 'info' as DataSourceTestFeedbackType, message: '',
+})
 const dsCreate = reactive({ visible: false, busy: false, form: { dbType: '', displayName: '', params: { host: '', port: '', username: '', password: '', database: '' } } })
 const grantCreate = reactive({ visible: false, busy: false, form: { dataSourceId: '', userId: '', grantedSourceName: '', allowedSchemas: '', allowedTables: '', blockedTables: '', sqlCapability: 'READ_ONLY' } })
 const userCreate = reactive({ visible: false, busy: false, form: { username: '', password: '', displayName: '', roles: ['ANALYST'] } })
@@ -423,8 +454,50 @@ async function createDs() {
   } catch (e: any) { ElMessage.error(e.message || '保存失败') }
   finally { dsCreate.busy = false }
 }
-async function testDs(id: string) {
-  try { const r = await entApi.adminTestDataSource(id); ElMessage[r.success ? 'success' : 'error'](r.message) } catch (e: any) { ElMessage.error(e.message) }
+async function testDs(source: AdminDataSource) {
+  if (testingDataSourceId.value) return
+  testingDataSourceId.value = source.id
+
+  const updatePhase = (phase: AdminDataSourceTestPhase) => {
+    dataSourceTestFeedback.type = phase === 'DOWNLOADING_DRIVER'
+      ? 'warning' : 'info'
+    dataSourceTestFeedback.message =
+      `${source.displayName}：${ADMIN_DATA_SOURCE_TEST_PHASE_LABELS[phase]}`
+  }
+
+  try {
+    const result = await runAdminDataSourceTest(
+      source,
+      {
+        getDriverStatus: dbType => driverApi.getDriverStatus(dbType),
+        downloadDriver: dbType => driverApi.downloadDriver(dbType),
+        testDataSource: id => entApi.adminTestDataSource(id),
+      },
+      updatePhase,
+    )
+    const message = `${source.displayName}：${result.message || (result.success ? '连接成功' : '连接失败')}（${result.elapsedMs} ms）`
+    dataSourceTestFeedback.type = result.success ? 'success' : 'error'
+    dataSourceTestFeedback.message = message
+    if (result.success) {
+      ElMessage.success(message)
+    } else {
+      ElMessage.error(message)
+    }
+  } catch (error: unknown) {
+    const reason = error instanceof Error && error.message
+      ? error.message : '连接测试失败'
+    const message = `${source.displayName}：${reason}`
+    dataSourceTestFeedback.type = 'error'
+    dataSourceTestFeedback.message = message
+    ElMessage.error(message)
+  } finally {
+    testingDataSourceId.value = ''
+  }
+}
+function clearDataSourceTestFeedback() {
+  if (!testingDataSourceId.value) {
+    dataSourceTestFeedback.message = ''
+  }
 }
 async function delDs(id: string) {
   try { await ElMessageBox.confirm('删除该数据源？', '确认', { type: 'warning' }) }
@@ -685,6 +758,7 @@ function fmt(d?: string) { return d ? new Date(d).toLocaleString() : '' }
 .bar :deep(.el-button + .el-button) { margin-left: 0; }
 .selection-count, .file-name { color: var(--color-text-muted); font-size: 12px; }
 .selected-list { max-height: 96px; overflow: auto; }
+.data-source-test-feedback { margin-bottom: 10px; }
 .import-toolbar { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(220px, 1.5fr) auto auto; gap: 8px; align-items: center; margin-bottom: 12px; }
 .risk-confirm { margin-top: 12px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

@@ -109,6 +109,8 @@ public class DriverController {
         status.put("dbType", dbType);
         status.put("displayName", driverRegistry.getDriverInfo(dbType).getDisplayName());
         status.put("downloaded", driverFactory.isDriverDownloaded(dbType));
+        status.put("downloading", inFlightDownloads.contains(
+                dbType.toUpperCase(java.util.Locale.ROOT)));
         return ResponseEntity.ok(status);
     }
 
