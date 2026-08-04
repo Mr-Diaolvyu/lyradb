@@ -34,7 +34,9 @@ import java.util.concurrent.TimeUnit;
 /**
  * 真实数据源服务（管理员持有，连接信息加密；用户不可见）
  *
- * <p>关键：列表/读取均返回**掩码**后的参数（密码等显示 ********），明文仅在连接时解密、内存短暂存在。</p>
+ * <p>关键：列表/普通读取均返回**掩码**后的参数（密码等显示 ********）。
+ * 明文只在建立连接或具备 DS_ADMIN 权限的用户显式查看单个凭据时短暂解密；
+ * 查看动作由控制器写入审计。</p>
  */
 @Service
 public class DataSourceService {
@@ -103,6 +105,33 @@ public class DataSourceService {
     public Map<String, Object> getMasked(String id) {
         return toMaskedView(repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("数据源不存在: " + id)));
+    }
+
+    /**
+     * 显式读取单个明文凭据。调用方必须先完成角色和工作空间校验，
+     * 且不得把结果写入日志、普通详情或缓存。
+     */
+    public String getPlaintextCredential(String id, String fieldName) {
+        if (fieldName == null || fieldName.isBlank()
+                || fieldName.length() > 128) {
+            throw new IllegalArgumentException("凭据字段名无效");
+        }
+        DataSource dataSource = getEntity(id);
+        Map<String, Object> stored = parseParams(
+                dataSource.getConnectionParamsJson());
+        if (!stored.containsKey(fieldName)) {
+            throw new IllegalArgumentException("凭据字段不存在");
+        }
+        Object storedValue = stored.get(fieldName);
+        if (!credentialService.isSensitiveField(fieldName)
+                && !credentialService.isEncryptedValue(storedValue)) {
+            throw new IllegalArgumentException("该字段不是受保护凭据");
+        }
+        Map<String, Object> single = new HashMap<>();
+        single.put(fieldName, storedValue);
+        Object plaintext = credentialService.decryptSensitiveFields(single)
+                .get(fieldName);
+        return plaintext == null ? "" : plaintext.toString();
     }
 
     public DataSource getEntity(String id) {

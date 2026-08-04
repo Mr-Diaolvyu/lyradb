@@ -57,6 +57,18 @@ export interface AdminDataSourceTestResponse {
     elapsedMs?: number
 }
 
+export interface AdminDataSourceCredentialResponse {
+    field: string
+    value: string
+}
+
+export interface AdminDataSourceSaveRequest {
+    dbType?: string
+    displayName: string
+    description?: string
+    params?: Record<string, any>
+}
+
 export interface AdminGrant extends LogicalGrant {
     dataSourceId: string
     userId?: string
@@ -411,8 +423,20 @@ export const entApi = {
         const params = workspaceId ? { params: { workspaceId } } : {}
         return apiClient.get('/admin/datasources', params as any)
     },
-    adminCreateDataSource(body: any): Promise<{ id: string; success: boolean }> {
+    adminDataSource(id: string): Promise<AdminDataSource> {
+        return apiClient.get(`/admin/datasources/${id}`)
+    },
+    adminCreateDataSource(body: AdminDataSourceSaveRequest): Promise<{ id: string; success: boolean }> {
         return apiClient.post('/admin/datasources', body)
+    },
+    adminUpdateDataSource(id: string, body: AdminDataSourceSaveRequest): Promise<{ success: boolean }> {
+        return apiClient.put(`/admin/datasources/${id}`, body)
+    },
+    adminRevealDataSourceCredential(id: string, field: string): Promise<AdminDataSourceCredentialResponse> {
+        return apiClient.post(
+            `/admin/datasources/${id}/credentials/reveal`,
+            { field },
+        )
     },
     adminDeleteDataSource(id: string): Promise<void> {
         return apiClient.delete(`/admin/datasources/${id}`)

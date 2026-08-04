@@ -5,6 +5,8 @@ import io.github.lexaquila.lyradb.service.AuditService;
 import io.github.lexaquila.lyradb.service.DataSourceService;
 import io.github.lexaquila.lyradb.service.SecurityUtil;
 import jakarta.servlet.http.HttpSession;
+import org.springframework.http.CacheControl;
+import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -86,6 +88,32 @@ public class AdminDataSourceController {
         auditService.recordCurrent(workspaceId, "DATA_SOURCE_UPDATE",
                 id, updated.getDisplayName(), true, null);
         return Map.of("success", true);
+    }
+
+    @PostMapping("/{id}/credentials/reveal")
+    public ResponseEntity<Map<String, Object>> revealCredential(
+            @PathVariable String id,
+            @RequestBody Map<String, Object> body,
+            HttpSession session) {
+        securityUtil.requireRole("DS_ADMIN");
+        DataSource dataSource = requireResource(id, session);
+        String field = body.get("field") == null
+                ? null : body.get("field").toString();
+        try {
+            String value = dataSourceService.getPlaintextCredential(id, field);
+            auditService.recordCurrent(dataSource.getWorkspaceId(),
+                    "DATA_SOURCE_CREDENTIAL_REVEAL", id,
+                    dataSource.getDisplayName(), true, null);
+            return ResponseEntity.ok()
+                    .cacheControl(CacheControl.noStore().cachePrivate())
+                    .header("Pragma", "no-cache")
+                    .body(Map.of("field", field, "value", value));
+        } catch (RuntimeException exception) {
+            auditService.recordCurrent(dataSource.getWorkspaceId(),
+                    "DATA_SOURCE_CREDENTIAL_REVEAL", id,
+                    dataSource.getDisplayName(), false, "凭据查看失败");
+            throw exception;
+        }
     }
 
     @DeleteMapping("/{id}")

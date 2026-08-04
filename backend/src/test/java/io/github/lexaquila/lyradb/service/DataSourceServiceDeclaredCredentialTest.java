@@ -80,6 +80,29 @@ class DataSourceServiceDeclaredCredentialTest {
                 credentialService.maskSensitiveFields(persisted)
                         .get("clientCredential"));
     }
+
+    @Test
+    void plaintextCredentialReturnsOnlyProtectedStoredField()
+            throws Exception {
+        DataSource existing = existingSource(Map.of(
+                "url", "jdbc:h2:mem:test",
+                "password", "db-secret",
+                "clientCredential", "custom-secret"),
+                Set.of("clientCredential"));
+        when(repository.findById("source-1"))
+                .thenReturn(Optional.of(existing));
+
+        assertEquals("db-secret",
+                dataSourceService.getPlaintextCredential(
+                        "source-1", "password"));
+        assertEquals("custom-secret",
+                dataSourceService.getPlaintextCredential(
+                        "source-1", "clientCredential"));
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> dataSourceService.getPlaintextCredential(
+                        "source-1", "url"));
+    }
     @Test
     void importedOverwriteFullyReplacesParamsAndOmitClearsOldCredential()
             throws Exception {

@@ -6,7 +6,7 @@
       <!-- 数据源 -->
       <el-tab-pane label="数据源" name="ds">
         <div class="bar">
-          <el-button type="primary" :icon="Plus" @click="dsCreate.visible = true">注册数据源</el-button>
+          <el-button type="primary" :icon="Plus" @click="openCreateDataSource">注册数据源</el-button>
           <el-button :icon="Download" :disabled="!selectedDataSources.length" @click="openExport">申请导出所选连接</el-button>
           <el-button :icon="Upload" @click="openImportFile">导入连接</el-button>
           <el-button :icon="Download" @click="downloadImportTemplate">下载 Excel 模板</el-button>
@@ -30,8 +30,9 @@
             <template #default="{ row }">{{ summaryParams(row.params) }}</template>
           </el-table-column>
           <el-table-column prop="createdAt" label="创建时间" width="160"><template #default="{ row }">{{ fmt(row.createdAt) }}</template></el-table-column>
-          <el-table-column label="操作" width="180">
+          <el-table-column label="操作" width="260">
             <template #default="{ row }">
+              <el-button size="small" :disabled="Boolean(testingDataSourceId)" @click="openEditDataSource(row)">编辑</el-button>
               <el-button
                 size="small"
                 :loading="testingDataSourceId === row.id"
@@ -119,22 +120,101 @@
       </el-tab-pane>
     </el-tabs>
 
-    <!-- 数据源创建 -->
-    <el-dialog v-model="dsCreate.visible" title="注册数据源" width="520">
-      <el-form label-width="100px">
-        <el-form-item label="数据库类型">
-          <el-select v-model="dsCreate.form.dbType" style="width:100%" @change="onDbTypeChange">
+    <!-- 数据源创建/编辑 -->
+    <el-dialog
+      v-model="dsEditor.visible"
+      :title="dsEditor.mode === 'edit' ? '编辑数据源' : '注册数据源'"
+      width="680"
+      destroy-on-close
+      @closed="resetDataSourceEditor"
+    >
+      <el-skeleton v-if="dsEditor.loading" :rows="7" animated />
+      <el-form v-else label-width="130px">
+        <el-form-item label="数据库类型" required>
+          <el-select
+            v-model="dsEditor.form.dbType"
+            style="width:100%"
+            :disabled="dsEditor.mode === 'edit' || dsEditor.busy"
+            @change="onDbTypeChange"
+          >
             <el-option v-for="t in dbTypes" :key="t.dbType" :label="t.displayName" :value="t.dbType" />
           </el-select>
         </el-form-item>
-        <el-form-item label="显示名"><el-input v-model="dsCreate.form.displayName" /></el-form-item>
-        <el-form-item label="host"><el-input v-model="dsCreate.form.params.host" /></el-form-item>
-        <el-form-item label="port"><el-input v-model="dsCreate.form.params.port" /></el-form-item>
-        <el-form-item label="username"><el-input v-model="dsCreate.form.params.username" /></el-form-item>
-        <el-form-item label="password"><el-input v-model="dsCreate.form.params.password" type="password" show-password /></el-form-item>
-        <el-form-item label="database"><el-input v-model="dsCreate.form.params.database" /></el-form-item>
+        <el-form-item label="显示名" required>
+          <el-input v-model="dsEditor.form.displayName" :disabled="dsEditor.busy" />
+        </el-form-item>
+        <el-form-item label="说明">
+          <el-input v-model="dsEditor.form.description" type="textarea" :rows="2" :disabled="dsEditor.busy" />
+        </el-form-item>
+        <el-alert
+          v-if="dsEditor.mode === 'edit'"
+          title="已保存凭据默认不下发。查看或复制时会按管理员权限单字段解密并记录审计；仅查看不会修改连接。"
+          type="info"
+          :closable="false"
+          show-icon
+          class="credential-note"
+        />
+        <el-form-item
+          v-for="field in dsEditor.fields"
+          :key="field.name"
+          :label="field.label"
+          :required="field.required"
+        >
+          <el-switch
+            v-if="field.type === 'boolean'"
+            v-model="dsEditor.form.params[field.name]"
+            :disabled="dsEditor.busy"
+            @change="markDataSourceParamDirty(field.name)"
+          />
+          <el-select
+            v-else-if="field.type === 'select'"
+            v-model="dsEditor.form.params[field.name]"
+            style="width:100%"
+            :disabled="dsEditor.busy"
+            @change="markDataSourceParamDirty(field.name)"
+          >
+            <el-option v-for="option in field.options || []" :key="option.value" :label="option.label" :value="option.value" />
+          </el-select>
+          <el-input-number
+            v-else-if="field.type === 'number'"
+            v-model="dsEditor.form.params[field.name]"
+            style="width:100%"
+            :disabled="dsEditor.busy"
+            @change="markDataSourceParamDirty(field.name)"
+          />
+          <div v-else-if="isCredentialEditorField(field)" class="credential-editor">
+            <el-input
+              v-model="dsEditor.form.params[field.name]"
+              :type="dsEditor.credentialVisible[field.name] ? 'text' : 'password'"
+              :placeholder="credentialPlaceholder(field)"
+              autocomplete="new-password"
+              :disabled="dsEditor.busy"
+              @input="markDataSourceParamDirty(field.name)"
+            />
+            <el-tag v-if="isStoredCredential(field) && !dsEditor.dirtyParams[field.name]" size="small" type="info">已保存</el-tag>
+            <el-button
+              :loading="dsEditor.credentialLoadingField === field.name"
+              :disabled="dsEditor.busy"
+              @click="toggleDataSourceCredential(field)"
+            >{{ credentialToggleLabel(field) }}</el-button>
+            <el-button
+              :loading="dsEditor.credentialLoadingField === field.name"
+              :disabled="dsEditor.busy"
+              @click="copyDataSourceCredential(field)"
+            >复制</el-button>
+          </div>
+          <el-input
+            v-else
+            v-model="dsEditor.form.params[field.name]"
+            :disabled="dsEditor.busy"
+            @input="markDataSourceParamDirty(field.name)"
+          />
+        </el-form-item>
       </el-form>
-      <template #footer><el-button @click="dsCreate.visible=false">取消</el-button><el-button type="primary" :loading="dsCreate.busy" @click="createDs">保存</el-button></template>
+      <template #footer>
+        <el-button @click="dsEditor.visible = false">取消</el-button>
+        <el-button type="primary" :loading="dsEditor.busy" :disabled="dsEditor.loading" @click="saveDataSource">保存</el-button>
+      </template>
     </el-dialog>
 
     <!-- 授权创建 -->
@@ -354,6 +434,7 @@ import { Download, Plus, Upload } from '@element-plus/icons-vue'
 import {
   entApi,
   type AdminDataSource,
+  type AdminDataSourceSaveRequest,
   type AdminGrant,
   type ConnectionImportPreview,
   type CredentialExportMode,
@@ -369,11 +450,19 @@ import {
 import { saveBlob } from '@/utils/download'
 import { driverApi } from '@/api/driver'
 import {
+  buildAdminDataSourceFields,
+  buildAdminDataSourceFormParams,
+  buildAdminDataSourceParamPayload,
+  firstMissingRequiredField,
+  isAdminCredentialField,
+  isStoredAdminCredential,
+} from '@/utils/adminDataSourceEditor'
+import {
   ADMIN_DATA_SOURCE_TEST_PHASE_LABELS,
   runAdminDataSourceTest,
   type AdminDataSourceTestPhase,
 } from '@/utils/adminDataSourceTest'
-import type { DatabaseType } from '@/types/driver'
+import type { DatabaseType, FormField } from '@/types/driver'
 import type { AiProviderDeploymentMode, AiProviderView } from '@/types/ai'
 
 const tab = ref('ds')
@@ -413,7 +502,20 @@ const testingDataSourceId = ref('')
 const dataSourceTestFeedback = reactive({
   type: 'info' as DataSourceTestFeedbackType, message: '',
 })
-const dsCreate = reactive({ visible: false, busy: false, form: { dbType: '', displayName: '', params: { host: '', port: '', username: '', password: '', database: '' } } })
+const dsEditor = reactive({
+  visible: false,
+  mode: 'create' as 'create' | 'edit',
+  loading: false,
+  busy: false,
+  fields: [] as FormField[],
+  originalParams: {} as Record<string, any>,
+  dirtyParams: {} as Record<string, boolean>,
+  credentialVisible: {} as Record<string, boolean>,
+  credentialLoaded: {} as Record<string, boolean>,
+  credentialLoadingField: '',
+  form: { id: '', dbType: '', displayName: '', description: '', params: {} as Record<string, any> },
+})
+const credentialHideTimers = new Map<string, number>()
 const grantCreate = reactive({ visible: false, busy: false, form: { dataSourceId: '', userId: '', grantedSourceName: '', allowedSchemas: '', allowedTables: '', blockedTables: '', sqlCapability: 'READ_ONLY' } })
 const userCreate = reactive({ visible: false, busy: false, form: { username: '', password: '', displayName: '', roles: ['ANALYST'] } })
 const aiCreate = reactive({
@@ -440,19 +542,219 @@ onMounted(async () => {
   load()
 })
 
-function onDbTypeChange() {
-  const t = dbTypes.value.find(x => x.dbType === dsCreate.form.dbType)
-  if (t) dsCreate.form.params.port = t.defaultPort
-  if (!dsCreate.form.displayName) dsCreate.form.displayName = t?.displayName || ''
+function resetDataSourceEditor() {
+  for (const timer of credentialHideTimers.values()) window.clearTimeout(timer)
+  credentialHideTimers.clear()
+  dsEditor.visible = false
+  dsEditor.mode = 'create'
+  dsEditor.loading = false
+  dsEditor.busy = false
+  dsEditor.fields = []
+  dsEditor.originalParams = {}
+  dsEditor.dirtyParams = {}
+  dsEditor.credentialVisible = {}
+  dsEditor.credentialLoaded = {}
+  dsEditor.credentialLoadingField = ''
+  dsEditor.form = { id: '', dbType: '', displayName: '', description: '', params: {} }
 }
 
-async function createDs() {
-  dsCreate.busy = true
+function openCreateDataSource() {
+  resetDataSourceEditor()
+  dsEditor.visible = true
+}
+
+async function openEditDataSource(row: AdminDataSource) {
+  resetDataSourceEditor()
+  dsEditor.mode = 'edit'
+  dsEditor.visible = true
+  dsEditor.loading = true
   try {
-    await entApi.adminCreateDataSource({ dbType: dsCreate.form.dbType, displayName: dsCreate.form.displayName, params: dsCreate.form.params, description: '' })
-    ElMessage.success('已保存'); dsCreate.visible = false; load()
-  } catch (e: any) { ElMessage.error(e.message || '保存失败') }
-  finally { dsCreate.busy = false }
+    const source = await entApi.adminDataSource(row.id)
+    const driver = await driverApi.getDriver(source.dbType)
+    dsEditor.fields = buildAdminDataSourceFields(
+      driver.connectionFormFields || [], source.params || {},
+    )
+    dsEditor.originalParams = { ...(source.params || {}) }
+    dsEditor.form = {
+      id: source.id,
+      dbType: source.dbType,
+      displayName: source.displayName,
+      description: source.description || '',
+      params: buildAdminDataSourceFormParams(
+        dsEditor.fields, dsEditor.originalParams,
+      ),
+    }
+  } catch (e: any) {
+    ElMessage.error(e.message || '加载数据源失败')
+    dsEditor.visible = false
+  } finally {
+    dsEditor.loading = false
+  }
+}
+
+async function onDbTypeChange() {
+  if (!dsEditor.form.dbType || dsEditor.mode === 'edit') return
+  dsEditor.loading = true
+  try {
+    const driver = await driverApi.getDriver(dsEditor.form.dbType)
+    dsEditor.fields = buildAdminDataSourceFields(driver.connectionFormFields || [])
+    dsEditor.form.params = buildAdminDataSourceFormParams(dsEditor.fields)
+    dsEditor.dirtyParams = {}
+    const type = dbTypes.value.find(item => item.dbType === dsEditor.form.dbType)
+    if (!dsEditor.form.displayName) {
+      dsEditor.form.displayName = type?.displayName || driver.displayName || ''
+    }
+  } catch (e: any) {
+    dsEditor.fields = []
+    dsEditor.form.params = {}
+    ElMessage.error(e.message || '加载数据库连接字段失败')
+  } finally {
+    dsEditor.loading = false
+  }
+}
+
+function markDataSourceParamDirty(name: string) {
+  dsEditor.dirtyParams[name] = true
+}
+
+function isCredentialEditorField(field: FormField) {
+  return isAdminCredentialField(field, dsEditor.originalParams)
+}
+
+function isStoredCredential(field: FormField) {
+  return dsEditor.mode === 'edit'
+    && isStoredAdminCredential(field, dsEditor.originalParams)
+}
+
+function credentialPlaceholder(field: FormField) {
+  if (isStoredCredential(field) && !dsEditor.dirtyParams[field.name]) {
+    return '已保存；输入新值可替换，查看或复制会记录审计'
+  }
+  return '请输入凭据'
+}
+
+function credentialToggleLabel(field: FormField) {
+  if (dsEditor.credentialVisible[field.name]) return '隐藏'
+  if (isStoredCredential(field) && !dsEditor.credentialLoaded[field.name]
+    && !dsEditor.dirtyParams[field.name]) return '查看'
+  return '显示'
+}
+
+async function loadCredentialValue(field: FormField): Promise<string> {
+  const current = String(dsEditor.form.params[field.name] ?? '')
+  if (dsEditor.mode !== 'edit' || !isStoredCredential(field)
+    || dsEditor.dirtyParams[field.name]
+    || dsEditor.credentialLoaded[field.name]) {
+    return current
+  }
+  dsEditor.credentialLoadingField = field.name
+  try {
+    const result = await entApi.adminRevealDataSourceCredential(
+      dsEditor.form.id, field.name,
+    )
+    if (result.field !== field.name) throw new Error('服务端返回的凭据字段不匹配')
+    dsEditor.form.params[field.name] = result.value
+    dsEditor.credentialLoaded[field.name] = true
+    return result.value
+  } finally {
+    dsEditor.credentialLoadingField = ''
+  }
+}
+
+function scheduleCredentialHide(fieldName: string) {
+  const existing = credentialHideTimers.get(fieldName)
+  if (existing) window.clearTimeout(existing)
+  credentialHideTimers.set(fieldName, window.setTimeout(() => {
+    dsEditor.credentialVisible[fieldName] = false
+    credentialHideTimers.delete(fieldName)
+  }, 30_000))
+}
+
+async function toggleDataSourceCredential(field: FormField) {
+  if (dsEditor.credentialVisible[field.name]) {
+    dsEditor.credentialVisible[field.name] = false
+    return
+  }
+  try {
+    await loadCredentialValue(field)
+    dsEditor.credentialVisible[field.name] = true
+    scheduleCredentialHide(field.name)
+  } catch (e: any) {
+    ElMessage.error(e.message || '查看凭据失败')
+  }
+}
+
+async function writeClipboard(value: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value)
+    return
+  }
+  const textarea = document.createElement('textarea')
+  textarea.value = value
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  const copied = document.execCommand('copy')
+  textarea.remove()
+  if (!copied) throw new Error('浏览器拒绝访问剪贴板')
+}
+
+async function copyDataSourceCredential(field: FormField) {
+  try {
+    const value = await loadCredentialValue(field)
+    if (!value) {
+      ElMessage.warning('当前凭据为空')
+      return
+    }
+    await writeClipboard(value)
+    ElMessage.success(`${field.label} 已复制，请注意保管`)
+  } catch (e: any) {
+    ElMessage.error(e.message || '复制凭据失败')
+  }
+}
+
+async function saveDataSource() {
+  if (!dsEditor.form.dbType) { ElMessage.warning('请选择数据库类型'); return }
+  if (!dsEditor.form.displayName.trim()) { ElMessage.warning('显示名不能为空'); return }
+  const missing = firstMissingRequiredField(
+    dsEditor.fields,
+    dsEditor.form.params,
+    dsEditor.originalParams,
+    dsEditor.dirtyParams,
+    dsEditor.mode === 'edit',
+  )
+  if (missing) { ElMessage.warning(`${missing.label}不能为空`); return }
+
+  const params = buildAdminDataSourceParamPayload(
+    dsEditor.fields,
+    dsEditor.form.params,
+    dsEditor.dirtyParams,
+    dsEditor.mode === 'edit',
+  )
+  const body: AdminDataSourceSaveRequest = {
+    displayName: dsEditor.form.displayName.trim(),
+    description: dsEditor.form.description.trim(),
+  }
+  dsEditor.busy = true
+  try {
+    if (dsEditor.mode === 'edit') {
+      if (Object.keys(params).length) body.params = params
+      await entApi.adminUpdateDataSource(dsEditor.form.id, body)
+      ElMessage.success('数据源已更新')
+    } else {
+      body.dbType = dsEditor.form.dbType
+      body.params = params
+      await entApi.adminCreateDataSource(body)
+      ElMessage.success('数据源已注册')
+    }
+    dsEditor.visible = false
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    dsEditor.busy = false
+  }
 }
 async function testDs(source: AdminDataSource) {
   if (testingDataSourceId.value) return
@@ -759,6 +1061,9 @@ function fmt(d?: string) { return d ? new Date(d).toLocaleString() : '' }
 .selection-count, .file-name { color: var(--color-text-muted); font-size: 12px; }
 .selected-list { max-height: 96px; overflow: auto; }
 .data-source-test-feedback { margin-bottom: 10px; }
+.credential-note { margin-bottom: 14px; }
+.credential-editor { display: flex; align-items: center; gap: 8px; width: 100%; }
+.credential-editor :deep(.el-input) { flex: 1; }
 .import-toolbar { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(220px, 1.5fr) auto auto; gap: 8px; align-items: center; margin-bottom: 12px; }
 .risk-confirm { margin-top: 12px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

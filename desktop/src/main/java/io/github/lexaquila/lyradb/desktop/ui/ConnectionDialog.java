@@ -33,6 +33,8 @@ import java.awt.FlowLayout;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.Toolkit;
+import java.awt.datatransfer.StringSelection;
 import java.io.File;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -111,7 +113,8 @@ public final class ConnectionDialog extends JDialog {
         JLabel title = new JLabel(original == null ? "新建数据库连接" : "编辑数据库连接");
         title.setFont(NativeTheme.FONT_TITLE);
         title.setForeground(NativeTheme.FOREGROUND);
-        JLabel subtitle = new JLabel("数据库凭据加密保存在当前设备，不上传至 LyraDB 服务");
+        JLabel subtitle = new JLabel(
+                "数据库凭据加密保存在当前设备；编辑时可按需显示或复制");
         subtitle.setFont(NativeTheme.FONT_CAPTION);
         subtitle.setForeground(NativeTheme.MUTED);
         heading.add(title);
@@ -246,11 +249,7 @@ public final class ConnectionDialog extends JDialog {
 
     private Component createField(FormField field, Object value) {
         return switch (field.getType()) {
-            case "password" -> {
-                JPasswordField password = new JPasswordField();
-                password.setText(value == null ? "" : value.toString());
-                yield password;
-            }
+            case "password" -> new SensitiveFieldEditor(value);
             case "number" -> new JSpinner(new SpinnerNumberModel(
                     parseInt(value), 0, 65535, 1));
             case "boolean" -> {
@@ -314,6 +313,9 @@ public final class ConnectionDialog extends JDialog {
     }
 
     private Object componentValue(Component component) {
+        if (component instanceof SensitiveFieldEditor sensitive) {
+            return sensitive.value();
+        }
         if (component instanceof JPasswordField password) {
             char[] chars = password.getPassword();
             try {
@@ -398,6 +400,74 @@ public final class ConnectionDialog extends JDialog {
         }
     }
 
+    private final class SensitiveFieldEditor extends JPanel {
+        private final JPasswordField passwordField = new JPasswordField();
+        private final JButton revealButton = UiKit.button(
+                "显示", null, UiKit.ButtonStyle.GHOST);
+        private final char hiddenEchoChar;
+
+        private SensitiveFieldEditor(Object value) {
+            super(new BorderLayout(6, 0));
+            setOpaque(false);
+            passwordField.setText(value == null ? "" : value.toString());
+            char echo = passwordField.getEchoChar();
+            hiddenEchoChar = echo == 0 ? '\u2022' : echo;
+            revealButton.addActionListener(event -> toggleReveal());
+            JButton copyButton = UiKit.button(
+                    "复制", null, UiKit.ButtonStyle.GHOST);
+            copyButton.addActionListener(event -> copyValue());
+            JPanel actions = new JPanel(new FlowLayout(
+                    FlowLayout.RIGHT, 4, 0));
+            actions.setOpaque(false);
+            actions.add(revealButton);
+            actions.add(copyButton);
+            add(passwordField, BorderLayout.CENTER);
+            add(actions, BorderLayout.EAST);
+        }
+
+        private String value() {
+            char[] chars = passwordField.getPassword();
+            try {
+                return new String(chars);
+            } finally {
+                Arrays.fill(chars, '\0');
+            }
+        }
+
+        private void toggleReveal() {
+            boolean reveal = passwordField.getEchoChar() != 0;
+            passwordField.setEchoChar(reveal ? (char) 0 : hiddenEchoChar);
+            revealButton.setText(reveal ? "隐藏" : "显示");
+            if (reveal) {
+                statusLabel.setForeground(NativeTheme.WARNING);
+                statusLabel.setText("凭据正在明文显示，请注意旁观风险");
+            } else {
+                statusLabel.setForeground(NativeTheme.MUTED);
+                statusLabel.setText("凭据已隐藏");
+            }
+        }
+
+        private void copyValue() {
+            char[] chars = passwordField.getPassword();
+            try {
+                if (chars.length == 0) {
+                    statusLabel.setForeground(NativeTheme.WARNING);
+                    statusLabel.setText("当前凭据为空");
+                    return;
+                }
+                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(
+                        new StringSelection(new String(chars)), null);
+                statusLabel.setForeground(NativeTheme.SUCCESS);
+                statusLabel.setText("凭据已复制到系统剪贴板，请注意保管");
+            } catch (RuntimeException exception) {
+                showError(new IllegalStateException(
+                        "无法访问系统剪贴板", exception));
+            } finally {
+                Arrays.fill(chars, '\0');
+            }
+        }
+    }
+
     private static void addRow(JPanel panel, GridBagConstraints c,
             int row, String label, Component component) {
         c.gridx = 0;
@@ -413,7 +483,7 @@ public final class ConnectionDialog extends JDialog {
         c.gridx = 1;
         c.weightx = 1;
         c.fill = GridBagConstraints.HORIZONTAL;
-        component.setPreferredSize(new Dimension(410, 34));
+        component.setPreferredSize(new Dimension(500, 34));
         panel.add(component, c);
     }
 
