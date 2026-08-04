@@ -545,6 +545,49 @@
                 "label": "AccessKey Secret",
                 "type": "password",
                 "required": true
+            },
+            {
+                "name": "securityToken",
+                "label": "STS Security Token（可选）",
+                "type": "password",
+                "required": false
+            },
+            {
+                "name": "dataWorksRegionId",
+                "label": "DataWorks 地域 ID（可选，默认从 Endpoint 识别）",
+                "type": "text",
+                "required": false
+            },
+            {
+                "name": "dataWorksEndpoint",
+                "label": "DataWorks Endpoint（可选，不含 https://）",
+                "type": "text",
+                "required": false
+            },
+            {
+                "name": "lineageProbePolicy",
+                "label": "血缘探查时机",
+                "type": "select",
+                "required": false,
+                "defaultValue": "MANUAL",
+                "options": [
+                    {
+                        "label": "仅手动（推荐）",
+                        "value": "MANUAL"
+                    },
+                    {
+                        "label": "选择根表后",
+                        "value": "ON_SELECTION"
+                    },
+                    {
+                        "label": "每 30 分钟",
+                        "value": "EVERY_30_MINUTES"
+                    },
+                    {
+                        "label": "每 6 小时",
+                        "value": "EVERY_6_HOURS"
+                    }
+                ]
             }
         ]
     },

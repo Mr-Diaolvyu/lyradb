@@ -951,7 +951,8 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
         }
 
         try {
-            String tableComment = getTableComment(conn, schemaName, tableName);
+            String tableComment = getTableComment(
+                    (Object) conn, schemaName, tableName);
             if (tableComment != null && !tableComment.isEmpty()) {
                 ddl.append("\n-- 表注释: ")
                         .append(tableComment.replace('\r', ' ').replace('\n', ' '));
@@ -1014,7 +1015,18 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
     /**
      * 获取表注释（REMARKS）
      */
-    protected String getTableComment(Connection conn, String schemaName, String tableName) throws SQLException {
+    @Override
+    public String getTableComment(
+            Object connection, String schemaName, String tableName)
+            throws SQLException {
+        return getTableComment(
+                (Connection) connection, schemaName, tableName);
+    }
+
+    protected String getTableComment(
+            Connection connection, String schemaName, String tableName)
+            throws SQLException {
+        Connection conn = connection;
         DatabaseMetaData metaData = conn.getMetaData();
         try (ResultSet rs = metaData.getTables(metadataCatalog(schemaName), metadataSchema(schemaName), tableName, null)) {
             if (rs.next()) {

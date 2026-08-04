@@ -17,15 +17,33 @@ import java.util.Set;
  * 将统一驱动元数据转换为桌面 ER 图模型。
  *
  * <p>这里不直接调用 JDBC DatabaseMetaData。Catalog、Schema、Project 的差异
- * 由驱动层统一解析，避免 MySQL 数据库名被误当成 Schema。只为用户明确选择
- * 的表读取字段和约束，并且只根据真实外键生成连线。</p>
+ * 由驱动层统一解析，避免 MySQL 数据库名被误当成 Schema。普通数据库可加载
+ * 所选范围内的完整表清单；MaxCompute 可加载用户选择的血缘根表。两种模式
+ * 都只根据真实元数据生成连线。</p>
  */
 final class ErDiagramMetadataLoader {
 
     static final int MAX_SELECTED_TABLES = 24;
+    static final int MAX_SCOPE_TABLES = 2_000;
     private static final int MAX_VISIBLE_COLUMNS = 14;
 
     private ErDiagramMetadataLoader() {
+    }
+
+    static ErDiagramDialog.SchemaGraph skeleton(
+            List<TableChoice> choices) {
+        List<ErDiagramDialog.TableNode> tables = choices == null
+                ? List.of()
+                : choices.stream()
+                        .distinct()
+                        .limit(MAX_SCOPE_TABLES)
+                        .map(choice -> new ErDiagramDialog.TableNode(
+                                choice.displayNamespace(), choice.name(),
+                                List.of()))
+                        .toList();
+        return new ErDiagramDialog.SchemaGraph(
+                tables, List.of(),
+                choices != null && choices.size() > MAX_SCOPE_TABLES);
     }
 
     static ErDiagramDialog.SchemaGraph load(
@@ -36,7 +54,7 @@ final class ErDiagramMetadataLoader {
                 ? List.of()
                 : selected.stream()
                         .distinct()
-                        .limit(MAX_SELECTED_TABLES)
+                        .limit(MAX_SCOPE_TABLES)
                         .toList();
         if (safeSelection.isEmpty()) {
             return new ErDiagramDialog.SchemaGraph(
@@ -109,7 +127,8 @@ final class ErDiagramMetadataLoader {
             }
         }
         return new ErDiagramDialog.SchemaGraph(
-                List.copyOf(tables), List.copyOf(relations), false);
+                List.copyOf(tables), List.copyOf(relations),
+                selected != null && selected.size() > MAX_SCOPE_TABLES);
     }
 
     static TableChoice fromNode(

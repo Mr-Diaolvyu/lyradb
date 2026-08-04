@@ -183,6 +183,13 @@ public final class NativeConnectionManager implements AutoCloseable {
                 session.connection, schemaName, tableName));
     }
 
+    public String tableComment(String connectionId,
+            String schemaName, String tableName) throws Exception {
+        ActiveSession session = requireActive(connectionId);
+        return withLock(session, () -> session.driver.getTableComment(
+                session.connection, schemaName, tableName));
+    }
+
     public List<TableConstraintMetadata> constraints(String connectionId,
             String schemaName, String tableName) throws Exception {
         ActiveSession session = requireActive(connectionId);

@@ -6,6 +6,7 @@ import io.github.lexaquila.lyradb.model.dto.TreeNode;
 
 import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
+import javax.swing.BoxLayout;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
@@ -20,6 +21,7 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
+import javax.swing.Timer;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
@@ -28,7 +30,12 @@ import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -39,15 +46,22 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 搜索优先、按表加载的 ER / MaxCompute 数据地图。
  *
- * <p>一个画布明确绑定一个数据源和命名空间；只有用户选择的表才读取字段和
- * 约束，避免全库 N+1 元数据扫描。MaxCompute 当前只展示结构与真实约束，
- * 未接入作业血缘元数据时不会生成推测连线。</p>
+ * <p>一个画布明确绑定一个数据源和命名空间。普通数据库自动展示所选范围内
+ * 的全部表与视图，并先绘制结构骨架、再在后台补齐字段和真实外键；MaxCompute
+ * 使用用户选择的根表，通过 DataWorks OpenAPI 探查真实表血缘或字段血缘，
+ * 不根据名称或 SQL 文本生成推测连线。</p>
  */
 final class ErDataMapDialog extends JDialog {
 
     private static final String CURRENT_SCOPE = "当前命名空间";
     private static final Set<String> SUPPORTED_OBJECT_TYPES =
             Set.of("TABLE", "VIEW");
+
+    private static final Set<String> SCOPE_OBJECT_TYPES = Set.of(
+            "DATABASE", "SCHEMA", "PROJECT", "CATALOG", "FOLDER");
+    private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter
+            .ofPattern("yyyy-MM-dd HH:mm:ss")
+            .withZone(ZoneId.systemDefault());
 
     private final DesktopRuntime runtime;
     private final JComboBox<ConnectionChoice> sourceSelector =
@@ -66,6 +80,24 @@ final class ErDataMapDialog extends JDialog {
     private final JButton clearTables = UiKit.button(
             "清空", LyraIcons.of(LyraIcons.Kind.CLOSE),
             UiKit.ButtonStyle.GHOST);
+    private final JComboBox<DataWorksLineageService.EntityKind> lineageKind =
+            new JComboBox<>(DataWorksLineageService.EntityKind.values());
+    private final JComboBox<DataWorksLineageService.Direction>
+            lineageDirection = new JComboBox<>(
+            DataWorksLineageService.Direction.values());
+    private final JComboBox<DataWorksLineageService.ProbePolicy>
+            lineagePolicy = new JComboBox<>(
+            DataWorksLineageService.ProbePolicy.values());
+    private final JComboBox<ColumnChoice> lineageColumn = new JComboBox<>();
+    private final JPanel lineageBar = new JPanel(new FlowLayout(
+            FlowLayout.LEFT, 8, 0));
+    private final JLabel lineageKindLabel = label("血缘");
+    private final JLabel lineageDirectionLabel = label("方向");
+    private final JLabel lineagePolicyLabel = label("探查时机");
+    private final JLabel lineageColumnLabel = label("根字段");
+    private final JButton probeLineage = UiKit.button(
+            "探查血缘", LyraIcons.of(LyraIcons.Kind.REFRESH),
+            UiKit.ButtonStyle.PRIMARY);
     private final JButton refresh = UiKit.button(
             "刷新", LyraIcons.of(LyraIcons.Kind.REFRESH),
             UiKit.ButtonStyle.SECONDARY);
@@ -78,8 +110,10 @@ final class ErDataMapDialog extends JDialog {
             metadataCache = new ConcurrentHashMap<>();
 
     private SwingWorker<?, ?> worker;
+    private Timer periodicProbeTimer;
     private long generation;
     private boolean updatingSelectors;
+    private boolean updatingLineageControls;
     private ErDiagramDialog.SchemaGraph currentGraph = emptyGraph();
 
     ErDataMapDialog(
@@ -133,6 +167,21 @@ final class ErDataMapDialog extends JDialog {
         fieldDisplayMode.setSelectedItem(FieldDisplayMode.PHYSICAL);
         fieldDisplayMode.setPreferredSize(new Dimension(132, 34));
         selectors.add(fieldDisplayMode);
+        lineageKind.setPreferredSize(new Dimension(112, 34));
+        lineageDirection.setPreferredSize(new Dimension(100, 34));
+        lineagePolicy.setPreferredSize(new Dimension(118, 34));
+        lineageColumn.setPreferredSize(new Dimension(190, 34));
+        lineageBar.setOpaque(false);
+        lineageBar.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
+        lineageBar.add(lineageKindLabel);
+        lineageBar.add(lineageKind);
+        lineageBar.add(lineageDirectionLabel);
+        lineageBar.add(lineageDirection);
+        lineageBar.add(lineageColumnLabel);
+        lineageBar.add(lineageColumn);
+        lineageBar.add(lineagePolicyLabel);
+        lineageBar.add(lineagePolicy);
+        lineageBar.add(probeLineage);
         top.add(selectors, BorderLayout.CENTER);
 
         graphFilter.putClientProperty("JTextField.placeholderText",
@@ -179,7 +228,13 @@ final class ErDataMapDialog extends JDialog {
         actions.add(export);
         actions.add(close);
         secondRow.add(actions, BorderLayout.EAST);
-        top.add(secondRow, BorderLayout.SOUTH);
+        JPanel lowerRows = new JPanel();
+        lowerRows.setOpaque(false);
+        lowerRows.setLayout(new BoxLayout(
+                lowerRows, BoxLayout.Y_AXIS));
+        lowerRows.add(lineageBar);
+        lowerRows.add(secondRow);
+        top.add(lowerRows, BorderLayout.SOUTH);
         root.add(top, BorderLayout.NORTH);
 
         scroll.setBorder(BorderFactory.createEmptyBorder());
@@ -192,7 +247,12 @@ final class ErDataMapDialog extends JDialog {
         });
         scopeSelector.addActionListener(event -> {
             if (!updatingSelectors) {
-                resetSelection("命名空间已切换，请重新选择要展示的表");
+                ConnectionChoice source = selectedSource();
+                if (source != null && isMaxCompute(source.connection())) {
+                    resetSelection("Project 已切换，请选择血缘根表");
+                } else {
+                    loadOrdinaryScope();
+                }
             }
         });
         chooseTables.addActionListener(event -> openTablePicker());
@@ -200,6 +260,14 @@ final class ErDataMapDialog extends JDialog {
                 resetSelection("已清空选表；搜索并选择 1–"
                         + ErDiagramMetadataLoader.MAX_SELECTED_TABLES
                         + " 张表开始加载"));
+        probeLineage.addActionListener(event -> probeLineage());
+        lineageKind.addActionListener(event -> updateLineageColumnState());
+        lineagePolicy.addActionListener(event -> {
+            if (!updatingLineageControls) {
+                persistLineagePolicy();
+                configurePeriodicProbe();
+            }
+        });
         refresh.addActionListener(event -> refreshCurrent());
         export.addActionListener(event -> exportPng());
         fieldDisplayMode.addActionListener(event ->
@@ -230,6 +298,7 @@ final class ErDataMapDialog extends JDialog {
         export.setEnabled(false);
         chooseTables.setEnabled(false);
         clearTables.setEnabled(false);
+        setLineageControlsVisible(false);
     }
 
     private void loadScopes(String requestedNamespace, boolean clearCache) {
@@ -267,8 +336,13 @@ final class ErDataMapDialog extends JDialog {
                     List<ScopeChoice> scopes = get();
                     updateScopes(scopes, requestedNamespace);
                     updateWindowTitle(source.connection());
+                    configureMode(source.connection());
                     setLoading(false);
-                    showSelectionHint(source.connection());
+                    if (isMaxCompute(source.connection())) {
+                        showSelectionHint(source.connection());
+                    } else {
+                        loadOrdinaryScope();
+                    }
                 } catch (Exception exception) {
                     setLoading(false);
                     setEmpty("命名空间读取失败：" + safeMessage(exception));
@@ -425,6 +499,13 @@ final class ErDataMapDialog extends JDialog {
                     setLoading(false);
                     export.setEnabled(!currentGraph.tables().isEmpty());
                     showLoadedStatus(source.connection(), scope);
+                    if (maxCompute) {
+                        updateLineageColumns();
+                        if (lineagePolicy.getSelectedItem()
+                                == DataWorksLineageService.ProbePolicy.ON_SELECTION) {
+                            probeLineage();
+                        }
+                    }
                     SwingUtilities.invokeLater(
                             ErDataMapDialog.this::fitGraph);
                 } catch (Exception exception) {
@@ -444,6 +525,10 @@ final class ErDataMapDialog extends JDialog {
         runtime.connectionManager().invalidateMetadata(
                 source.connection().getId());
         metadataCache.clear();
+        if (!isMaxCompute(source.connection())) {
+            loadOrdinaryScope();
+            return;
+        }
         if (selectedTables.isEmpty()) {
             ScopeChoice scope = selectedScope();
             loadScopes(scope == null ? null : scope.namespace(), false);
@@ -471,11 +556,12 @@ final class ErDataMapDialog extends JDialog {
         updateSelectionButtons();
         boolean maxCompute = "MAXCOMPUTE".equalsIgnoreCase(
                 connection.getDbType());
-        status.setForeground(NativeTheme.MUTED);
-        status.setText(maxCompute
-                ? "MaxCompute 结构地图：搜索并选择 1–24 张表；"
-                        + "未接入作业血缘时不生成推测关系"
-                : "搜索并选择 1–24 张表；仅加载所选表字段和真实外键");
+        if (maxCompute) {
+            status.setForeground(NativeTheme.MUTED);
+            status.setText("选择一张或多张根表；默认手动探查，"
+                    + "也可配置选表后或定时探查真实表血缘 / 字段血缘");
+            return;
+        }
     }
 
     private void showLoadedStatus(
@@ -484,12 +570,220 @@ final class ErDataMapDialog extends JDialog {
         int relationCount = currentGraph.relations().size();
         boolean maxCompute = "MAXCOMPUTE".equalsIgnoreCase(
                 connection.getDbType());
+        if (maxCompute) {
+            status.setForeground(NativeTheme.SUCCESS);
+            status.setText(connection.getName() + " · " + scope.label()
+                    + " · 已加载 " + tableCount
+                    + " 张根表结构 · 点击“探查血缘”读取 DataWorks 真实关系");
+            return;
+        }
         status.setForeground(NativeTheme.SUCCESS);
+        String capHint = tableCount >= ErDiagramMetadataLoader.MAX_SCOPE_TABLES
+                ? " · 已达到 2,000 张安全上限，可用筛选器缩小画布范围"
+                : "";
         status.setText(connection.getName() + " · " + scope.label()
                 + " · " + tableCount + " 张表 · " + relationCount
-                + " 条真实关系"
-                + (maxCompute
-                ? " · 未接入作业血缘，不生成推测关系" : ""));
+                + " 条真实关系" + capHint);
+    }
+
+    private void loadOrdinaryScope() {
+        ConnectionChoice source = selectedSource();
+        ScopeChoice scope = selectedScope();
+        if (source == null || scope == null
+                || isMaxCompute(source.connection())) {
+            return;
+        }
+        metadataCache.clear();
+        selectedTables.clear();
+        long request = beginWork("正在读取所选范围内的全部表和视图…");
+        worker = new SwingWorker<List<ErDiagramMetadataLoader.TableChoice>, Void>() {
+            @Override
+            protected List<ErDiagramMetadataLoader.TableChoice>
+                    doInBackground() throws Exception {
+                return readAllScopeTables(source.connection(), scope);
+            }
+
+            @Override
+            protected void done() {
+                if (isCancelled() || request != generation) {
+                    return;
+                }
+                try {
+                    List<ErDiagramMetadataLoader.TableChoice> choices = get();
+                    choices.forEach(choice -> selectedTables.put(
+                            choice.key(), choice));
+                    currentGraph = ErDiagramMetadataLoader.skeleton(choices);
+                    graph.setGraph(currentGraph);
+                    graph.setFilter(graphFilter.getText());
+                    export.setEnabled(!choices.isEmpty());
+                    if (choices.isEmpty()) {
+                        setLoading(false);
+                        setEmpty("所选数据库 / Schema 中没有表或视图");
+                        return;
+                    }
+                    status.setText("已发现 " + choices.size()
+                            + " 张表 / 视图，正在补充字段和外键…");
+                    SwingUtilities.invokeLater(
+                            ErDataMapDialog.this::fitGraph);
+                    loadSelectedGraph();
+                } catch (Exception exception) {
+                    setLoading(false);
+                    setEmpty("全范围表清单读取失败：" + safeMessage(exception));
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    private List<ErDiagramMetadataLoader.TableChoice> readAllScopeTables(
+            DesktopConnection connection, ScopeChoice scope) throws Exception {
+        Map<String, ErDiagramMetadataLoader.TableChoice> choices =
+                new LinkedHashMap<>();
+        Deque<String> pending = new ArrayDeque<>();
+        Set<String> visited = new HashSet<>();
+        pending.add(scope.namespace() == null ? "" : scope.namespace());
+        while (!pending.isEmpty()
+                && choices.size() < ErDiagramMetadataLoader.MAX_SCOPE_TABLES) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException("ER 全范围元数据加载已取消");
+            }
+            String pathToken = pending.removeFirst();
+            String path = pathToken.isEmpty() ? null : pathToken;
+            String visitKey = path == null ? "<root>" : path;
+            if (!visited.add(visitKey.toLowerCase(Locale.ROOT))) {
+                continue;
+            }
+            for (TreeNode node : runtime.connectionManager().tree(
+                    connection.getId(), path)) {
+                String type = normalizedType(node.getType());
+                if (SUPPORTED_OBJECT_TYPES.contains(type)) {
+                    ErDiagramMetadataLoader.TableChoice choice =
+                            ErDiagramMetadataLoader.fromNode(
+                                    node, path, scope.label(),
+                                    connection.getDbType());
+                    choices.putIfAbsent(choice.key(), choice);
+                } else if (node.isHasChildren()
+                        && SCOPE_OBJECT_TYPES.contains(type)
+                        && node.getPath() != null
+                        && !node.getPath().isBlank()) {
+                    pending.addLast(node.getPath());
+                }
+                if (choices.size()
+                        >= ErDiagramMetadataLoader.MAX_SCOPE_TABLES) {
+                    break;
+                }
+            }
+        }
+        return List.copyOf(choices.values());
+    }
+
+    private void probeLineage() {
+        ConnectionChoice source = selectedSource();
+        ScopeChoice scope = selectedScope();
+        if (source == null || scope == null
+                || !isMaxCompute(source.connection())) {
+            return;
+        }
+        String project = connectionParameter(
+                source.connection(), "project", "defaultProject");
+        if (project == null) {
+            setEmpty("MaxCompute 连接缺少 Project，无法构造血缘实体 ID");
+            return;
+        }
+        DataWorksLineageService.EntityKind kind =
+                (DataWorksLineageService.EntityKind)
+                        lineageKind.getSelectedItem();
+        List<String> roots = new ArrayList<>();
+        if (kind == DataWorksLineageService.EntityKind.COLUMN) {
+            ColumnChoice column = (ColumnChoice) lineageColumn.getSelectedItem();
+            if (column != null) {
+                roots.add(DataWorksLineageService.columnEntityId(
+                        project, column.table(), column.column()));
+            }
+        } else {
+            selectedTables.values().forEach(choice -> roots.add(
+                    DataWorksLineageService.tableEntityId(
+                            project, choice.name())));
+        }
+        if (roots.isEmpty()) {
+            status.setForeground(NativeTheme.WARNING);
+            status.setText(kind == DataWorksLineageService.EntityKind.COLUMN
+                    ? "请先选择根表并选择一个根字段"
+                    : "请先选择至少一张血缘根表");
+            return;
+        }
+        DataWorksLineageService.Direction direction =
+                (DataWorksLineageService.Direction)
+                        lineageDirection.getSelectedItem();
+        long request = beginWork("正在通过 DataWorks 探查真实"
+                + kind + "…");
+        worker = new SwingWorker<DataWorksLineageService.LineageResult, Void>() {
+            @Override
+            protected DataWorksLineageService.LineageResult
+                    doInBackground() throws Exception {
+                return DataWorksLineageService.fromConnection(
+                        source.connection()).explore(
+                        roots, direction,
+                        DataWorksLineageService.DEFAULT_DEPTH,
+                        DataWorksLineageService.DEFAULT_MAX_NODES);
+            }
+
+            @Override
+            protected void done() {
+                if (isCancelled() || request != generation) {
+                    return;
+                }
+                try {
+                    DataWorksLineageService.LineageResult result = get();
+                    currentGraph = result.graph();
+                    graph.setGraph(currentGraph);
+                    graph.setFilter(graphFilter.getText());
+                    setLoading(false);
+                    export.setEnabled(!currentGraph.tables().isEmpty());
+                    status.setForeground(NativeTheme.SUCCESS);
+                    status.setText(source.connection().getName()
+                            + " · DataWorks " + kind + " · "
+                            + currentGraph.tables().size() + " 个节点 · "
+                            + result.edgeCount() + " 条真实血缘 · 探查于 "
+                            + TIME_FORMAT.format(result.observedAt())
+                            + (currentGraph.truncated()
+                            ? " · 已按安全上限截断" : ""));
+                    SwingUtilities.invokeLater(
+                            ErDataMapDialog.this::fitGraph);
+                } catch (Exception exception) {
+                    setLoading(false);
+                    status.setForeground(NativeTheme.ERROR);
+                    status.setText("血缘探查失败：" + safeMessage(exception)
+                            + "。请确认 DataWorks 标准版及以上、"
+                            + "ListLineages 权限和地域配置");
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    private void updateLineageColumns() {
+        ColumnChoice selected = (ColumnChoice) lineageColumn.getSelectedItem();
+        lineageColumn.removeAllItems();
+        for (ErDiagramMetadataLoader.TableChoice table
+                : selectedTables.values()) {
+            ErDiagramMetadataLoader.TableMetadata metadata =
+                    metadataCache.get(table.key());
+            if (metadata == null) {
+                continue;
+            }
+            metadata.columns().forEach(column -> lineageColumn.addItem(
+                    new ColumnChoice(table.name(), column.getName())));
+        }
+        if (selected != null) {
+            for (int index = 0; index < lineageColumn.getItemCount(); index++) {
+                if (selected.equals(lineageColumn.getItemAt(index))) {
+                    lineageColumn.setSelectedIndex(index);
+                    break;
+                }
+            }
+        }
+        updateLineageColumnState();
     }
 
     private long beginWork(String message) {
@@ -525,6 +819,101 @@ final class ErDataMapDialog extends JDialog {
         chooseTables.setEnabled(selectedSource() != null
                 && selectedScope() != null);
         clearTables.setEnabled(!selectedTables.isEmpty());
+        ConnectionChoice source = selectedSource();
+        if (source != null && isMaxCompute(source.connection())) {
+            chooseTables.setText(selectedTables.isEmpty()
+                    ? "选择血缘根表"
+                    : "根表 " + selectedTables.size() + " 张");
+        }
+    }
+
+    private void configureMode(DesktopConnection connection) {
+        boolean maxCompute = isMaxCompute(connection);
+        setTitle(maxCompute
+                ? "MaxCompute 数据血缘与字段血缘"
+                : "全库 ER 关系图");
+        chooseTables.setVisible(maxCompute);
+        clearTables.setVisible(maxCompute);
+        setLineageControlsVisible(maxCompute);
+        graphFilter.putClientProperty("JTextField.placeholderText",
+                maxCompute
+                        ? "筛选血缘节点、表、字段或注释"
+                        : "筛选所选库中的表、字段或注释");
+        if (maxCompute) {
+            updatingLineageControls = true;
+            try {
+                lineagePolicy.setSelectedItem(
+                        DataWorksLineageService.ProbePolicy.fromValue(
+                                connection.getParams().get(
+                                        "lineageProbePolicy")));
+            } finally {
+                updatingLineageControls = false;
+            }
+            configurePeriodicProbe();
+        } else if (periodicProbeTimer != null) {
+            periodicProbeTimer.stop();
+        }
+    }
+
+    private void setLineageControlsVisible(boolean visible) {
+        lineageBar.setVisible(visible);
+        lineageKindLabel.setVisible(visible);
+        lineageKind.setVisible(visible);
+        lineageDirectionLabel.setVisible(visible);
+        lineageDirection.setVisible(visible);
+        lineagePolicyLabel.setVisible(visible);
+        lineagePolicy.setVisible(visible);
+        lineageColumnLabel.setVisible(visible);
+        lineageColumn.setVisible(visible);
+        probeLineage.setVisible(visible);
+        updateLineageColumnState();
+    }
+
+    private void updateLineageColumnState() {
+        boolean columnMode = lineageKind.getSelectedItem()
+                == DataWorksLineageService.EntityKind.COLUMN;
+        lineageColumnLabel.setVisible(lineageKind.isVisible() && columnMode);
+        lineageColumn.setVisible(lineageKind.isVisible() && columnMode);
+        probeLineage.setEnabled(!columnMode
+                || lineageColumn.getSelectedItem() != null);
+    }
+
+    private void persistLineagePolicy() {
+        ConnectionChoice source = selectedSource();
+        if (source == null || !isMaxCompute(source.connection())) {
+            return;
+        }
+        Object selected = lineagePolicy.getSelectedItem();
+        if (!(selected instanceof DataWorksLineageService.ProbePolicy policy)) {
+            return;
+        }
+        DesktopConnection updated = source.connection().copy();
+        Map<String, Object> params = new LinkedHashMap<>(updated.getParams());
+        params.put("lineageProbePolicy", policy.name());
+        updated.setParams(params);
+        runtime.stateStore().saveConnection(updated);
+        source.connection().setParams(params);
+        status.setText("血缘探查时机已保存：" + policy);
+    }
+
+    private void configurePeriodicProbe() {
+        if (periodicProbeTimer != null) {
+            periodicProbeTimer.stop();
+            periodicProbeTimer = null;
+        }
+        Object selected = lineagePolicy.getSelectedItem();
+        if (!(selected instanceof DataWorksLineageService.ProbePolicy policy)
+                || policy.intervalMs() <= 0) {
+            return;
+        }
+        periodicProbeTimer = new Timer(policy.intervalMs(), event -> {
+            if (isShowing() && (worker == null || worker.isDone())
+                    && !selectedTables.isEmpty()) {
+                probeLineage();
+            }
+        });
+        periodicProbeTimer.setRepeats(true);
+        periodicProbeTimer.start();
     }
 
     private void setEmpty(String message) {
@@ -596,6 +985,9 @@ final class ErDataMapDialog extends JDialog {
         if (worker != null && !worker.isDone()) {
             worker.cancel(true);
         }
+        if (periodicProbeTimer != null) {
+            periodicProbeTimer.stop();
+        }
         super.dispose();
     }
 
@@ -610,6 +1002,11 @@ final class ErDataMapDialog extends JDialog {
     private static boolean supportsStructureMap(String dbType) {
         return !"MONGODB".equalsIgnoreCase(dbType)
                 && !"REDIS".equalsIgnoreCase(dbType);
+    }
+
+    private static boolean isMaxCompute(DesktopConnection connection) {
+        return connection != null
+                && "MAXCOMPUTE".equalsIgnoreCase(connection.getDbType());
     }
 
     private static String connectionParameter(
@@ -668,6 +1065,13 @@ final class ErDataMapDialog extends JDialog {
         @Override
         public String toString() {
             return label;
+        }
+    }
+
+    private record ColumnChoice(String table, String column) {
+        @Override
+        public String toString() {
+            return table + "." + column;
         }
     }
 

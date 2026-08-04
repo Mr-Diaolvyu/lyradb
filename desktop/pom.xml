@@ -41,6 +41,11 @@
             <artifactId>jackson-datatype-jsr310</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.aliyun</groupId>
+            <artifactId>dataworks_public20240518</artifactId>
+            <version>8.8.5</version>
+        </dependency>
+        <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
         </dependency>

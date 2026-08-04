@@ -47,6 +47,8 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
 
     private static final Pattern PRIMARY_KEY_PATTERN = Pattern.compile(
             "(?is)\\bPRIMARY\\s+KEY\\s*\\(([^)]*)\\)");
+    private static final Pattern TABLE_COMMENT_PATTERN = Pattern.compile(
+            "(?is)\\)\\s*COMMENT\\s+'((?:''|[^'])*)'");
 
     public MaxComputeDriver(DriverInfo driverInfo, ClassLoader driverClassLoader) {
         super(driverInfo, driverClassLoader);
@@ -236,22 +238,61 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
         Map<String, Object> info = new java.util.HashMap<>();
         try (Statement stmt = conn.createStatement()) {
             try (ResultSet rs = stmt.executeQuery("DESCRIBE EXTENDED " + safeIdentifier(tableName))) {
+                ResultSetMetaData metadata = rs.getMetaData();
+                int columnCount = metadata == null ? 2 : metadata.getColumnCount();
                 while (rs.next()) {
                     String key = rs.getString(1);
-                    String value = rs.getString(2);
-                    if (key != null && value != null) {
-                        if (key.toLowerCase().contains("size")) {
-                            info.put("tableSize", value);
-                        } else if (key.toLowerCase().contains("lifecycle")) {
-                            info.put("lifecycle", value);
-                        } else if (key.toLowerCase().contains("rows") || key.toLowerCase().contains("count")) {
-                            info.put("rowCount", value);
-                        }
+                    String value = columnCount >= 2 ? rs.getString(2) : null;
+                    putExtendedInfo(info, key, value);
+                    if (key != null && (columnCount == 1
+                            || key.contains("\n") || key.contains("\r"))) {
+                        parseExtendedInfoPayload(info, key);
                     }
                 }
             }
         }
         return info;
+    }
+
+    private static void parseExtendedInfoPayload(
+            Map<String, Object> info, String payload) {
+        for (String rawLine : payload.split("\\R")) {
+            String line = rawLine == null ? "" : rawLine.trim();
+            if (line.startsWith("|") && line.endsWith("|")) {
+                String[] cells = line.substring(1, line.length() - 1)
+                        .split("\\|", 2);
+                if (cells.length == 2) {
+                    putExtendedInfo(info, cells[0], cells[1]);
+                }
+                continue;
+            }
+            Matcher matcher = Pattern.compile(
+                    "(?i)^([a-z][a-z _-]*)\\s*[:=\\t]\\s*(.+)$")
+                    .matcher(line);
+            if (matcher.matches()) {
+                putExtendedInfo(info, matcher.group(1), matcher.group(2));
+            }
+        }
+    }
+
+    private static void putExtendedInfo(
+            Map<String, Object> info, String key, String value) {
+        if (key == null || value == null || value.isBlank()) {
+            return;
+        }
+        String normalizedKey = key.trim().toLowerCase(Locale.ROOT);
+        String normalizedValue = value.trim();
+        if (normalizedKey.contains("size")) {
+            info.put("tableSize", normalizedValue);
+        } else if (normalizedKey.contains("lifecycle")) {
+            info.put("lifecycle", normalizedValue);
+        } else if (normalizedKey.contains("rows")
+                || normalizedKey.contains("count")) {
+            info.put("rowCount", normalizedValue);
+        } else if (normalizedKey.contains("comment")
+                || normalizedKey.contains("description")) {
+            info.put("remarks", normalizedValue);
+        }
     }
 
     /**
@@ -339,26 +380,88 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
     }
 
     @Override
+    protected String getTableComment(
+            Connection conn, String schemaName, String tableName)
+            throws SQLException {
+        String tableRef = qualifiedTableIdentifier(schemaName, tableName);
+        try {
+            Object value = getExtendedTableInfo(conn, tableRef).get("remarks");
+            if (value != null && !value.toString().isBlank()) {
+                return value.toString().trim();
+            }
+        } catch (SQLException ignored) {
+            // 部分服务端未开放 DESCRIBE EXTENDED，继续从原生 DDL 提取。
+        }
+        try {
+            Matcher matcher = TABLE_COMMENT_PATTERN.matcher(
+                    getNativeTableDdl(conn, tableRef));
+            if (matcher.find()) {
+                return matcher.group(1).replace("''", "'").trim();
+            }
+        } catch (SQLException ignored) {
+            // 表注释是补充元数据，缺少权限时返回空而不阻断字段结构。
+        }
+        return null;
+    }
+
+    @Override
     public List<ColumnMetadata> getTableColumns(
             Object connection, String schemaName, String tableName)
             throws Exception {
         Connection conn = (Connection) connection;
 
-        // 精确到表名的 JDBC 列元数据查询不会触发旧公共 Project 枚举，
-        // 且能完整保留字段类型、长度、可空和注释。部分 MaxCompute JDBC
-        // 版本会把 DESCRIBE 的整张文本表压成单个多行单元格，因此仅将
-        // DESCRIBE 保留为元数据为空或不受支持时的降级路径。
+        // JDBC 列元数据通常更快，但部分 MaxCompute JDBC 版本只返回字段名和
+        // 类型，REMARKS 全为空。此时必须用 DESCRIBE 补齐字段注释，而不是把
+        // “拿到字段”误判成“元数据完整”。
+        List<ColumnMetadata> jdbcColumns = List.of();
         try {
-            List<ColumnMetadata> jdbcColumns = super.getTableColumns(
+            jdbcColumns = super.getTableColumns(
                     connection, null, tableName);
-            if (!jdbcColumns.isEmpty()) {
-                return jdbcColumns;
-            }
         } catch (SQLException ignored) {
-            // 继续使用 DESCRIBE 降级。
+            // 继续使用 DESCRIBE。
         }
         String tableRef = qualifiedTableIdentifier(schemaName, tableName);
-        List<ColumnMetadata> columns = new ArrayList<>();
+        boolean needsDescribe = jdbcColumns.isEmpty()
+                || jdbcColumns.stream().anyMatch(column ->
+                column.getRemarks() == null || column.getRemarks().isBlank());
+        if (!needsDescribe) {
+            return jdbcColumns;
+        }
+
+        List<DescribeColumn> described = readDescribeColumns(conn, tableRef);
+        if (jdbcColumns.isEmpty()) {
+            return described.stream()
+                    .map(column -> toColumnMetadata(
+                            column, schemaName, tableName))
+                    .toList();
+        }
+
+        Map<String, DescribeColumn> describedByName = new LinkedHashMap<>();
+        for (DescribeColumn column : described) {
+            describedByName.putIfAbsent(
+                    column.name().toLowerCase(Locale.ROOT), column);
+        }
+        for (ColumnMetadata column : jdbcColumns) {
+            DescribeColumn fallback = describedByName.get(
+                    column.getName().toLowerCase(Locale.ROOT));
+            if (fallback == null) {
+                continue;
+            }
+            String remarks = column.getRemarks();
+            if (remarks == null || remarks.isBlank()) {
+                remarks = fallback.remarks();
+            }
+            if (fallback.partition()) {
+                remarks = mergeRemark("分区字段", remarks);
+            }
+            column.setRemarks(remarks);
+        }
+        return jdbcColumns;
+    }
+
+    private List<DescribeColumn> readDescribeColumns(
+            Connection conn, String tableRef) throws SQLException {
+        List<DescribeColumn> columns = new ArrayList<>();
         boolean partitionSection = false;
 
         try (Statement stmt = conn.createStatement();
@@ -366,37 +469,124 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
             int columnCount = rs.getMetaData().getColumnCount();
             while (rs.next()) {
                 String name = rs.getString(1);
+                if (name != null && name.contains("\n")) {
+                    columns.addAll(parseDescribePayload(name));
+                    continue;
+                }
+                if (isPartitionMarker(name)) {
+                    partitionSection = true;
+                    continue;
+                }
                 String typeName = columnCount >= 2 ? rs.getString(2) : null;
                 String remarks = columnCount >= 3 ? rs.getString(3) : null;
-                if (name == null || name.isBlank()) {
+                DescribeColumn parsed = describeColumn(
+                        name, typeName, remarks, partitionSection);
+                if (parsed == null) {
                     continue;
                 }
-                String normalizedName = name.trim();
-                if (normalizedName.startsWith("#")) {
-                    if (normalizedName.toLowerCase(Locale.ROOT)
-                            .contains("partition")) {
-                        partitionSection = true;
-                    }
-                    continue;
-                }
-                if (typeName == null || typeName.isBlank()) {
-                    continue;
-                }
-
-                ColumnMetadata column = new ColumnMetadata();
-                column.setName(normalizedName);
-                column.setDataType(String.valueOf(Types.OTHER));
-                column.setTypeName(typeName.trim());
-                column.setNullable(!typeName.toUpperCase(Locale.ROOT)
-                        .contains("NOT NULL"));
-                column.setRemarks(partitionSection
-                        ? mergeRemark("分区字段", remarks) : remarks);
-                column.setSchemaName(schemaName);
-                column.setTableName(tableName);
-                columns.add(column);
+                columns.add(parsed);
             }
         }
         return columns;
+    }
+
+    private static List<DescribeColumn> parseDescribePayload(String payload) {
+        List<DescribeColumn> columns = new ArrayList<>();
+        boolean partitionSection = false;
+        for (String rawLine : payload.split("\\R")) {
+            String line = rawLine == null ? "" : rawLine.trim();
+            if (line.isBlank()) {
+                continue;
+            }
+            if (isPartitionMarker(line)) {
+                partitionSection = true;
+                continue;
+            }
+            if (line.startsWith("+") || line.matches("[-=]{3,}")) {
+                continue;
+            }
+            String name;
+            String typeName;
+            String remarks = null;
+            if (line.startsWith("|") && line.endsWith("|")) {
+                String[] cells = line.substring(1, line.length() - 1)
+                        .split("\\|", -1);
+                if (cells.length < 2) {
+                    continue;
+                }
+                name = cells[0].trim();
+                typeName = cells[1].trim();
+                if (cells.length >= 3) {
+                    remarks = cells[2].trim();
+                }
+            } else {
+                String[] cells = line.split("\\s+", 3);
+                if (cells.length < 2) {
+                    continue;
+                }
+                name = cells[0];
+                typeName = cells[1];
+                if (cells.length == 3) {
+                    remarks = cells[2];
+                }
+            }
+            DescribeColumn parsed = describeColumn(
+                    name, typeName, remarks, partitionSection);
+            if (parsed != null) {
+                columns.add(parsed);
+            }
+        }
+        return columns;
+    }
+
+    private static DescribeColumn describeColumn(
+            String name, String typeName, String remarks,
+            boolean partitionSection) {
+        if (name == null || name.isBlank()
+                || typeName == null || typeName.isBlank()) {
+            return null;
+        }
+        String normalizedName = name.trim();
+        if (normalizedName.startsWith("#")
+                || "col_name".equalsIgnoreCase(normalizedName)
+                || "data_type".equalsIgnoreCase(typeName.trim())) {
+            return null;
+        }
+        return new DescribeColumn(
+                normalizedName, typeName.trim(),
+                remarks == null || remarks.isBlank() ? null : remarks.trim(),
+                partitionSection);
+    }
+
+    private static boolean isPartitionMarker(String value) {
+        if (value == null) {
+            return false;
+        }
+        String normalized = value.replace('|', ' ').trim()
+                .toLowerCase(Locale.ROOT);
+        return normalized.startsWith("#")
+                && normalized.contains("partition");
+    }
+
+    private static ColumnMetadata toColumnMetadata(
+            DescribeColumn source, String schemaName, String tableName) {
+        ColumnMetadata column = new ColumnMetadata();
+        column.setName(source.name());
+        column.setDataType(String.valueOf(Types.OTHER));
+        column.setTypeName(source.typeName());
+        column.setNullable(!source.typeName().toUpperCase(Locale.ROOT)
+                .contains("NOT NULL"));
+        column.setRemarks(source.partition()
+                ? mergeRemark("分区字段", source.remarks())
+                : source.remarks());
+        column.setSchemaName(schemaName);
+        column.setTableName(tableName);
+        return column;
+    }
+
+    private record DescribeColumn(
+            String name, String typeName, String remarks,
+            boolean partition) {
     }
 
     @Override

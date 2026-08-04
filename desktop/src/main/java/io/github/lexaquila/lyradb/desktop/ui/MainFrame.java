@@ -1236,6 +1236,7 @@ public final class MainFrame extends JFrame {
                     schema,
                     table,
                     item.node.getType(),
+                    nodeComment(item.node),
                     this::status,
                     sql -> openWorkspace(item.connectionId, sql));
             tableWorkspaceByKey.put(key, existing);
@@ -1367,6 +1368,19 @@ public final class MainFrame extends JFrame {
         }
         return String.join("/",
                 java.util.Arrays.copyOf(parts, parts.length - 1));
+    }
+
+    private static String nodeComment(TreeNode node) {
+        if (node == null || node.getProperties() == null) {
+            return null;
+        }
+        for (String key : List.of("remarks", "comment", "description")) {
+            Object value = node.getProperties().get(key);
+            if (value != null && !value.toString().isBlank()) {
+                return value.toString().trim();
+            }
+        }
+        return null;
     }
 
     private void connectAsync(String connectionId, Runnable after) {

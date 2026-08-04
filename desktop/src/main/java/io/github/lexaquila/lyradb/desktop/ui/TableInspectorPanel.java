@@ -32,11 +32,13 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 /**
- * 表/视图工作台：默认展示数据预览，并提供字段、索引约束和 DDL 分页。
+ * 表/视图工作台：先展示字段与注释，再提供受限数据预览、索引约束和 DDL。
+ * MaxCompute 数据预览默认不执行，避免无分区扫描阻塞元数据展示。
  */
 final class TableInspectorPanel extends JPanel {
 
     static final int PREVIEW_LIMIT = 200;
+    static final int MAXCOMPUTE_PREVIEW_LIMIT = 100;
 
     private final DesktopRuntime runtime;
     private final String connectionId;
@@ -49,6 +51,8 @@ final class TableInspectorPanel extends JPanel {
     private final Consumer<String> sqlOpener;
 
     private final JLabel stateLabel = new JLabel("准备加载");
+    private final JLabel tableCommentLabel = new JLabel("表注释：—");
+    private final JButton loadPreviewButton = UiKit.button("加载数据", null, UiKit.ButtonStyle.SECONDARY);
     private final JLabel rowBadge = UiKit.badge(
             "0 行", NativeTheme.ACCENT_LIGHT, NativeTheme.ACCENT_SOFT);
     private final JLabel columnBadge = UiKit.badge(
@@ -76,6 +80,7 @@ final class TableInspectorPanel extends JPanel {
                     "类型", "名称", "字段", "引用对象", "引用字段"));
 
     private SwingWorker<TableSnapshot, Void> worker;
+    private SwingWorker<QueryResult, Void> previewWorker;
     private long generation;
     private String previewSql;
     private TableSnapshot currentSnapshot;
@@ -88,6 +93,7 @@ final class TableInspectorPanel extends JPanel {
             String schema,
             String table,
             String objectType,
+            String initialComment,
             Consumer<String> statusSink,
             Consumer<String> sqlOpener) {
         super(new BorderLayout());
@@ -100,6 +106,8 @@ final class TableInspectorPanel extends JPanel {
         this.objectType = objectType == null ? "TABLE" : objectType;
         this.statusSink = statusSink;
         this.sqlOpener = sqlOpener;
+        tableCommentLabel.setText("表注释：" + value(initialComment));
+        tableCommentLabel.setToolTipText(initialComment);
 
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
@@ -107,6 +115,10 @@ final class TableInspectorPanel extends JPanel {
         add(createTabs(), BorderLayout.CENTER);
         refreshButton.addActionListener(event -> refresh());
         openSqlButton.addActionListener(event -> openSql());
+        loadPreviewButton.setText(isMaxCompute()
+                ? "加载前 " + MAXCOMPUTE_PREVIEW_LIMIT + " 行"
+                : "重新加载前 " + PREVIEW_LIMIT + " 行");
+        loadPreviewButton.addActionListener(event -> loadPreview());
         fieldDisplayMode.setSelectedItem(FieldDisplayMode.PHYSICAL);
         fieldDisplayMode.setToolTipText(
                 "切换物理字段名、字段注释或两者；不会修改真实 SQL");
@@ -128,6 +140,9 @@ final class TableInspectorPanel extends JPanel {
         if (worker != null && !worker.isDone()) {
             worker.cancel(true);
         }
+        if (previewWorker != null && !previewWorker.isDone()) {
+            previewWorker.cancel(true);
+        }
     }
 
     void refresh() {
@@ -135,40 +150,33 @@ final class TableInspectorPanel extends JPanel {
         if (worker != null && !worker.isDone()) {
             worker.cancel(true);
         }
+        if (previewWorker != null && !previewWorker.isDone()) {
+            previewWorker.cancel(true);
+        }
         setLoading(true);
         previewSql = null;
-        previewModel.setData(List.of(), List.of());
+        currentSnapshot = null;
+        loadPreviewButton.setEnabled(false);
+        previewModel.setData(List.of("状态"), List.of(List.of(
+                isMaxCompute()
+                        ? "先读取元数据；需要时手动加载前 100 行"
+                        : "先读取元数据，随后自动加载受限数据预览")));
         columnsModel.setData(columnsModel.columns(), List.of());
         constraintsModel.setData(constraintsModel.columns(), List.of());
         ddlArea.setText("正在读取表定义…");
-        statusSink.accept("正在加载表工作台：" + qualifiedName());
+        stateLabel.setText("正在优先读取字段和表注释…");
+        statusSink.accept("正在读取表元数据：" + qualifiedName());
 
         worker = new SwingWorker<>() {
             @Override
             protected TableSnapshot doInBackground() {
                 String generatedPreviewSql = "";
-                QueryResult preview = null;
                 List<ColumnMetadata> columns = List.of();
                 List<TableConstraintMetadata> constraints = List.of();
                 String ddl = "";
+                String tableComment = null;
                 Map<String, String> errors = new LinkedHashMap<>();
 
-                try {
-                    generatedPreviewSql = runtime.connectionManager()
-                            .previewSql(connectionId, schema, table,
-                                    PREVIEW_LIMIT);
-                } catch (Exception exception) {
-                    errors.put("previewSql", safeMessage(exception));
-                }
-                try {
-                    preview = runtime.connectionManager().previewTable(
-                            connectionId, schema, table, PREVIEW_LIMIT);
-                } catch (Exception exception) {
-                    errors.put("preview", safeMessage(exception));
-                }
-                if (isCancelled()) {
-                    return null;
-                }
                 try {
                     columns = runtime.connectionManager().columns(
                             connectionId, schema, table);
@@ -179,10 +187,21 @@ final class TableInspectorPanel extends JPanel {
                     return null;
                 }
                 try {
-                    constraints = runtime.connectionManager().constraints(
+                    tableComment = runtime.connectionManager().tableComment(
                             connectionId, schema, table);
                 } catch (Exception exception) {
-                    errors.put("constraints", safeMessage(exception));
+                    errors.put("tableComment", safeMessage(exception));
+                }
+                if (isCancelled()) {
+                    return null;
+                }
+                if (!isMaxCompute()) {
+                    try {
+                        constraints = runtime.connectionManager().constraints(
+                                connectionId, schema, table);
+                    } catch (Exception exception) {
+                        errors.put("constraints", safeMessage(exception));
+                    }
                 }
                 if (isCancelled()) {
                     return null;
@@ -193,9 +212,16 @@ final class TableInspectorPanel extends JPanel {
                 } catch (Exception exception) {
                     errors.put("ddl", safeMessage(exception));
                 }
+                try {
+                    generatedPreviewSql = runtime.connectionManager()
+                            .previewSql(connectionId, schema, table,
+                                    previewLimit());
+                } catch (Exception exception) {
+                    errors.put("previewSql", safeMessage(exception));
+                }
                 return new TableSnapshot(
-                        generatedPreviewSql, preview, columns,
-                        constraints, ddl, errors);
+                        generatedPreviewSql, null, columns,
+                        constraints, ddl, tableComment, errors);
             }
 
             @Override
@@ -207,11 +233,17 @@ final class TableInspectorPanel extends JPanel {
                     TableSnapshot snapshot = get();
                     if (snapshot != null) {
                         apply(snapshot);
+                        if (!isMaxCompute()) {
+                            loadPreview();
+                        } else {
+                            stateLabel.setText(
+                                    "元数据已就绪 · 数据预览需手动触发");
+                        }
                     }
                 } catch (Exception exception) {
                     apply(new TableSnapshot(
                             "", null, List.of(), List.of(), "",
-                            Map.of("preview", safeMessage(exception))));
+                            null, Map.of("metadata", safeMessage(exception))));
                 } finally {
                     if (request == generation) {
                         setLoading(false);
@@ -220,6 +252,54 @@ final class TableInspectorPanel extends JPanel {
             }
         };
         worker.execute();
+    }
+
+    private void loadPreview() {
+        if (currentSnapshot == null || previewWorker != null
+                && !previewWorker.isDone()) {
+            return;
+        }
+        long request = generation;
+        loadPreviewButton.setEnabled(false);
+        stateLabel.setText("正在加载受限数据预览…");
+        previewWorker = new SwingWorker<>() {
+            @Override
+            protected QueryResult doInBackground() throws Exception {
+                return runtime.connectionManager().previewTable(
+                        connectionId, schema, table, previewLimit());
+            }
+
+            @Override
+            protected void done() {
+                if (isCancelled() || request != generation) {
+                    return;
+                }
+                Map<String, String> errors = new LinkedHashMap<>(
+                        currentSnapshot.errors());
+                try {
+                    QueryResult preview = get();
+                    errors.remove("preview");
+                    currentSnapshot = new TableSnapshot(
+                            currentSnapshot.previewSql(), preview,
+                            currentSnapshot.columns(),
+                            currentSnapshot.constraints(),
+                            currentSnapshot.ddl(),
+                            currentSnapshot.tableComment(), errors);
+                } catch (Exception exception) {
+                    errors.put("preview", safeMessage(exception));
+                    currentSnapshot = new TableSnapshot(
+                            currentSnapshot.previewSql(), null,
+                            currentSnapshot.columns(),
+                            currentSnapshot.constraints(),
+                            currentSnapshot.ddl(),
+                            currentSnapshot.tableComment(), errors);
+                } finally {
+                    apply(currentSnapshot);
+                    loadPreviewButton.setEnabled(true);
+                }
+            }
+        };
+        previewWorker.execute();
     }
 
     private JPanel createHeader() {
@@ -238,7 +318,7 @@ final class TableInspectorPanel extends JPanel {
         title.setForeground(NativeTheme.FOREGROUND);
         JLabel subtitle = new JLabel(
                 connectionName + "  ·  " + dbType
-                        + "  ·  只读预览，最多 " + PREVIEW_LIMIT + " 行");
+                        + "  ·  只读预览，最多 " + previewLimit() + " 行");
         subtitle.setFont(NativeTheme.FONT_CAPTION);
         subtitle.setForeground(NativeTheme.MUTED);
         JPanel badges = new JPanel(new FlowLayout(FlowLayout.LEFT, 7, 0));
@@ -253,6 +333,8 @@ final class TableInspectorPanel extends JPanel {
         identity.add(title);
         identity.add(Box.createVerticalStrut(4));
         identity.add(subtitle);
+        identity.add(Box.createVerticalStrut(4));
+        identity.add(tableCommentLabel);
         identity.add(Box.createVerticalStrut(8));
         identity.add(badges);
         header.add(identity, BorderLayout.CENTER);
@@ -310,6 +392,7 @@ final class TableInspectorPanel extends JPanel {
         displayLabel.setFont(NativeTheme.FONT_CAPTION);
         displayLabel.setForeground(NativeTheme.MUTED);
         displayTools.add(note);
+        displayTools.add(loadPreviewButton);
         displayTools.add(Box.createHorizontalStrut(8));
         displayTools.add(displayLabel);
         displayTools.add(fieldDisplayMode);
@@ -359,6 +442,9 @@ final class TableInspectorPanel extends JPanel {
 
     private void apply(TableSnapshot snapshot) {
         currentSnapshot = snapshot;
+        String comment = value(snapshot.tableComment());
+        tableCommentLabel.setText("表注释：" + comment);
+        tableCommentLabel.setToolTipText(snapshot.tableComment());
         QueryResult preview = snapshot.preview();
         previewSql = snapshot.previewSql();
         if (preview != null) {
@@ -382,7 +468,7 @@ final class TableInspectorPanel extends JPanel {
             stateLabel.setText(preview.getRows().size() + " 行"
                     + (preview.isTruncated() ? "（已按上限截断）" : "")
                     + "  ·  " + preview.getElapsedMs() + " ms");
-        } else {
+        } else if (snapshot.errors().containsKey("preview")) {
             String previewError = snapshot.errors().getOrDefault(
                     "preview", "当前驱动不支持");
             previewModel.setData(List.of("状态"), List.of(List.of(
@@ -390,6 +476,14 @@ final class TableInspectorPanel extends JPanel {
             previewTable.setToolTipText(previewError);
             rowBadge.setText("  0 行  ");
             stateLabel.setText("数据预览不可用 · 可在 SQL 中打开并调整条件");
+        } else if (isMaxCompute()) {
+            previewModel.setData(List.of("状态"), List.of(List.of(
+                    "为避免无分区扫描，MaxCompute 不自动读取数据；"
+                            + "请按需点击“加载前 100 行”")));
+            rowBadge.setText("  未加载  ");
+            stateLabel.setText("元数据已就绪 · 数据预览需手动触发");
+        } else {
+            stateLabel.setText("元数据已就绪 · 正在准备数据预览");
         }
 
         applyColumnRows(snapshot.columns());
@@ -497,11 +591,21 @@ final class TableInspectorPanel extends JPanel {
 
     private void setLoading(boolean loading) {
         refreshButton.setEnabled(!loading);
+        loadPreviewButton.setEnabled(!loading
+                && currentSnapshot != null);
         openSqlButton.setEnabled(!loading
                 && previewSql != null && !previewSql.isBlank());
         if (loading) {
             stateLabel.setText("正在读取数据、字段与约束…");
         }
+    }
+
+    private boolean isMaxCompute() {
+        return "MAXCOMPUTE".equalsIgnoreCase(dbType);
+    }
+
+    private int previewLimit() {
+        return isMaxCompute() ? MAXCOMPUTE_PREVIEW_LIMIT : PREVIEW_LIMIT;
     }
 
     private String qualifiedName() {
@@ -595,6 +699,7 @@ final class TableInspectorPanel extends JPanel {
             List<ColumnMetadata> columns,
             List<TableConstraintMetadata> constraints,
             String ddl,
+            String tableComment,
             Map<String, String> errors) {
     }
 

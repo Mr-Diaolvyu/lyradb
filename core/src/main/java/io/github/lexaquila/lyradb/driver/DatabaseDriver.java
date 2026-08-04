@@ -125,6 +125,18 @@ public interface DatabaseDriver {
     List<ColumnMetadata> getTableColumns(Object connection, String schemaName, String tableName) throws Exception;
 
     /**
+     * 获取表级注释。
+     *
+     * <p>NoSQL 或驱动未提供表级备注时返回 {@code null}。字段注释仍由
+     * {@link #getTableColumns(Object, String, String)} 返回。</p>
+     */
+    default String getTableComment(
+            Object connection, String schemaName, String tableName)
+            throws Exception {
+        return null;
+    }
+
+    /**
      * 获取表的主键、外键与索引信息。
      *
      * <p>NoSQL 或不支持该能力的驱动默认返回空列表。</p>

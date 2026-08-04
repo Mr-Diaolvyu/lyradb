@@ -82,6 +82,27 @@ class ErDiagramMetadataLoaderTest {
         assertThat(columnLoads).hasValue(2);
     }
 
+    @Test
+    void shouldRenderCompleteOrdinaryScopeBeyondLegacyPickerLimit()
+            throws Exception {
+        List<ErDiagramMetadataLoader.TableChoice> choices =
+                java.util.stream.IntStream.range(0, 30)
+                        .mapToObj(index -> choice(
+                                "erp_base", "table_" + index))
+                        .toList();
+        var source = new ErDiagramMetadataLoader.MetadataSource(
+                (namespace, table) -> List.of(),
+                (namespace, table) -> List.of());
+
+        var skeleton = ErDiagramMetadataLoader.skeleton(choices);
+        var loaded = ErDiagramMetadataLoader.load(
+                source, choices, new HashMap<>());
+
+        assertThat(skeleton.tables()).hasSize(30);
+        assertThat(loaded.tables()).hasSize(30);
+        assertThat(loaded.truncated()).isFalse();
+    }
+
     private static ErDiagramMetadataLoader.TableChoice choice(
             String namespace, String table) {
         return new ErDiagramMetadataLoader.TableChoice(
