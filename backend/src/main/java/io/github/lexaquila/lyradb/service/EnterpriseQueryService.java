@@ -72,6 +72,13 @@ public class EnterpriseQueryService {
 
     public QueryResult executeQuery(String grantedSourceName, String sql,
                                     String defaultDatabase) throws Exception {
+        return executeQuery(
+                grantedSourceName, sql, defaultDatabase, null);
+    }
+
+    public QueryResult executeQuery(String grantedSourceName, String sql,
+                                    String defaultDatabase,
+                                    String executionId) throws Exception {
         AccessContext access = requireAccess(grantedSourceName);
         User user = access.user();
         Grant grant = access.grant();
@@ -108,7 +115,7 @@ public class EnterpriseQueryService {
                         active, grant.getDataSourceId(),
                         dataSource.getDbType(), sql, limit,
                         defaultDatabase, analysis,
-                        externalDmlDispatched);
+                        externalDmlDispatched, executionId);
             }
             result.setSql(sql);
             result.setElapsedMs(System.currentTimeMillis() - start);
@@ -480,8 +487,11 @@ public class EnterpriseQueryService {
             String sql, int limit,
             String defaultDatabase,
             SqlParseUtil.Analysis analysis,
-            boolean[] externalDmlDispatched) throws Exception {
-        StatementRegistry.begin("ent-query-" + UUID.randomUUID());
+            boolean[] externalDmlDispatched,
+            String executionId) throws Exception {
+        String effectiveExecutionId = executionId == null || executionId.isBlank()
+                ? "ent-query-" + UUID.randomUUID() : executionId;
+        StatementRegistry.begin(effectiveExecutionId);
         ConnectionNamespaceState namespace =
                 ConnectionNamespaceState.none();
         ReadOnlyState readOnlyState = ReadOnlyState.none();

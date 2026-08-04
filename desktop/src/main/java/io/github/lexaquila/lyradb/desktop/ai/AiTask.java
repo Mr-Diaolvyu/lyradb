@@ -1,7 +1,7 @@
 package io.github.lexaquila.lyradb.desktop.ai;
 
 /**
- * 个人版 AI 助手支持的数据库任务。
+ * 个人版智库助手支持的数据库任务。
  */
 public enum AiTask {
     GENERATE("生成 SQL", "根据用户目标生成一条可执行 SQL，并解释关键假设"),

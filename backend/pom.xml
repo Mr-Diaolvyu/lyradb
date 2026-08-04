@@ -15,7 +15,7 @@
     <artifactId>lyradb-backend</artifactId>
     <version>${revision}</version>
     <name>LyraDB Backend</name>
-    <description>LyraDB 天琴智库 - 轻量 AI 通用数据库管理工具 - 后端</description>
+    <description>LyraDB · 天琴智库 - 团队可信 AI 数据智库企业后端</description>
 
     <properties>
         <!-- CI 通过 -Drevision=<tag> 覆盖，作为后端包与桌面包的单一版本源。 -->

@@ -3,6 +3,7 @@ package io.github.lexaquila.lyradb.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.lexaquila.lyradb.model.entity.User;
 import io.github.lexaquila.lyradb.repository.UserRepository;
+import io.github.lexaquila.lyradb.service.AiGatewayTokenService;
 import io.github.lexaquila.lyradb.service.SecurityUtil;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
@@ -53,6 +54,9 @@ class EnterpriseEditionSecurityTest {
     @MockitoBean
     private UserRepository userRepository;
 
+    @MockitoBean
+    private AiGatewayTokenService aiGatewayTokenService;
+
     @Test
     void enterpriseEditionDeniesEveryPersonalEndpoint() throws Exception {
         User user = new User();
@@ -90,6 +94,8 @@ class EnterpriseEditionSecurityTest {
     @Test
     void enterpriseEndpointsRequireAuthenticationButPublicInfoDoesNot() throws Exception {
         mockMvc.perform(get("/auth/probe"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/agent-gateway/probe"))
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(get("/app/info"))
                 .andExpect(status().isOk());

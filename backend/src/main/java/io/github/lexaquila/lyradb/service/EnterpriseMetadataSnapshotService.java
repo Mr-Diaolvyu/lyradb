@@ -148,6 +148,19 @@ public class EnterpriseMetadataSnapshotService {
         return session;
     }
 
+    /**
+     * 知识摄取使用与 AI 附加相同的一次性、重验授权快照语义。
+     * 单独命名避免调用方误以为可绕过快照消费门禁。
+     */
+    public MetadataSnapshotSessionStore.SnapshotSession consumeForKnowledge(
+            String workspaceId, User owner, String snapshotId) {
+        MetadataSnapshotSessionStore.SnapshotSession session =
+                snapshotStore.consumeForAi(
+                        snapshotId, owner.getId(), workspaceId);
+        validateCurrentGrant(owner, workspaceId, session);
+        return session;
+    }
+
     public String renderForAi(
             MetadataSnapshotSessionStore.SnapshotSession session) {
         return renderer.toJson(session.snapshot());

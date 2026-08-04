@@ -15,7 +15,7 @@
     <artifactId>lyradb-desktop</artifactId>
     <version>${revision}</version>
     <name>LyraDB Native Desktop</name>
-    <description>LyraDB 个人版原生桌面数据库工作台</description>
+    <description>LyraDB · 天琴智库 - 个人原生智库工作台</description>
 
     <properties>
         <revision>3.1.2</revision>

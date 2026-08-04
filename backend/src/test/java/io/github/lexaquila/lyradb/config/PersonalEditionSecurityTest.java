@@ -1,6 +1,7 @@
 package io.github.lexaquila.lyradb.config;
 
 import io.github.lexaquila.lyradb.repository.UserRepository;
+import io.github.lexaquila.lyradb.service.AiGatewayTokenService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -35,11 +36,15 @@ class PersonalEditionSecurityTest {
     @MockitoBean
     private UserRepository userRepository;
 
+    @MockitoBean
+    private AiGatewayTokenService aiGatewayTokenService;
+
     @Test
     void personalEditionDeniesEveryEnterpriseEndpoint() throws Exception {
         for (String path : new String[]{
                 "/auth/probe", "/admin/probe", "/approvals/probe",
-                "/audit/probe", "/grants/probe", "/ent/probe", "/ai/probe"}) {
+                "/audit/probe", "/grants/probe", "/ent/probe", "/ai/probe",
+                "/agent-gateway/probe"}) {
             mockMvc.perform(get(path).with(authenticatedRequest()))
                     .andExpect(status().isForbidden());
         }

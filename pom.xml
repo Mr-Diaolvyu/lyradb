@@ -9,6 +9,7 @@
     <version>${revision}</version>
     <packaging>pom</packaging>
     <name>LyraDB</name>
+    <description>LyraDB · 天琴智库 - 可私有化的可信 AI 数据智库</description>
 
     <properties>
         <revision>3.1.2</revision>

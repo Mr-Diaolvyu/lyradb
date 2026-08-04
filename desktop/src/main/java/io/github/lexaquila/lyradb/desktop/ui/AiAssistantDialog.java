@@ -39,7 +39,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * AI 数据库助手。
+ * 个人版智库助手。
  */
 public final class AiAssistantDialog extends JDialog {
 
@@ -120,7 +120,7 @@ public final class AiAssistantDialog extends JDialog {
             Supplier<String> currentSql, Supplier<String> dbType,
             Consumer<String> insertSql,
             Supplier<MetadataSelection> metadataSelection) {
-        super(owner, "LyraDB AI 数据库助手", false);
+        super(owner, "LyraDB · 天琴智库助手", false);
         this.runtime = runtime;
         this.currentSql = currentSql;
         this.dbType = dbType;
@@ -154,7 +154,7 @@ public final class AiAssistantDialog extends JDialog {
         JPanel identityText = new JPanel();
         identityText.setOpaque(false);
         identityText.setLayout(new BoxLayout(identityText, BoxLayout.Y_AXIS));
-        JLabel title = new JLabel("AI 数据库助手");
+        JLabel title = new JLabel("智库助手");
         title.setFont(NativeTheme.FONT_TITLE);
         title.setForeground(NativeTheme.FOREGROUND);
         JLabel subtitle = new JLabel("当前 SQL 与明确附加的上下文会随本次请求发送");
@@ -173,7 +173,7 @@ public final class AiAssistantDialog extends JDialog {
         tools.add(taskLabel);
         taskBox.setPreferredSize(new Dimension(150, 34));
         tools.add(taskBox);
-        JButton settings = UiKit.button("AI 设置",
+        JButton settings = UiKit.button("模型设置",
                 LyraIcons.of(LyraIcons.Kind.SETTINGS),
                 UiKit.ButtonStyle.TOOLBAR);
         settings.addActionListener(event ->
@@ -198,7 +198,7 @@ public final class AiAssistantDialog extends JDialog {
         inputSplit.setBorder(BorderFactory.createEmptyBorder());
 
         JPanel responseSection = UiKit.section(
-                "AI 建议",
+                "智库建议",
                 "建议内容不会自动进入编辑器，更不会自动发送到数据库",
                 textScroll(responseArea));
 
@@ -506,8 +506,8 @@ public final class AiAssistantDialog extends JDialog {
         AiProfile profile = runtime.stateStore().getAiProfile();
         if (!profile.isConfigured()) {
             JOptionPane.showMessageDialog(this,
-                    "请先在“AI 设置”中配置服务商、模型和 API Key。",
-                    "尚未配置 AI", JOptionPane.WARNING_MESSAGE);
+                    "请先在“模型设置”中配置服务商、模型和 API Key。",
+                    "尚未配置模型", JOptionPane.WARNING_MESSAGE);
             return;
         }
 

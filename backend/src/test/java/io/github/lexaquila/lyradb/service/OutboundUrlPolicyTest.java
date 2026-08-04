@@ -31,6 +31,41 @@ class OutboundUrlPolicyTest {
     }
 
     @Test
+    void privateModelIsDeniedUntilExplicitlyEnabled() {
+        AppProperties properties = new AppProperties();
+        properties.getAi().setPrivateModelAllowedHosts("localhost");
+        OutboundUrlPolicy policy = new OutboundUrlPolicy(properties);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> policy.validateAi(
+                        "https://localhost:11434/v1", "PRIVATE"));
+    }
+
+    @Test
+    void exactPrivateHostCanUseExplicitlyEnabledHttp() {
+        AppProperties properties = new AppProperties();
+        properties.getAi().setPrivateModelEnabled(true);
+        properties.getAi().setPrivateModelAllowedHosts("localhost");
+        properties.getAi().setPrivateModelRequireHttps(false);
+        OutboundUrlPolicy policy = new OutboundUrlPolicy(properties);
+
+        assertEquals("localhost", policy.validateAi(
+                "http://localhost:11434/v1", "PRIVATE").getHost());
+    }
+
+    @Test
+    void privateModelAllowlistRejectsWildcards() {
+        AppProperties properties = new AppProperties();
+        properties.getAi().setPrivateModelEnabled(true);
+        properties.getAi().setPrivateModelAllowedHosts("*.internal.example");
+        OutboundUrlPolicy policy = new OutboundUrlPolicy(properties);
+
+        assertThrows(IllegalStateException.class,
+                () -> policy.validateAi(
+                        "https://model.internal.example/v1", "PRIVATE"));
+    }
+
+    @Test
     void exactAndWildcardHostMatchingHaveLabelBoundaries() {
         assertTrue(OutboundUrlPolicy.matchesAllowedHost(
                 "api.example.com", "api.example.com"));

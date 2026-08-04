@@ -1,6 +1,6 @@
-# LyraDB HarmonyOS 外壳
+# LyraDB 移动治理伴侣：HarmonyOS 安全外壳
 
-版本：`3.1.2`。工程采用 ArkTS + ArkUI + ArkWeb，业务页面与权限规则来自远端 LyraDB 企业 B/S 服务端。
+版本：`3.1.2`。HarmonyOS 端承担审批、审计与任务接管的移动治理角色；工程采用 ArkTS + ArkUI + ArkWeb，业务页面、智库能力与权限规则来自远端 LyraDB 企业 B/S 服务端。
 
 ## 已实现
 

@@ -27,7 +27,7 @@ public class SecurityUtil {
 
     public static final String CURRENT_WORKSPACE_ID = "currentWorkspaceId";
     public static final String CREDENTIAL_VERSION = "credentialVersion";
-    static final String REQUEST_WORKSPACE_SNAPSHOT =
+    public static final String REQUEST_WORKSPACE_SNAPSHOT =
             SecurityUtil.class.getName() + ".WORKSPACE_SNAPSHOT";
     private static final Set<String> WORKSPACE_ROLES = Set.of(
             "DS_ADMIN", "STEWARD", "ANALYST", "AUDITOR");
@@ -171,6 +171,16 @@ public class SecurityUtil {
     }
 
     public String requireCurrentWorkspace() {
+        HttpServletRequest request = currentRequest();
+        if (request != null) {
+            Object snapshot = request.getAttribute(
+                    REQUEST_WORKSPACE_SNAPSHOT);
+            if (snapshot instanceof String workspaceId
+                    && !workspaceId.isBlank()) {
+                requireWorkspaceAccess(workspaceId);
+                return workspaceId;
+            }
+        }
         HttpSession session = currentSession();
         if (session == null) {
             throw new AuthenticationCredentialsNotFoundException("会话不存在");

@@ -12,8 +12,8 @@
           <path d="m24.4 22.7 1.2 1.1m3.8-1.2-1 1.2" class="brand-orbit" />
         </svg>
         <div>
-          <div class="brand-name">LyraDB</div>
-          <div class="brand-edition">ENTERPRISE · DATA WORKSPACE</div>
+          <div class="brand-name">LyraDB · 天琴智库</div>
+          <div class="brand-edition">ENTERPRISE · TRUSTED AI HUB</div>
         </div>
       </div>
 
@@ -56,7 +56,7 @@
         <div class="header-context">
           <el-button class="menu-toggle" text :icon="Menu" @click="sideOpen = true" aria-label="打开菜单" />
           <div>
-            <div class="section-kicker">LyraDB Enterprise</div>
+            <div class="section-kicker">TRUSTED AI DATA INTELLIGENCE</div>
             <div class="page-name">{{ currentPageName }}</div>
           </div>
         </div>
@@ -94,7 +94,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  Coin, DocumentCopy, Bell, List, Setting, SwitchButton, ChatLineRound, Menu, Moon, Sunny,
+  Coin, DocumentCopy, Bell, List, Setting, SwitchButton, ChatLineRound, Collection, Menu, Moon, Sunny,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
@@ -123,8 +123,9 @@ onMounted(loadPending)
 const menus = computed(() => {
   const arr = [
     { name: 'my-sources', to: '/my-sources', label: '我的数据源', icon: Coin },
-    { name: 'query', to: '/query', label: '企业查询', icon: DocumentCopy },
-    { name: 'ai', to: '/ai', label: 'AI 助手', icon: ChatLineRound },
+    { name: 'query', to: '/query', label: '受控查询', icon: DocumentCopy },
+    { name: 'ai', to: '/ai', label: 'Ask Lyra', icon: ChatLineRound },
+    { name: 'knowledge', to: '/knowledge', label: '智库运营', icon: Collection },
     { name: 'approvals', to: '/approvals', label: '审批中心', icon: Bell, badge: pendingCount.value || undefined },
   ]
   if (auth.canAudit) arr.push({ name: 'audit', to: '/audit', label: '操作审计', icon: List } as any)
@@ -134,7 +135,7 @@ const menus = computed(() => {
 
 const currentPageName = computed(() => {
   const current = menus.value.find(item => item.name === route.name)
-  return current?.label || '企业数据工作台'
+  return current?.label || '团队智库控制台'
 })
 
 const userInitial = computed(() => {

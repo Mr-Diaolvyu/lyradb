@@ -17,7 +17,7 @@ import java.awt.GridLayout;
 import java.awt.Insets;
 
 /**
- * 工作台欢迎页。
+ * 个人智库工作台欢迎页。
  */
 final class WelcomePanel extends JPanel {
 
@@ -40,12 +40,12 @@ final class WelcomePanel extends JPanel {
         content.add(meta);
         content.add(Box.createVerticalStrut(16));
 
-        JLabel heading = UiKit.heading("LyraDB");
+        JLabel heading = UiKit.heading("LyraDB · 天琴智库");
         heading.setAlignmentX(Component.LEFT_ALIGNMENT);
         content.add(heading);
         content.add(Box.createVerticalStrut(10));
 
-        JLabel subtitle = UiKit.body("选择一项操作开始。");
+        JLabel subtitle = UiKit.body("连接数据、检查上下文，并在确认后受控行动。");
         subtitle.setAlignmentX(Component.LEFT_ALIGNMENT);
         content.add(subtitle);
         content.add(Box.createVerticalStrut(30));
@@ -56,9 +56,9 @@ final class WelcomePanel extends JPanel {
         actions.setMaximumSize(new Dimension(900, 112));
         actions.add(actionCard("创建数据库连接", "填写连接参数",
                 LyraIcons.Kind.ADD_DATABASE, newConnection, true));
-        actions.add(actionCard("配置 AI", "设置服务商、模型和 API Key",
+        actions.add(actionCard("配置模型", "设置服务商、模型和 API Key",
                 LyraIcons.Kind.SETTINGS, openAiSettings, false));
-        actions.add(actionCard("打开 AI 助手", "输入任务并查看建议",
+        actions.add(actionCard("打开智库助手", "输入任务并检查 AI 建议",
                 LyraIcons.Kind.AI, openAiAssistant, false));
         content.add(actions);
         content.add(Box.createVerticalGlue());

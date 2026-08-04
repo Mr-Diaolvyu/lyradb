@@ -9,9 +9,9 @@
           <circle cx="34.5" cy="32" r="2.8" class="mark-star" />
           <path d="m31 28.9 1.5 1.4m5-1.5-1.4 1.5" class="mark-orbit" />
         </svg>
-        <div class="section-kicker">LyraDB Enterprise</div>
-        <h1>让企业数据连接<br />清晰、可靠、可治理</h1>
-        <p>统一管理多引擎数据源、查询权限、审批与审计，在同一工作空间内安全协作。</p>
+        <div class="section-kicker">LYRADB · TRUSTED AI DATA INTELLIGENCE</div>
+        <h1>让每个数据问题<br />有依据、可执行、可追溯</h1>
+        <p>连接多数据库、已验证知识与受控 Agent，在明确的权限和证据边界内安全协作。</p>
         <div class="story-points">
           <span><i></i> 本地与企业端一致的工作体验</span>
           <span><i></i> 连接凭据全程安全托管</span>
@@ -21,7 +21,7 @@
 
       <div class="login-card glass-surface">
         <div class="login-title">登录企业空间</div>
-        <div class="login-sub">使用组织分配的 LyraDB 账户继续</div>
+        <div class="login-sub">使用组织分配的 LyraDB · 天琴智库账户继续</div>
         <el-form label-position="top" @submit.prevent="handleLogin">
           <el-form-item label="用户名">
             <el-input v-model="username" placeholder="输入用户名" :prefix-icon="User" autocomplete="username" />

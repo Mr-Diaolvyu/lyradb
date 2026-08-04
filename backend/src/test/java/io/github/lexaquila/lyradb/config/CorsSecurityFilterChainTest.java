@@ -1,6 +1,7 @@
 package io.github.lexaquila.lyradb.config;
 
 import io.github.lexaquila.lyradb.repository.UserRepository;
+import io.github.lexaquila.lyradb.service.AiGatewayTokenService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -44,6 +45,9 @@ class CorsSecurityFilterChainTest {
 
     @MockitoBean
     private UserRepository userRepository;
+
+    @MockitoBean
+    private AiGatewayTokenService aiGatewayTokenService;
 
     @Test
     void allowedOriginPreflightReturnsCredentialHeaders()

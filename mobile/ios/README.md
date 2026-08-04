@@ -1,6 +1,6 @@
-# LyraDB iOS 外壳
+# LyraDB 移动治理伴侣：iOS 安全外壳
 
-版本：`3.1.2`。工程采用 SwiftUI + WKWebView，连接企业 B/S 服务端，通过 XcodeGen 管理，不提交生成的 `.xcodeproj`。
+版本：`3.1.2`。iOS 端承担审批、审计与任务接管的移动治理角色；工程采用 SwiftUI + WKWebView 连接企业 B/S 服务端，通过 XcodeGen 管理，不提交生成的 `.xcodeproj`。
 
 ## 已实现
 

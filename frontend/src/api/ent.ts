@@ -3,6 +3,29 @@
  */
 import apiClient from './index'
 import type { ColumnMetadata, ErDiagram, QueryResult, TableInspection } from '@/types/metadata'
+import type {
+    AiAgentOrchestrationRequest,
+    AiAgentOrchestrationView,
+    AiCapabilities,
+    AiChatResponse,
+    AiGatewayTokenIssuedView,
+    AiGatewayTokenView,
+    AiKnowledgeAssetView,
+    AiKnowledgeDraftRequest,
+    AiKnowledgeIngestionView,
+    AiOperationsView,
+    AiProviderView,
+    AiQualityDashboardView,
+    AiQualityRunView,
+    AiReadAgentCancelView,
+    AiReadAgentExecutionView,
+    AiReadAgentPlanRequest,
+    AiReadAgentPlanView,
+    AgentGatewayScope,
+    MaxComputeDiagnosticView,
+    MaxComputePreflightRequest,
+    MaxComputePreflightView,
+} from '@/types/ai'
 
 export interface LogicalGrant {
     id: string
@@ -250,12 +273,77 @@ export const entApi = {
     aiPresets(): Promise<Record<string, { displayName: string; baseUrl: string; model: string }>> {
         return apiClient.get('/ai/presets')
     },
-    aiProviders(workspaceId?: string): Promise<any[]> {
+    aiProviders(workspaceId?: string): Promise<AiProviderView[]> {
         const params = workspaceId ? { params: { workspaceId } } : {}
         return apiClient.get('/ai/providers', params as any)
     },
-    aiChat(body: AiChatRequest): Promise<any> {
+    aiCapabilities(): Promise<AiCapabilities> {
+        return apiClient.get('/ai/capabilities')
+    },
+    aiChat(body: AiChatRequest): Promise<AiChatResponse> {
         return apiClient.post('/ai/chat', body)
+    },
+    aiAgentOrchestrate(body: AiAgentOrchestrationRequest): Promise<AiAgentOrchestrationView> {
+        return apiClient.post('/ai/agent/orchestrate', body)
+    },
+    aiReadPlan(body: AiReadAgentPlanRequest): Promise<AiReadAgentPlanView> {
+        return apiClient.post('/ai/agent/read/plans', body)
+    },
+    aiReadExecute(runId: string, planSha256: string): Promise<AiReadAgentExecutionView> {
+        return apiClient.post(`/ai/agent/read/plans/${encodeURIComponent(runId)}/execute`, { planSha256 })
+    },
+    aiReadCancel(runId: string): Promise<AiReadAgentCancelView> {
+        return apiClient.post(`/ai/agent/read/plans/${encodeURIComponent(runId)}/cancel`)
+    },
+    aiKnowledgeVerified(): Promise<AiKnowledgeAssetView[]> {
+        return apiClient.get('/ai/knowledge/verified')
+    },
+    aiKnowledgeMine(): Promise<AiKnowledgeAssetView[]> {
+        return apiClient.get('/ai/knowledge/mine')
+    },
+    aiKnowledgeReview(): Promise<AiKnowledgeAssetView[]> {
+        return apiClient.get('/ai/knowledge/review')
+    },
+    aiKnowledgeCreateDraft(body: AiKnowledgeDraftRequest): Promise<AiKnowledgeAssetView> {
+        return apiClient.post('/ai/knowledge/drafts', body)
+    },
+    aiKnowledgeIngestMetadata(snapshotId: string): Promise<AiKnowledgeIngestionView> {
+        return apiClient.post(`/ai/knowledge/ingestions/metadata/${encodeURIComponent(snapshotId)}`)
+    },
+    aiKnowledgeSubmit(id: string): Promise<AiKnowledgeAssetView> {
+        return apiClient.post(`/ai/knowledge/${encodeURIComponent(id)}/submit`)
+    },
+    aiKnowledgeReviewDecision(id: string, decision: 'VERIFY' | 'REJECT' | 'RETIRE', comment?: string): Promise<AiKnowledgeAssetView> {
+        return apiClient.post(`/ai/knowledge/${encodeURIComponent(id)}/review`, { decision, comment })
+    },
+    aiQualityDashboard(): Promise<AiQualityDashboardView> {
+        return apiClient.get('/ai/quality/dashboard')
+    },
+    aiQualityEvaluateAutomatically(): Promise<AiQualityRunView> {
+        return apiClient.post('/ai/quality/evaluate/auto', { acknowledgeProviderUsage: true })
+    },
+    aiOperationsMetrics(): Promise<AiOperationsView> {
+        return apiClient.get('/ai/operations/metrics')
+    },
+    aiMaxComputePreflight(body: MaxComputePreflightRequest): Promise<MaxComputePreflightView> {
+        return apiClient.post('/ai/maxcompute/preflight', body)
+    },
+    aiMaxComputeDiagnose(body: { taskStatus?: string; errorCode?: string; errorMessage?: string }): Promise<MaxComputeDiagnosticView> {
+        return apiClient.post('/ai/maxcompute/diagnose', body)
+    },
+    aiGatewayTokens(): Promise<AiGatewayTokenView[]> {
+        return apiClient.get('/ai/gateway/tokens')
+    },
+    aiGatewayIssue(body: {
+        displayName: string
+        grantId: string
+        scopes: AgentGatewayScope[]
+        expiresAt: string
+    }): Promise<AiGatewayTokenIssuedView> {
+        return apiClient.post('/ai/gateway/tokens', body)
+    },
+    aiGatewayRevoke(id: string): Promise<AiGatewayTokenView> {
+        return apiClient.post(`/ai/gateway/tokens/${encodeURIComponent(id)}/revoke`)
     },
     createMetadataSnapshot(selection: MetadataSelection, signal?: AbortSignal): Promise<MetadataSnapshotSummary> {
         return apiClient.post('/ai/metadata/snapshots', selection, { signal })
@@ -267,11 +355,11 @@ export const entApi = {
         })
     },
     // AI 管理
-    adminAiProviders(workspaceId?: string): Promise<any[]> {
+    adminAiProviders(workspaceId?: string): Promise<AiProviderView[]> {
         const params = workspaceId ? { params: { workspaceId } } : {}
         return apiClient.get('/admin/ai/providers', params as any)
     },
-    adminCreateAiProvider(body: any): Promise<{ id: string; success: boolean }> {
+    adminCreateAiProvider(body: Omit<AiProviderView, 'id' | 'apiKey'> & { apiKey?: string }): Promise<{ id: string; success: boolean }> {
         return apiClient.post('/admin/ai/providers', body)
     },
     adminSetDefaultAiProvider(id: string): Promise<void> {

@@ -35,6 +35,10 @@ public class AiProviderConfig {
     @Column(name = "base_url", length = 255)
     private String baseUrl;
 
+    /** PUBLIC / PRIVATE；私有端点还必须通过服务端精确主机白名单。 */
+    @Column(name = "deployment_mode", nullable = false, length = 16)
+    private String deploymentMode = "PUBLIC";
+
     /** 加密存储 */
     @Column(name = "api_key", length = 500)
     private String apiKey;

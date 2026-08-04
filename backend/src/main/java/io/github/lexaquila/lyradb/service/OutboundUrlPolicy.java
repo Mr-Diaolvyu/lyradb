@@ -17,7 +17,8 @@ import java.util.Set;
  *
  * <p>只允许白名单中的 HTTPS 主机，并拒绝解析到回环、私网、链路本地、
  * 共享地址或组播地址的目标。白名单项支持精确主机和显式的 {@code *.example.com}
- * 子域规则；空白名单默认拒绝。</p>
+ * 子域规则；空白名单默认拒绝。私有模型必须显式启用且只接受精确主机，
+ * 每次调用仍重新解析 DNS，并始终拒绝链路本地和组播地址。</p>
  */
 @Component
 public class OutboundUrlPolicy {
@@ -37,16 +38,42 @@ public class OutboundUrlPolicy {
 
     public URI validateWebhook(String value) {
         Set<String> allowed = parseAllowed(appProperties.getOutbound().getWebhookAllowedHosts());
-        return validate(value, allowed, "Webhook");
+        return validate(value, allowed, "Webhook", true, true);
     }
 
     public URI validateAi(String value) {
-        Set<String> allowed = new HashSet<>(BUILT_IN_AI_HOSTS);
-        allowed.addAll(parseAllowed(appProperties.getOutbound().getAiAllowedHosts()));
-        return validate(value, allowed, "AI Provider");
+        return validateAi(value, "PUBLIC");
     }
 
-    private URI validate(String value, Set<String> allowedHosts, String purpose) {
+    public URI validateAi(String value, String deploymentMode) {
+        String mode = deploymentMode == null || deploymentMode.isBlank()
+                ? "PUBLIC"
+                : deploymentMode.trim().toUpperCase(Locale.ROOT);
+        if ("PRIVATE".equals(mode)) {
+            AppProperties.Ai ai = appProperties.getAi();
+            if (!ai.isPrivateModelEnabled()) {
+                throw new IllegalArgumentException("私有模型端点尚未启用");
+            }
+            Set<String> allowed = parsePrivateAllowed(
+                    ai.getPrivateModelAllowedHosts());
+            return validate(value, allowed, "私有 AI Provider",
+                    ai.isPrivateModelRequireHttps(), false);
+        }
+        if (!"PUBLIC".equals(mode)) {
+            throw new IllegalArgumentException(
+                    "deploymentMode 仅支持 PUBLIC 或 PRIVATE");
+        }
+        Set<String> allowed = new HashSet<>(BUILT_IN_AI_HOSTS);
+        allowed.addAll(parseAllowed(appProperties.getOutbound().getAiAllowedHosts()));
+        return validate(value, allowed, "AI Provider", true, true);
+    }
+
+    private URI validate(
+            String value,
+            Set<String> allowedHosts,
+            String purpose,
+            boolean requireHttps,
+            boolean publicOnly) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(purpose + " URL 必填");
         }
@@ -56,9 +83,13 @@ public class OutboundUrlPolicy {
         } catch (Exception e) {
             throw new IllegalArgumentException(purpose + " URL 格式无效");
         }
-        if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null
+        boolean https = "https".equalsIgnoreCase(uri.getScheme());
+        boolean allowedHttp = !requireHttps
+                && "http".equalsIgnoreCase(uri.getScheme());
+        if ((!https && !allowedHttp) || uri.getHost() == null
                 || uri.getUserInfo() != null || uri.getFragment() != null) {
-            throw new IllegalArgumentException(purpose + " 仅允许无凭据、无片段的 HTTPS 地址");
+            throw new IllegalArgumentException(purpose
+                    + " 仅允许无凭据、无片段的受控 HTTP(S) 地址");
         }
 
         String host = normalizeHost(uri.getHost());
@@ -72,8 +103,10 @@ public class OutboundUrlPolicy {
                 throw new IllegalArgumentException(purpose + " 主机无法解析");
             }
             for (InetAddress address : addresses) {
-                if (!isPublicAddress(address)) {
-                    throw new IllegalArgumentException(purpose + " 主机解析到非公网地址");
+                if (publicOnly ? !isPublicAddress(address)
+                        : !isSafeExplicitPrivateAddress(address)) {
+                    throw new IllegalArgumentException(purpose + (publicOnly
+                            ? " 主机解析到非公网地址" : " 主机解析到不允许的网络地址"));
                 }
             }
         } catch (IllegalArgumentException e) {
@@ -103,6 +136,25 @@ public class OutboundUrlPolicy {
         return result;
     }
 
+    private Set<String> parsePrivateAllowed(String configured) {
+        Set<String> result = new HashSet<>();
+        if (configured == null || configured.isBlank()) {
+            return result;
+        }
+        for (String item : configured.split(",")) {
+            String candidate = item.trim().toLowerCase(Locale.ROOT);
+            if (candidate.startsWith("*.") || candidate.isBlank()
+                    || candidate.contains("/") || candidate.contains(":")
+                    || candidate.contains("*") || candidate.startsWith(".")
+                    || candidate.endsWith(".")) {
+                throw new IllegalStateException(
+                        "私有模型白名单只允许精确主机名或 IP");
+            }
+            result.add(normalizeHost(candidate));
+        }
+        return result;
+    }
+
     private boolean isAllowed(String host, Set<String> allowedHosts) {
         return allowedHosts.stream().anyMatch(allowed -> matchesAllowedHost(host, allowed));
     }
@@ -122,6 +174,12 @@ public class OutboundUrlPolicy {
         } catch (Exception e) {
             throw new IllegalArgumentException("出站主机名无效");
         }
+    }
+
+    static boolean isSafeExplicitPrivateAddress(InetAddress address) {
+        return !(address.isAnyLocalAddress()
+                || address.isLinkLocalAddress()
+                || address.isMulticastAddress());
     }
 
     static boolean isPublicAddress(InetAddress address) {

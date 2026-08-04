@@ -44,6 +44,10 @@ class EnterpriseAiServiceTest {
     private EnterpriseMetadataSnapshotService metadataSnapshotService;
     @Mock
     private AuditService auditService;
+    @Mock
+    private AiFeatureGate featureGate;
+    @Mock
+    private AiKnowledgeService knowledgeService;
     private EnterpriseAiService service;
     private User user;
     private AiProviderConfig provider;
@@ -52,7 +56,7 @@ class EnterpriseAiServiceTest {
     void setUp() {
         service = new EnterpriseAiService(aiProviderService, grantService,
                 dataSourceService, securityUtil, metadataSnapshotService,
-                auditService);
+                auditService, featureGate, knowledgeService);
         user = new User();
         user.setId("user-1");
         provider = new AiProviderConfig();

@@ -1,6 +1,6 @@
-# LyraDB Android 外壳
+# LyraDB 移动治理伴侣：Android 安全外壳
 
-版本：`3.1.2`。这是 Kotlin + Android WebView 的企业 B/S 客户端，数据库访问与授权均由远端 LyraDB 服务端完成。
+版本：`3.1.2`。Android 端承担审批、审计与任务接管的移动治理角色；技术上仍是 Kotlin + Android WebView 安全外壳，数据库访问、智库能力与授权均由远端 LyraDB 服务端完成。
 
 ## 已实现
 

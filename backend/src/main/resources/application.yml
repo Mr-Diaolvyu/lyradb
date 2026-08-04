@@ -66,6 +66,35 @@ app:
     bootstrap-admin-email: ${LYRADB_BOOTSTRAP_ADMIN_EMAIL:}
     cookie-secure: ${LYRADB_COOKIE_SECURE:false}
 
+  ai:
+    ask-lyra-enabled: ${LYRADB_AI_ASK_ENABLED:true}
+    knowledge-core-enabled: ${LYRADB_AI_KNOWLEDGE_ENABLED:false}
+    governed-read-agent-enabled: ${LYRADB_AI_READ_AGENT_ENABLED:false}
+    team-knowledge-loop-enabled: ${LYRADB_AI_TEAM_KNOWLEDGE_ENABLED:false}
+    quality-enabled: ${LYRADB_AI_QUALITY_ENABLED:false}
+    max-compute-agent-enabled: ${LYRADB_AI_MAXCOMPUTE_AGENT_ENABLED:false}
+    agent-gateway-enabled: ${LYRADB_AI_GATEWAY_ENABLED:false}
+    # 3.x 服务端硬门禁；设为 true 会拒绝启动，不能用环境变量绕过。
+    write-agent-enabled: ${LYRADB_AI_WRITE_AGENT_ENABLED:false}
+    max-knowledge-context-chars: ${LYRADB_AI_MAX_KNOWLEDGE_CONTEXT_CHARS:12000}
+    knowledge-semantic-enabled: ${LYRADB_AI_KNOWLEDGE_SEMANTIC_ENABLED:false}
+    knowledge-embedding-model: ${LYRADB_AI_KNOWLEDGE_EMBEDDING_MODEL:text-embedding-v3}
+    knowledge-lexical-weight: ${LYRADB_AI_KNOWLEDGE_LEXICAL_WEIGHT:0.65}
+    max-compute-live-evidence-enabled: ${LYRADB_AI_MAXCOMPUTE_LIVE_EVIDENCE_ENABLED:false}
+    max-compute-live-evidence-required: ${LYRADB_AI_MAXCOMPUTE_LIVE_EVIDENCE_REQUIRED:false}
+    gateway-requests-per-minute: ${LYRADB_AI_GATEWAY_REQUESTS_PER_MINUTE:120}
+    gateway-expensive-requests-per-minute: ${LYRADB_AI_GATEWAY_EXPENSIVE_REQUESTS_PER_MINUTE:20}
+    gateway-allowed-origins: ${LYRADB_AI_GATEWAY_ALLOWED_ORIGINS:}
+    mcp-max-request-bytes: ${LYRADB_AI_MCP_MAX_REQUEST_BYTES:1048576}
+    private-model-enabled: ${LYRADB_AI_PRIVATE_MODEL_ENABLED:false}
+    private-model-allowed-hosts: ${LYRADB_AI_PRIVATE_MODEL_ALLOWED_HOSTS:}
+    private-model-require-https: ${LYRADB_AI_PRIVATE_MODEL_REQUIRE_HTTPS:true}
+    execution-node-id: ${LYRADB_AI_EXECUTION_NODE_ID:}
+    cancel-poll-interval-ms: ${LYRADB_AI_CANCEL_POLL_INTERVAL_MS:1000}
+    read-agent-plan-ttl-seconds: ${LYRADB_AI_READ_AGENT_PLAN_TTL_SECONDS:300}
+    read-agent-max-rows: ${LYRADB_AI_READ_AGENT_MAX_ROWS:1000}
+    read-agent-max-estimated-cost-micros: ${LYRADB_AI_READ_AGENT_MAX_COST_MICROS:0}
+
 logging:
   level:
     io.github.lexaquila.lyradb: DEBUG

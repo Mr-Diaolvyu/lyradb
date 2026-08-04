@@ -50,7 +50,7 @@ public class CredentialService {
     private static final int TAG_BITS = 128;
     private static final int KEY_BITS = 256;
     private static final int PBKDF2_ITERATIONS = 210_000;
-    private static final int MAX_VALUE_BYTES = 65_536;
+    private static final int MAX_VALUE_BYTES = 262_144;
     /** 仅用于读取历史开发/桌面数据，不参与任何新密文写入。 */
     private static final String LEGACY_DEFAULT_PASSWORD = "db-manager-default-key";
 
@@ -233,7 +233,7 @@ public class CredentialService {
     private String encryptV2(String plaintext) {
         byte[] bytes = plaintext.getBytes(StandardCharsets.UTF_8);
         if (bytes.length > MAX_VALUE_BYTES) {
-            throw new IllegalArgumentException("单个凭证值超过 64 KiB 限制");
+            throw new IllegalArgumentException("单个受保护值超过 256 KiB 限制");
         }
         byte[] salt = new byte[SALT_BYTES];
         byte[] iv = new byte[IV_BYTES];

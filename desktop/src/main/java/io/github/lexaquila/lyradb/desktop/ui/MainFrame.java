@@ -115,7 +115,7 @@ public final class MainFrame extends JFrame {
     private SwingWorker<List<SearchResult>, Void> searchWorker;
 
     public MainFrame(DesktopRuntime runtime) {
-        super("LyraDB "
+        super("LyraDB · 天琴智库 "
                 + io.github.lexaquila.lyradb.desktop.NativeDesktopApplication.VERSION);
         this.runtime = runtime;
         setIconImage(LyraIcons.applicationImage());
@@ -382,7 +382,7 @@ public final class MainFrame extends JFrame {
                 UiKit.ButtonStyle.TOOLBAR, this::refreshSelected));
         toolbar.add(toolButton("ER 图", LyraIcons.Kind.ER,
                 UiKit.ButtonStyle.TOOLBAR, this::openErDiagram));
-        toolbar.add(toolButton("AI 助手", LyraIcons.Kind.AI,
+        toolbar.add(toolButton("智库助手", LyraIcons.Kind.AI,
                 UiKit.ButtonStyle.TOOLBAR, this::openAiAssistant));
         toolbar.add(Box.createHorizontalGlue());
         toolbar.add(toolButton("主题", LyraIcons.Kind.THEME,
@@ -396,7 +396,7 @@ public final class MainFrame extends JFrame {
                 this::downloadConnectionTemplate));
         moreMenu.add(item("导出全部连接配置…", null, this::exportConnections));
         moreMenu.addSeparator();
-        moreMenu.add(item("AI 设置…", null, this::openAiSettings));
+        moreMenu.add(item("模型设置…", null, this::openAiSettings));
         more.addActionListener(event ->
                 moreMenu.show(more, 0, more.getHeight()));
         toolbar.add(more);
@@ -435,11 +435,11 @@ public final class MainFrame extends JFrame {
         database.add(item("刷新", KeyStroke.getKeyStroke(KeyEvent.VK_F5, 0),
                 this::refreshSelected));
 
-        JMenu ai = new JMenu("AI");
-        ai.add(item("数据库助手", KeyStroke.getKeyStroke(
+        JMenu ai = new JMenu("智库");
+        ai.add(item("智库助手", KeyStroke.getKeyStroke(
                 KeyEvent.VK_I, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
                 this::openAiAssistant));
-        ai.add(item("Provider / API Key 设置", null, this::openAiSettings));
+        ai.add(item("模型 / API Key 设置", null, this::openAiSettings));
 
         JMenu tools = new JMenu("工具");
         tools.add(item("导入连接配置…", null, this::importConnections));
@@ -466,8 +466,9 @@ public final class MainFrame extends JFrame {
         JMenu help = new JMenu("帮助");
         help.add(item("关于 LyraDB", null, () -> JOptionPane.showMessageDialog(this,
                 """
-                        LyraDB %s
-                        数据库管理工具
+                        LyraDB · 天琴智库 %s
+                        可信 AI 数据智库 · 个人智库工作台
+                        AI 建议不会自动执行
                         """.formatted(
                         io.github.lexaquila.lyradb.desktop.NativeDesktopApplication.VERSION),
                 "关于", JOptionPane.INFORMATION_MESSAGE)));

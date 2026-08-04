@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
- * 通用数据库管理工具 - 后端主启动类
+ * LyraDB 可信 AI 数据智库 - 企业后端主启动类。
  *
  * <p>
  * Spring Boot 应用入口，扫描全部配置和组件。

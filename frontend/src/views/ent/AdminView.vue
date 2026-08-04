@@ -1,6 +1,6 @@
 <template>
   <div class="page">
-    <div class="page-title"><h2>管理</h2><span class="page-sub">数据源托管 · 授权分配 · 用户管理（仅管理员）</span></div>
+    <div class="page-title"><h2>管理</h2><span class="page-sub">数据源 · 授权 · 用户 · 模型与智库治理（仅管理员）</span></div>
 
     <el-tabs v-model="tab" @tab-change="load">
       <!-- 数据源 -->
@@ -56,11 +56,16 @@
       </el-tab-pane>
 
       <!-- AI Provider -->
-      <el-tab-pane label="AI" name="ai">
+      <el-tab-pane label="模型与 AI" name="ai">
         <div class="bar"><el-button type="primary" :icon="Plus" @click="aiCreate.visible = true">配置 Provider</el-button></div>
         <el-table :data="aiProviders" border size="small" empty-text="未配置">
           <el-table-column prop="displayName" label="名称" width="140" />
           <el-table-column prop="providerKey" label="类型" width="100" />
+          <el-table-column label="部署" width="100">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.deploymentMode === 'PRIVATE' ? 'warning' : 'info'">{{ row.deploymentMode }}</el-tag>
+            </template>
+          </el-table-column>
           <el-table-column prop="baseUrl" label="Base URL" show-overflow-tooltip />
           <el-table-column prop="model" label="模型" width="160" />
           <el-table-column label="KEY" width="100"><template #default="{ row }">{{ row.apiKey ? '已配置' : '空' }}</template></el-table-column>
@@ -170,9 +175,25 @@
           </el-select>
         </el-form-item>
         <el-form-item label="显示名"><el-input v-model="aiCreate.form.displayName" /></el-form-item>
+        <el-form-item label="部署模式">
+          <el-radio-group v-model="aiCreate.form.deploymentMode">
+            <el-radio value="PUBLIC">公网 Provider</el-radio>
+            <el-radio value="PRIVATE">私有模型</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-alert
+          v-if="aiCreate.form.deploymentMode === 'PRIVATE'"
+          title="私有模型必须由管理员在服务端显式启用，并把目标主机加入精确白名单；通配符不会生效。"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="provider-alert"
+        />
         <el-form-item label="Base URL"><el-input v-model="aiCreate.form.baseUrl" /></el-form-item>
         <el-form-item label="模型"><el-input v-model="aiCreate.form.model" /></el-form-item>
-        <el-form-item label="API KEY"><el-input v-model="aiCreate.form.apiKey" type="password" show-password /></el-form-item>
+        <el-form-item :label="aiCreate.form.deploymentMode === 'PRIVATE' ? 'API KEY（可选）' : 'API KEY'">
+          <el-input v-model="aiCreate.form.apiKey" type="password" show-password />
+        </el-form-item>
         <el-form-item label="设为默认"><el-switch v-model="aiCreate.form.isDefault" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="aiCreate.visible=false">取消</el-button><el-button type="primary" :loading="aiCreate.busy" @click="createAi">保存</el-button></template>
@@ -327,13 +348,14 @@ import {
 import { saveBlob } from '@/utils/download'
 import { driverApi } from '@/api/driver'
 import type { DatabaseType } from '@/types/driver'
+import type { AiProviderDeploymentMode, AiProviderView } from '@/types/ai'
 
 const tab = ref('ds')
 const dataSources = ref<AdminDataSource[]>([])
 const grants = ref<AdminGrant[]>([])
 const users = ref<any[]>([])
 const dbTypes = ref<DatabaseType[]>([])
-const aiProviders = ref<any[]>([])
+const aiProviders = ref<AiProviderView[]>([])
 const aiPresets = ref<Record<string, any>>({})
 const maskRules = ref<MaskingRule[]>([])
 const selectedDataSources = ref<AdminDataSource[]>([])
@@ -363,7 +385,10 @@ let importPreviewController: AbortController | null = null
 const dsCreate = reactive({ visible: false, busy: false, form: { dbType: '', displayName: '', params: { host: '', port: '', username: '', password: '', database: '' } } })
 const grantCreate = reactive({ visible: false, busy: false, form: { dataSourceId: '', userId: '', grantedSourceName: '', allowedSchemas: '', allowedTables: '', blockedTables: '', sqlCapability: 'READ_ONLY' } })
 const userCreate = reactive({ visible: false, busy: false, form: { username: '', password: '', displayName: '', roles: ['ANALYST'] } })
-const aiCreate = reactive({ visible: false, busy: false, form: { providerKey: 'deepseek', displayName: '', baseUrl: '', model: '', apiKey: '', isDefault: true } })
+const aiCreate = reactive({
+  visible: false, busy: false,
+  form: { providerKey: 'deepseek', displayName: '', baseUrl: '', model: '', apiKey: '', isDefault: true, deploymentMode: 'PUBLIC' as AiProviderDeploymentMode },
+})
 const maskCreate = reactive({ visible: false, busy: false, form: { dataSourceId: '', tablePattern: '', columnPattern: '', maskType: 'PARTIAL', remark: '' } })
 
 async function load() {
@@ -441,7 +466,10 @@ function onAiPreset() {
   }
 }
 async function createAi() {
-  if (!aiCreate.form.apiKey || !aiCreate.form.baseUrl) { ElMessage.warning('Base URL 与 API KEY 必填'); return }
+  if (!aiCreate.form.baseUrl) { ElMessage.warning('Base URL 必填'); return }
+  if (aiCreate.form.deploymentMode === 'PUBLIC' && !aiCreate.form.apiKey) {
+    ElMessage.warning('公网 Provider 的 API KEY 必填'); return
+  }
   aiCreate.busy = true
   try {
     await entApi.adminCreateAiProvider(aiCreate.form)

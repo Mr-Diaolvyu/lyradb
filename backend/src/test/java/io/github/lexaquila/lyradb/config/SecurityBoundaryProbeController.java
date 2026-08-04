@@ -25,7 +25,8 @@ class SecurityBoundaryProbeController {
 
     @GetMapping({
             "/auth/probe", "/admin/probe", "/approvals/probe",
-            "/audit/probe", "/grants/probe", "/ent/probe", "/ai/probe"
+            "/audit/probe", "/grants/probe", "/ent/probe", "/ai/probe",
+            "/agent-gateway/probe"
     })
     Map<String, Object> enterpriseEndpoint() {
         return Map.of("success", true);

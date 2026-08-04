@@ -14,6 +14,7 @@ import jakarta.servlet.http.HttpSession;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
@@ -25,6 +26,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.security.web.util.matcher.OrRequestMatcher;
@@ -50,18 +52,34 @@ public class SecurityConfig {
 
     private static final String[] ENTERPRISE_ENDPOINTS = {
             "/auth/**", "/admin/**", "/approvals/**", "/audit/**",
-            "/grants/**", "/ent/**", "/ai/**"
+            "/grants/**", "/ent/**", "/ai/**", "/agent-gateway/**"
     };
 
     private final AppProperties appProperties;
     private final DbUserDetailsService dbUserDetailsService;
     private final UserRepository userRepository;
+    private final AgentGatewayAuthenticationFilter agentGatewayFilter;
 
     public SecurityConfig(AppProperties appProperties, DbUserDetailsService dbUserDetailsService,
-                          UserRepository userRepository) {
+                          UserRepository userRepository,
+                          AgentGatewayAuthenticationFilter agentGatewayFilter) {
         this.appProperties = appProperties;
         this.dbUserDetailsService = dbUserDetailsService;
         this.userRepository = userRepository;
+        this.agentGatewayFilter = agentGatewayFilter;
+    }
+
+    /**
+     * Gateway 过滤器只属于企业版 SecurityFilterChain，禁止 Servlet 容器
+     * 额外自动注册，避免个人版误拦截和企业版重复鉴权。
+     */
+    @Bean
+    public FilterRegistrationBean<AgentGatewayAuthenticationFilter>
+            agentGatewayFilterRegistration() {
+        FilterRegistrationBean<AgentGatewayAuthenticationFilter> registration =
+                new FilterRegistrationBean<>(agentGatewayFilter);
+        registration.setEnabled(false);
+        return registration;
     }
 
     @Bean
@@ -135,9 +153,12 @@ public class SecurityConfig {
                                 endpointMatcher(PERSONAL_ENDPOINTS)))
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(csrfRepository)
-                        .csrfTokenRequestHandler(csrfHandler))
+                        .csrfTokenRequestHandler(csrfHandler)
+                        .ignoringRequestMatchers(
+                                "/agent-gateway/**"))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/app/info", "/auth/csrf", "/auth/login", "/error").permitAll()
+                        .requestMatchers("/agent-gateway/**").permitAll()
                         .requestMatchers("/h2-console/**").denyAll()
                         .requestMatchers(PERSONAL_ENDPOINTS).denyAll()
                         .requestMatchers("/admin/users/**").hasRole("PLATFORM_ADMIN")
@@ -147,6 +168,9 @@ public class SecurityConfig {
                 .formLogin(form -> form.disable())
                 .httpBasic(basic -> basic.disable())
                 .authenticationProvider(authenticationProvider())
+                .addFilterBefore(
+                        agentGatewayFilter,
+                        UsernamePasswordAuthenticationFilter.class)
                 .addFilterAfter(new CredentialVersionFilter(userRepository), SecurityContextHolderFilter.class);
         return http.build();
     }

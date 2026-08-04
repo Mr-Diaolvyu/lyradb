@@ -58,7 +58,9 @@ public class AdminAiController {
                 (String) body.get("model"),
                 body.get("temperature") instanceof Number number ? number.doubleValue() : 0.2,
                 body.get("maxTokens") instanceof Number number ? number.intValue() : 2048,
-                Boolean.TRUE.equals(body.get("isDefault")));
+                Boolean.TRUE.equals(body.get("isDefault")),
+                body.get("deploymentMode") instanceof String mode
+                        ? mode : "PUBLIC");
         auditService.recordCurrent(workspaceId, "AI_PROVIDER_CREATE",
                 null, config.getDisplayName(), true, null);
         return Map.of("id", config.getId(), "success", true);

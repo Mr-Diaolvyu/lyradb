@@ -15,7 +15,7 @@
     <artifactId>lyradb-core</artifactId>
     <version>${revision}</version>
     <name>LyraDB Core</name>
-    <description>LyraDB 桌面与企业服务端共享的数据库核心</description>
+    <description>LyraDB 个人智库工作台与团队可信数据智库共享的数据库和 AI 治理核心</description>
 
     <properties>
         <mongodb.driver.test.version>4.11.1</mongodb.driver.test.version>

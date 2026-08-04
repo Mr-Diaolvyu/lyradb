@@ -23,7 +23,7 @@ class FlywayMigrationTest {
         String url = memoryDatabaseUrl("clean");
         Flyway flyway = flyway(url);
 
-        assertEquals(2, flyway.migrate().migrationsExecuted);
+        assertEquals(7, flyway.migrate().migrationsExecuted);
         assertEquals(0, flyway.migrate().migrationsExecuted);
 
         try (Connection connection = DriverManager.getConnection(url, "sa", "")) {
@@ -33,6 +33,16 @@ class FlywayMigrationTest {
             assertColumnExists(connection, "ENT_MASKING_RULE", "WORKSPACE_ID");
             assertColumnExists(connection, "ENT_AUDIT_LOG", "ACTION");
             assertColumnExists(connection, "REPORT_SCHEDULE", "OWNER_USERNAME");
+            assertColumnExists(connection, "AI_EVALUATION_RUN", "REPORT_JSON");
+            assertColumnExists(connection, "AI_GATEWAY_TOKEN", "TOKEN_SHA256");
+            assertColumnExists(connection, "AI_KNOWLEDGE_ASSET", "EMBEDDING_JSON");
+            assertColumnExists(connection, "AI_EVALUATION_RUN", "EVALUATION_MODE");
+            assertColumnExists(connection, "AI_AGENT_RUN", "PLAN_PAYLOAD_CIPHERTEXT");
+            assertColumnExists(connection, "AI_AGENT_RUN", "PLAN_CONSUMED");
+            assertColumnExists(connection, "AI_AGENT_RUN", "CANCEL_REQUESTED");
+            assertColumnExists(connection, "AI_PROVIDER_CONFIG", "DEPLOYMENT_MODE");
+            assertColumnExists(connection, "AI_MAXCOMPUTE_PREFLIGHT", "TOKEN_SHA256");
+            assertColumnExists(connection, "AI_MAXCOMPUTE_PREFLIGHT", "EXPIRES_AT");
         }
     }
 
@@ -89,7 +99,7 @@ class FlywayMigrationTest {
                     """);
         }
 
-        assertEquals(2, flyway(url).migrate().migrationsExecuted);
+        assertEquals(7, flyway(url).migrate().migrationsExecuted);
 
         try (Connection connection = DriverManager.getConnection(url, "sa", "");
              Statement statement = connection.createStatement()) {

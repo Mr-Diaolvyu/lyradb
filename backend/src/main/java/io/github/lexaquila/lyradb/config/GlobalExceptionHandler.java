@@ -1,5 +1,6 @@
 package io.github.lexaquila.lyradb.config;
 
+import io.github.lexaquila.lyradb.service.AiGatewayRateLimitException;
 import io.github.lexaquila.lyradb.service.ApprovalRequiredException;
 import io.github.lexaquila.lyradb.service.QueryService;
 import org.slf4j.Logger;
@@ -60,6 +61,18 @@ public class GlobalExceptionHandler {
         body.put("approvalRequestId", exception.getApprovalRequestId());
         body.put("approvalStatus", exception.getApprovalStatus());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    @ExceptionHandler(AiGatewayRateLimitException.class)
+    public ResponseEntity<Map<String, Object>> handleGatewayRateLimit(
+            AiGatewayRateLimitException exception) {
+        Map<String, Object> body = baseBody(
+                HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED",
+                "Agent Gateway 请求过多，请稍后重试");
+        body.put("retryAfterSeconds", exception.getRetryAfterSeconds());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", String.valueOf(
+                        exception.getRetryAfterSeconds())).body(body);
     }
 
     @ExceptionHandler(SQLTimeoutException.class)

@@ -30,7 +30,7 @@ import java.awt.Insets;
 import java.util.Arrays;
 
 /**
- * AI Provider 配置。
+ * 智库助手的模型 Provider 配置。
  */
 public final class AiSettingsDialog extends JDialog {
 
@@ -50,7 +50,7 @@ public final class AiSettingsDialog extends JDialog {
     private String selectedProviderKey;
 
     public AiSettingsDialog(JFrame owner, DesktopRuntime runtime) {
-        super(owner, "AI 服务设置", true);
+        super(owner, "模型服务设置", true);
         this.runtime = runtime;
         setIconImage(LyraIcons.applicationImage());
         buildUi();
@@ -75,7 +75,7 @@ public final class AiSettingsDialog extends JDialog {
         JPanel heading = new JPanel();
         heading.setOpaque(false);
         heading.setLayout(new BoxLayout(heading, BoxLayout.Y_AXIS));
-        JLabel title = new JLabel("AI 服务设置");
+        JLabel title = new JLabel("模型服务设置");
         title.setFont(NativeTheme.FONT_TITLE);
         title.setForeground(NativeTheme.FOREGROUND);
         JLabel subtitle = new JLabel("配置服务商、模型与访问凭据");

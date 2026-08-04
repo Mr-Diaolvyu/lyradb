@@ -1,5 +1,6 @@
 package io.github.lexaquila.lyradb.controller;
 
+import io.github.lexaquila.lyradb.service.AiFeatureGate;
 import io.github.lexaquila.lyradb.service.AiProviderService;
 import io.github.lexaquila.lyradb.service.EnterpriseAiService;
 import io.github.lexaquila.lyradb.service.SecurityUtil;
@@ -36,6 +37,7 @@ public class AiController {
     private final AiProviderService aiProviderService;
     private final EnterpriseAiService enterpriseAiService;
     private final SecurityUtil securityUtil;
+    private final AiFeatureGate featureGate;
     private final ThreadPoolExecutor streamExecutor = new ThreadPoolExecutor(
             2, 4, 60L, TimeUnit.SECONDS, new ArrayBlockingQueue<>(16), runnable -> {
                 Thread thread = new Thread(runnable, "ai-stream");
@@ -44,10 +46,21 @@ public class AiController {
             }, new ThreadPoolExecutor.AbortPolicy());
 
     public AiController(AiProviderService aiProviderService,
-            EnterpriseAiService enterpriseAiService, SecurityUtil securityUtil) {
+            EnterpriseAiService enterpriseAiService, SecurityUtil securityUtil,
+            AiFeatureGate featureGate) {
         this.aiProviderService = aiProviderService;
         this.enterpriseAiService = enterpriseAiService;
         this.securityUtil = securityUtil;
+        this.featureGate = featureGate;
+    }
+
+    /** 返回服务端实际生效的 AI 能力，供客户端灰度展示。 */
+    @GetMapping("/capabilities")
+    public Map<String, Object> capabilities() {
+        return Map.of(
+                "features", featureGate.snapshot(),
+                "writeAgentHardGate", true,
+                "securityModel", "permission-envelope");
     }
 
     /** Provider 预置（百炼/GLM/豆包/DeepSeek/GPT/自定义）。 */
