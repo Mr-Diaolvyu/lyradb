@@ -2,7 +2,7 @@
  * 元数据和查询 API
  */
 import apiClient from './index'
-import type { TreeNode, ColumnMetadata, QueryResult, ExecuteUpdateResult, ExecuteQueryRequest, ErDiagram, TableInspection } from '@/types/metadata'
+import type { TreeNode, ColumnMetadata, QueryResult, ExecuteUpdateResult, ExecuteQueryRequest, ErDiagram, TableInspection, TablePartitionPage } from '@/types/metadata'
 import type { DriverCapability } from '@/types/driver'
 
 export const metadataApi = {
@@ -26,17 +26,45 @@ export const metadataApi = {
         return apiClient.get(`/metadata/${connectionId}/ddl`, { params })
     },
 
-    /** 一次加载表数据、字段、索引约束与 DDL；预览最多 200 行 */
+    /** 加载表元数据；数据预览必须显式 includePreview，且最多 200 行。 */
     inspectTable(
         connectionId: string,
         schema: string | null,
         table: string,
         objectType = 'TABLE',
         limit = 200,
+        options?: {
+            includePreview?: boolean
+            partitionSpec?: string | null
+        },
     ): Promise<TableInspection> {
-        const params: any = { table, type: objectType, limit: Math.min(200, Math.max(1, limit)) }
+        const params: any = {
+            table,
+            type: objectType,
+            limit: Math.min(200, Math.max(1, limit)),
+            includePreview: options?.includePreview ?? false,
+        }
         if (schema) params.schema = schema
+        if (options?.partitionSpec) params.partitionSpec = options.partitionSpec
         return apiClient.get(`/metadata/${connectionId}/inspect`, { params })
+    },
+
+    getTablePartitions(
+        connectionId: string,
+        schema: string | null,
+        table: string,
+        offset = 0,
+        limit = 50,
+        filter = '',
+    ): Promise<TablePartitionPage> {
+        const params: any = {
+            table,
+            offset: Math.max(0, offset),
+            limit: Math.min(100, Math.max(1, limit)),
+            filter,
+        }
+        if (schema) params.schema = schema
+        return apiClient.get(`/metadata/${connectionId}/partitions`, { params })
     },
 
     /** 获取数据库列表 */

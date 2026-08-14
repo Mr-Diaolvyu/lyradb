@@ -31,4 +31,38 @@ class DatabaseWorkspacePanelTest {
         assertThat(DatabaseWorkspacePanel.nodeComment(node)).isEmpty();
         assertThat(DatabaseWorkspacePanel.nodeComment(null)).isEmpty();
     }
+
+    @Test
+    void shouldDistinguishMissingCommentFromUnavailableMetadata() {
+        TreeNode unavailable = TreeNode.of(
+                "1", "table_a", "TABLE", "table_a");
+        unavailable.getProperties().put(
+                "metadataSource", "SHOW_TABLES");
+        unavailable.getProperties().put(
+                "metadataStatus", "FALLBACK");
+        unavailable.getProperties().put(
+                "metadataReason", "当前降级链未返回 remarks");
+
+        assertThat(DatabaseWorkspacePanel.nodeCommentDisplay(unavailable))
+                .isEqualTo("注释未获取 · 当前降级链未返回 remarks");
+        assertThat(DatabaseWorkspacePanel.nodeCommentDisplay(
+                TreeNode.of("2", "table_b", "TABLE", "table_b")))
+                .isEqualTo("注释尚未获取");
+
+        TreeNode confirmedEmpty = TreeNode.of(
+                "3", "table_c", "TABLE", "table_c");
+        confirmedEmpty.getProperties().put("remarksStatus", "EMPTY");
+        TreeNode explicitlyUnavailable = TreeNode.of(
+                "4", "table_d", "TABLE", "table_d");
+        explicitlyUnavailable.getProperties().put(
+                "remarksStatus", "UNAVAILABLE");
+        explicitlyUnavailable.getProperties().put(
+                "metadataReason", "权限不足");
+
+        assertThat(DatabaseWorkspacePanel.nodeCommentDisplay(confirmedEmpty))
+                .isEqualTo("未设置注释");
+        assertThat(DatabaseWorkspacePanel.nodeCommentDisplay(
+                explicitlyUnavailable))
+                .isEqualTo("注释元数据不可用 · 权限不足");
+    }
 }

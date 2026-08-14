@@ -75,7 +75,7 @@
 
     <el-dialog
       v-model="tableDialogOpen"
-      :title="`表工作台 · ${tableForm.displaySchema || tableForm.schema}.${tableForm.table}`"
+      title="表工作台"
       width="92%"
       top="4vh"
       destroy-on-close
@@ -83,15 +83,58 @@
       class="enterprise-table-dialog"
     >
       <div class="table-dialog-shell">
-        <div class="enterprise-inspection">
+        <div
+          v-if="tableTabs.length"
+          class="table-tab-strip"
+          role="tablist"
+          aria-label="已打开的表"
+        >
+          <div
+            v-for="(tab, index) in tableTabs"
+            :key="tab.id"
+            :class="['table-workspace-tab', { selected: tab.id === activeTableTabId }]"
+          >
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="tab.id === activeTableTabId"
+              :tabindex="tab.id === activeTableTabId ? 0 : -1"
+              :title="tab.table.qualifiedName"
+              @click="activateTableTab(tab.id)"
+              @keydown="onTableTabKeydown($event, index)"
+            >
+              <span class="table-tab-title">{{ tab.table.qualifiedName }}</span>
+            </button>
+            <button
+              type="button"
+              class="table-tab-close"
+              :aria-label="`关闭 ${tab.table.qualifiedName}`"
+              title="关闭标签"
+              @click.stop="closeTableTab(tab.id)"
+            >×</button>
+          </div>
+        </div>
+        <div v-if="activeTableTab" class="enterprise-inspection">
           <TableInspectionView
-            :inspection="tableInspection"
-            :loading="tableInspectionLoading"
-            :error="tableInspectionError"
-            @refresh="loadTableInspection"
+            :key="activeTableTab.id"
+            :inspection="activeTableTab.inspection"
+            :loading="activeTableTab.loading"
+            :error="activeTableTab.error"
+            :partition-page="activeTableTab.partitionPage"
+            :partition-loading="activeTableTab.partitionLoading"
+            :partition-error="activeTableTab.partitionError"
+            :partition-filter="activeTableTab.partitionFilter"
+            :selected-partition="activeTableTab.selectedPartition"
+            :preview-loading="activeTableTab.previewLoading"
+            :preview-error="activeTableTab.previewError"
+            @refresh="refreshActiveTable"
             @open-sql="applyInspectionSql"
+            @load-partitions="loadActiveTablePartitions"
+            @select-partition="selectActiveTablePartition"
+            @load-preview="loadActiveTablePreview"
           />
         </div>
+        <el-empty v-else description="尚未打开表" :image-size="68" />
       </div>
     </el-dialog>
 
@@ -130,7 +173,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, shallowRef } from 'vue'
+import { ref, computed, nextTick, onMounted, shallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Download, Grid, Share, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -143,6 +186,7 @@ import {
   entApi,
   type EnterpriseMetadataCatalog,
   type EnterpriseMetadataTable,
+  type EnterprisePartitionPage,
   type LogicalGrant,
 } from '@/api/ent'
 import type {
@@ -155,6 +199,10 @@ import {
   parseSqlCompletionContext,
   type SqlCompletionTable,
 } from '@/utils/sqlCompletion'
+import {
+  normalizedTableIdentity,
+  resolveTabNavigationIndex,
+} from '@/utils/workspaceTabs'
 
 const route = useRoute()
 const router = useRouter()
@@ -180,15 +228,25 @@ const selectedWorkspaceTable =
   ref<EnterpriseMetadataTable | null>(null)
 
 const tableDialogOpen = ref(false)
-const tableInspectionLoading = ref(false)
-const tableInspection = ref<TableInspection | null>(null)
-const tableInspectionError = ref<string | null>(null)
-const tableForm = ref({
-  schema: '',
-  displaySchema: '',
-  table: '',
-  objectType: 'TABLE',
-})
+interface EnterpriseTableTabState {
+  id: string
+  table: EnterpriseMetadataTable
+  inspection: TableInspection | null
+  loading: boolean
+  error: string | null
+  partitionPage: EnterprisePartitionPage | null
+  partitionLoading: boolean
+  partitionError: string | null
+  partitionFilter: string
+  selectedPartition: string | null
+  previewLoading: boolean
+  previewError: string | null
+}
+const tableTabs = ref<EnterpriseTableTabState[]>([])
+const activeTableTabId = ref<string | null>(null)
+const activeTableTab = computed(() => tableTabs.value.find(
+  tab => tab.id === activeTableTabId.value,
+) || null)
 
 const exportDialogOpen = ref(false)
 const submittingExport = ref(false)
@@ -253,7 +311,14 @@ function onSourceChange() {
   requestGate.invalidate(CATALOG_KEY)
   executing.value = false
   result.value = null
-  tableInspection.value = null
+  for (const tab of tableTabs.value) {
+    requestGate.invalidate(tableRequestKey(tab.id))
+    requestGate.invalidate(partitionRequestKey(tab.id))
+    requestGate.invalidate(previewRequestKey(tab.id))
+  }
+  tableTabs.value = []
+  activeTableTabId.value = null
+  tableDialogOpen.value = false
   catalog.value = null
   catalogError.value = null
   columnCache.clear()
@@ -271,22 +336,43 @@ async function openTableFromWorkspace(
   table: EnterpriseMetadataTable,
 ) {
   selectedWorkspaceTable.value = table
-  tableForm.value = {
-    schema: table.namespace || table.schema,
-    displaySchema: table.schema,
-    table: table.name,
-    objectType: table.type || 'TABLE',
+  const tableKey = enterpriseTableKey(table)
+  let tab = tableTabs.value.find(candidate =>
+    enterpriseTableKey(candidate.table) === tableKey,
+  )
+  if (!tab) {
+    tab = {
+      id: `enterprise-table-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      table,
+      inspection: null,
+      loading: false,
+      error: null,
+      partitionPage: null,
+      partitionLoading: false,
+      partitionError: null,
+      partitionFilter: '',
+      selectedPartition: null,
+      previewLoading: false,
+      previewError: null,
+    }
+    tableTabs.value.push(tab)
   }
-  tableInspection.value = null
-  tableInspectionError.value = null
+  activeTableTabId.value = tab.id
   tableDialogOpen.value = true
   workspaceDialogOpen.value = false
-  await loadTableInspection()
+  if (!tab.inspection && !tab.loading) {
+    await loadTableInspection(tab.id)
+  }
 }
 
 function openSqlFromWorkspace(
   table: EnterpriseMetadataTable,
 ) {
+  if (table.partitioned) {
+    ElMessage.info('MaxCompute 分区表请先在表工作台选择完整分区')
+    void openTableFromWorkspace(table)
+    return
+  }
   sql.value = `SELECT * FROM ${table.qualifiedName}`
   result.value = null
   workspaceDialogOpen.value = false
@@ -300,35 +386,225 @@ function openErFromWorkspace(schemaName?: string) {
   erDialogOpen.value = true
 }
 
-async function loadTableInspection() {
-  const schema = tableForm.value.schema.trim()
-  const table = tableForm.value.table.trim()
-  if (!source.value || !schema || !table || tableInspectionLoading.value) return
-  const version = requestGate.begin(TABLE_INSPECTION_KEY)
-  tableInspectionLoading.value = true
-  tableInspectionError.value = null
+async function loadTableInspection(tabId: string) {
+  const tab = findTableTab(tabId)
+  if (!source.value || !tab || tab.loading) return
+  const sourceSnapshot = source.value
+  const requestKey = tableRequestKey(tabId)
+  const version = requestGate.begin(requestKey)
+  tab.loading = true
+  tab.error = null
+  tab.previewError = null
   try {
     const inspection = await entApi.inspectTable(
-      source.value, schema, table,
-      tableForm.value.objectType || 'TABLE', 200)
-    if (requestGate.isCurrent(TABLE_INSPECTION_KEY, version)) {
-      tableInspection.value = {
+      sourceSnapshot,
+      tab.table.namespace || tab.table.schema,
+      tab.table.name,
+      tab.table.type || 'TABLE',
+      100,
+      { includePreview: false },
+    )
+    if (requestGate.isCurrent(requestKey, version)
+      && sourceSnapshot === source.value) {
+      const current = findTableTab(tabId)
+      if (!current) return
+      current.inspection = {
         ...inspection,
-        schema: tableForm.value.displaySchema
-          || inspection.schema,
+        schema: current.table.schema || inspection.schema,
+        remarks: inspection.remarks ?? inspection.tableComment ?? current.table.remarks ?? null,
+      }
+      current.selectedPartition = null
+      current.partitionPage = null
+      if (inspection.partitioned) {
+        void loadTablePartitions(tabId, { filter: '', offset: 0, limit: 50 })
       }
     }
   } catch (error: any) {
-    if (requestGate.isCurrent(TABLE_INSPECTION_KEY, version)) {
-      tableInspection.value = null
-      tableInspectionError.value = error.message || '表工作台加载失败'
+    if (requestGate.isCurrent(requestKey, version)) {
+      const current = findTableTab(tabId)
+      if (current) {
+        current.inspection = null
+        current.error = error.message || '表工作台加载失败'
+      }
     }
   } finally {
-    if (requestGate.isCurrent(TABLE_INSPECTION_KEY, version)) {
-      tableInspectionLoading.value = false
+    if (requestGate.isCurrent(requestKey, version)) {
+      const current = findTableTab(tabId)
+      if (current) current.loading = false
     }
   }
 }
+
+async function loadTablePartitions(
+  tabId: string,
+  request: { filter: string; offset: number; limit: number },
+) {
+  const tab = findTableTab(tabId)
+  if (!source.value || !tab || tab.partitionLoading) return
+  const requestKey = partitionRequestKey(tabId)
+  const version = requestGate.begin(requestKey)
+  const sourceSnapshot = source.value
+  tab.partitionLoading = true
+  tab.partitionError = null
+  tab.partitionFilter = request.filter
+  try {
+    const page = await entApi.tablePartitions(
+      sourceSnapshot,
+      tab.table.namespace || tab.table.schema,
+      tab.table.name,
+      request.offset,
+      request.limit,
+      request.filter,
+    )
+    if (requestGate.isCurrent(requestKey, version)
+      && sourceSnapshot === source.value) {
+      const current = findTableTab(tabId)
+      if (current) current.partitionPage = page
+    }
+  } catch (error: any) {
+    if (requestGate.isCurrent(requestKey, version)) {
+      const current = findTableTab(tabId)
+      if (current) current.partitionError = error.message || '分区元数据加载失败'
+    }
+  } finally {
+    if (requestGate.isCurrent(requestKey, version)) {
+      const current = findTableTab(tabId)
+      if (current) current.partitionLoading = false
+    }
+  }
+}
+
+function selectTablePartition(tabId: string, partition: string) {
+  const tab = findTableTab(tabId)
+  if (!tab || !partition) return
+  tab.selectedPartition = partition
+  tab.previewError = null
+  if (tab.inspection) {
+    tab.inspection = {
+      ...tab.inspection,
+      preview: null,
+      previewSql: '',
+      selectedPartition: partition,
+      errors: { ...tab.inspection.errors, preview: '' },
+    }
+  }
+}
+
+async function loadTablePreview(tabId: string) {
+  const tab = findTableTab(tabId)
+  if (!source.value || !tab || tab.previewLoading) return
+  if (tab.inspection?.previewRequiresPartition
+    && (!tab.inspection.partitioned || !tab.selectedPartition)) {
+    tab.previewError = tab.inspection.partitioned
+      ? '必须先选择完整分区，已阻止无分区预览'
+      : '无法确认分区状态，已阻止数据预览'
+    return
+  }
+  const requestKey = previewRequestKey(tabId)
+  const version = requestGate.begin(requestKey)
+  const sourceSnapshot = source.value
+  const partitionSnapshot = tab.selectedPartition
+  tab.previewLoading = true
+  tab.previewError = null
+  try {
+    const inspection = await entApi.inspectTable(
+      sourceSnapshot,
+      tab.table.namespace || tab.table.schema,
+      tab.table.name,
+      tab.table.type || 'TABLE',
+      100,
+      { includePreview: true, partitionSpec: partitionSnapshot },
+    )
+    if (requestGate.isCurrent(requestKey, version)
+      && sourceSnapshot === source.value) {
+      const current = findTableTab(tabId)
+      if (!current || current.selectedPartition !== partitionSnapshot) return
+      current.inspection = {
+        ...(current.inspection || inspection),
+        preview: inspection.preview,
+        previewSql: inspection.previewSql,
+        selectedPartition: partitionSnapshot,
+        errors: inspection.errors,
+      }
+      current.previewError = inspection.errors?.preview || null
+    }
+  } catch (error: any) {
+    if (requestGate.isCurrent(requestKey, version)) {
+      const current = findTableTab(tabId)
+      if (current) current.previewError = error.message || '数据预览加载失败'
+    }
+  } finally {
+    if (requestGate.isCurrent(requestKey, version)) {
+      const current = findTableTab(tabId)
+      if (current) current.previewLoading = false
+    }
+  }
+}
+
+function refreshActiveTable() {
+  if (activeTableTabId.value) void loadTableInspection(activeTableTabId.value)
+}
+
+function loadActiveTablePartitions(request: { filter: string; offset: number; limit: number }) {
+  if (activeTableTabId.value) void loadTablePartitions(activeTableTabId.value, request)
+}
+
+function selectActiveTablePartition(partition: string) {
+  if (activeTableTabId.value) selectTablePartition(activeTableTabId.value, partition)
+}
+
+function loadActiveTablePreview() {
+  if (activeTableTabId.value) void loadTablePreview(activeTableTabId.value)
+}
+
+function activateTableTab(tabId: string, focus = false) {
+  if (!findTableTab(tabId)) return
+  activeTableTabId.value = tabId
+  if (focus) {
+    void nextTick(() => {
+      document.querySelector<HTMLElement>(
+        `.table-workspace-tab.selected [role="tab"]`,
+      )?.focus()
+    })
+  }
+}
+
+function closeTableTab(tabId: string) {
+  const index = tableTabs.value.findIndex(tab => tab.id === tabId)
+  if (index < 0) return
+  requestGate.invalidate(tableRequestKey(tabId))
+  requestGate.invalidate(partitionRequestKey(tabId))
+  requestGate.invalidate(previewRequestKey(tabId))
+  tableTabs.value.splice(index, 1)
+  if (activeTableTabId.value === tabId) {
+    activeTableTabId.value = tableTabs.value[Math.min(index, tableTabs.value.length - 1)]?.id || null
+  }
+  if (!tableTabs.value.length) tableDialogOpen.value = false
+}
+
+function onTableTabKeydown(event: KeyboardEvent, index: number) {
+  const nextIndex = resolveTabNavigationIndex(
+    event.key, index, tableTabs.value.length,
+  )
+  if (nextIndex === null) return
+  event.preventDefault()
+  const next = tableTabs.value[nextIndex]
+  if (next) activateTableTab(next.id, true)
+}
+
+function findTableTab(tabId: string) {
+  return tableTabs.value.find(tab => tab.id === tabId) || null
+}
+
+function enterpriseTableKey(table: EnterpriseMetadataTable) {
+  return normalizedTableIdentity(
+    source.value, table.namespace || table.schema, table.name,
+  )
+}
+
+function tableRequestKey(tabId: string) { return `${TABLE_INSPECTION_KEY}:${tabId}` }
+function partitionRequestKey(tabId: string) { return `${TABLE_INSPECTION_KEY}:partitions:${tabId}` }
+function previewRequestKey(tabId: string) { return `${TABLE_INSPECTION_KEY}:preview:${tabId}` }
 
 function applyInspectionSql(previewSql: string) {
   sql.value = previewSql
@@ -509,6 +785,55 @@ async function submitExportRequest() {
   flex-direction: column;
   gap: 10px;
 }
+.table-tab-strip {
+  display: flex;
+  min-height: 44px;
+  overflow-x: auto;
+  border: 1px solid var(--color-panel-border);
+  border-radius: 10px;
+  background: var(--color-panel-header);
+  scrollbar-width: thin;
+}
+.table-workspace-tab {
+  display: grid;
+  min-width: 180px;
+  max-width: 360px;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  align-items: stretch;
+  border-right: 1px solid var(--color-panel-border);
+  color: var(--color-text-muted);
+}
+.table-workspace-tab.selected {
+  background: var(--color-active);
+  color: var(--color-foreground);
+  box-shadow: inset 0 -3px var(--color-brand);
+}
+.table-workspace-tab > button {
+  min-height: 42px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.table-workspace-tab > button[role="tab"] {
+  min-width: 0;
+  padding: 0 8px 0 12px;
+  text-align: left;
+}
+.table-workspace-tab > button:focus-visible {
+  z-index: 1;
+  outline: 2px solid var(--color-brand);
+  outline-offset: -3px;
+}
+.table-tab-title {
+  display: block;
+  overflow: hidden;
+  font: 11px var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.table-tab-close { font-size: 18px; opacity: .62; }
+.table-tab-close:hover { background: var(--color-hover); opacity: 1; }
 .table-locator {
   display: grid;
   grid-template-columns: minmax(180px, .7fr) auto minmax(260px, 1.2fr) auto;

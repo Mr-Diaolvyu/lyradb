@@ -2,6 +2,7 @@ package io.github.lexaquila.lyradb.controller;
 
 import io.github.lexaquila.lyradb.model.dto.ColumnMetadata;
 import io.github.lexaquila.lyradb.model.dto.EnterpriseMetadataCatalog;
+import io.github.lexaquila.lyradb.model.dto.EnterprisePartitionPageView;
 import io.github.lexaquila.lyradb.model.dto.ErDiagram;
 import io.github.lexaquila.lyradb.model.dto.QueryResult;
 import io.github.lexaquila.lyradb.model.dto.TableInspection;
@@ -51,13 +52,39 @@ public class EnterpriseQueryController {
         String objectType = text(body.get("objectType"));
         int limit = body.get("limit") instanceof Number number
                 ? number.intValue() : 200;
+        boolean includePreview = body.get("includePreview") instanceof Boolean value
+                && value;
+        String partitionSpec = text(body.get("partitionSpec"));
         if (grantedSourceName.isBlank() || schema.isBlank()
                 || table.isBlank()) {
             throw new IllegalArgumentException(
                     "grantedSourceName、schema 和 table 必填");
         }
         return queryService.inspectTable(
-                grantedSourceName, schema, table, objectType, limit);
+                grantedSourceName, schema, table, objectType, limit,
+                includePreview,
+                partitionSpec.isBlank() ? null : partitionSpec);
+    }
+
+    @PostMapping("/table-partitions")
+    public EnterprisePartitionPageView tablePartitions(
+            @RequestBody Map<String, Object> body) throws Exception {
+        String grantedSourceName = text(body.get("grantedSourceName"));
+        String schema = text(body.get("schema"));
+        String table = text(body.get("table"));
+        int offset = body.get("offset") instanceof Number number
+                ? number.intValue() : 0;
+        int limit = body.get("limit") instanceof Number number
+                ? number.intValue() : 50;
+        String filter = text(body.get("filter"));
+        if (grantedSourceName.isBlank() || schema.isBlank()
+                || table.isBlank()) {
+            throw new IllegalArgumentException(
+                    "grantedSourceName、schema 和 table 必填");
+        }
+        return queryService.listTablePartitions(
+                grantedSourceName, schema, table,
+                offset, limit, filter);
     }
 
     @GetMapping("/metadata/catalog")

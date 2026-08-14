@@ -1,8 +1,10 @@
 package io.github.lexaquila.lyradb.driver;
 
 import io.github.lexaquila.lyradb.model.dto.ColumnMetadata;
+import io.github.lexaquila.lyradb.model.dto.PartitionMetadataPage;
 import io.github.lexaquila.lyradb.model.dto.QueryResult;
 import io.github.lexaquila.lyradb.model.dto.TableConstraintMetadata;
+import io.github.lexaquila.lyradb.model.dto.TableCommentMetadata;
 import io.github.lexaquila.lyradb.model.dto.TreeNode;
 import io.github.lexaquila.lyradb.model.entity.DriverCapability;
 import io.github.lexaquila.lyradb.model.entity.DriverInfo;
@@ -137,6 +139,43 @@ public interface DatabaseDriver {
     }
 
     /**
+     * 获取表注释及其元数据来源、完整性状态。
+     *
+     * <p>通用驱动无法区分“确实未设置”和“驱动未返回”，因此 null 默认标为
+     * UNAVAILABLE；能够区分的驱动应覆盖本方法。</p>
+     */
+    default TableCommentMetadata getTableCommentMetadata(
+            Object connection, String schemaName, String tableName)
+            throws Exception {
+        String remarks = getTableComment(connection, schemaName, tableName);
+        TableCommentMetadata metadata = new TableCommentMetadata();
+        metadata.setRemarks(remarks);
+        metadata.setMetadataSource("JDBC_METADATA");
+        metadata.setMetadataStatus(remarks == null ? "PARTIAL" : "COMPLETE");
+        metadata.setRemarksStatus(remarks == null ? "UNAVAILABLE" : "AVAILABLE");
+        metadata.setMetadataReason(remarks == null
+                ? "JDBC 元数据未返回表注释" : "JDBC 元数据已返回表注释");
+        return metadata;
+    }
+
+    /**
+     * 分页列出表分区。默认返回不支持状态，不进行任何数据扫描。
+     */
+    default PartitionMetadataPage listTablePartitions(
+            Object connection,
+            String schemaName,
+            String tableName,
+            int offset,
+            int limit) throws Exception {
+        PartitionMetadataPage page = new PartitionMetadataPage();
+        page.setSchema(schemaName);
+        page.setTable(tableName);
+        page.setOffset(Math.max(0, offset));
+        page.setLimit(Math.max(1, limit));
+        return page;
+    }
+
+    /**
      * 获取表的主键、外键与索引信息。
      *
      * <p>NoSQL 或不支持该能力的驱动默认返回空列表。</p>
@@ -156,6 +195,21 @@ public interface DatabaseDriver {
             Object connection, String schemaName, String tableName, int limit)
             throws Exception {
         throw new UnsupportedOperationException("当前驱动不支持表数据预览");
+    }
+
+    /**
+     * 为单个完整分区构建安全预览 SQL。
+     *
+     * <p>{@code partitionSpec} 必须来自 {@link #listTablePartitions} 返回值，
+     * 具体驱动负责解析、校验分区键并转义分区值。</p>
+     */
+    default String buildPartitionPreviewSql(
+            Object connection,
+            String schemaName,
+            String tableName,
+            String partitionSpec,
+            int limit) throws Exception {
+        throw new UnsupportedOperationException("当前驱动不支持分区数据预览");
     }
 
     /**

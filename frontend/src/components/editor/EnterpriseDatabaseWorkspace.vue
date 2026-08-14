@@ -112,11 +112,14 @@
               <el-icon><Grid /></el-icon>
             </span>
             <span class="table-copy">
-              <strong>{{ table.name }}</strong>
-              <small>{{ table.schema }}</small>
+              <strong :title="table.name">{{ table.name }}</strong>
+              <small :title="table.schema">{{ table.schema }}</small>
             </span>
-            <span v-if="table.remarks" class="table-remarks">
-              {{ table.remarks }}
+            <span
+              :class="['table-remarks', commentStateClass(table)]"
+              :title="commentTooltip(table)"
+            >
+              {{ commentLabel(table) }}
             </span>
             <span
               v-if="aiReasons.get(table.qualifiedName.toLocaleLowerCase())"
@@ -125,7 +128,9 @@
             >
               {{ aiReasons.get(table.qualifiedName.toLocaleLowerCase())?.reason }}
             </span>
-            <span class="table-type">{{ table.type }}</span>
+            <span class="table-type">
+              {{ table.partitioned ? '分区表' : table.type }}
+            </span>
           </button>
         </div>
         <el-empty
@@ -138,7 +143,7 @@
       <aside class="object-panel">
         <template v-if="selected">
           <div class="panel-kicker">SELECTED OBJECT</div>
-          <h3>{{ selected.name }}</h3>
+          <h3 :title="selected.name">{{ selected.name }}</h3>
           <dl>
             <dt>逻辑数据源</dt>
             <dd>{{ catalog?.grantedSourceName }}</dd>
@@ -148,14 +153,22 @@
             <dd>{{ selected.type }}</dd>
             <dt>完整名称</dt>
             <dd><code>{{ selected.qualifiedName }}</code></dd>
-            <dt v-if="selected.remarks">注释</dt>
-            <dd v-if="selected.remarks">{{ selected.remarks }}</dd>
+            <dt>中文注释</dt>
+            <dd :class="['selected-comment', commentStateClass(selected)]">
+              {{ commentLabel(selected) }}
+            </dd>
+            <dt>元数据来源</dt>
+            <dd>{{ metadataSourceLabel(selected.metadataSource) }}</dd>
+            <template v-if="selected.metadataReason">
+              <dt>采集说明</dt>
+              <dd>{{ selected.metadataReason }}</dd>
+            </template>
           </dl>
           <el-button type="primary" @click="$emit('open-table', selected)">
             打开表工作台
           </el-button>
-          <el-button @click="$emit('open-sql', selected)">
-            在 SQL 中查询
+          <el-button @click="openSelectedSql">
+            {{ selected.partitioned ? '选择分区后生成 SQL' : '在 SQL 中查询' }}
           </el-button>
         </template>
         <el-empty v-else description="单击对象查看信息，双击打开" :image-size="58" />
@@ -185,7 +198,7 @@ const props = defineProps<{
   error?: string | null
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   refresh: []
   'open-table': [table: EnterpriseMetadataTable]
   'open-sql': [table: EnterpriseMetadataTable]
@@ -268,6 +281,43 @@ async function runAiSearch() {
 function clearAiSearch() {
   aiRecommendations.value = []
   aiMessage.value = ''
+}
+
+function openSelectedSql() {
+  if (!selected.value) return
+  if (selected.value.partitioned) {
+    emit('open-table', selected.value)
+    return
+  }
+  emit('open-sql', selected.value)
+}
+
+function commentLabel(table: EnterpriseMetadataTable): string {
+  if (table.remarks?.trim()) return table.remarks.trim()
+  return table.remarksStatus?.toLocaleUpperCase() === 'EMPTY'
+    ? '数据库中未填写注释'
+    : '注释不可用'
+}
+
+function commentStateClass(table: EnterpriseMetadataTable): string {
+  if (table.remarks?.trim()) return 'available'
+  return table.remarksStatus?.toLocaleUpperCase() === 'EMPTY'
+    ? 'empty' : 'unavailable'
+}
+
+function commentTooltip(table: EnterpriseMetadataTable): string {
+  return [commentLabel(table), table.metadataReason]
+    .filter(Boolean).join(' · ')
+}
+
+function metadataSourceLabel(source?: string | null): string {
+  return ({
+    TENANT_INFORMATION_SCHEMA: '租户级 INFORMATION_SCHEMA',
+    PROJECT_INFORMATION_SCHEMA: 'Project INFORMATION_SCHEMA',
+    MAXCOMPUTE_JAVA_SDK: 'MaxCompute Java SDK',
+    SHOW_TABLES: 'SHOW TABLES 降级目录',
+    CATALOG: '数据库目录元数据',
+  } as Record<string, string>)[source || ''] || source || '来源不可用'
 }
 </script>
 
@@ -421,6 +471,10 @@ function clearAiSearch() {
 .table-remarks,
 .table-type { color: var(--color-text-muted); font-size: 9px; }
 .ai-reason { color: var(--color-brand); font-size: 9px; }
+.table-remarks.empty { font-style: italic; }
+.table-remarks.unavailable,
+.selected-comment.unavailable { color: var(--color-warning); }
+.selected-comment.empty { color: var(--color-text-muted); font-style: italic; }
 .table-type { padding: 2px 5px; border: 1px solid var(--color-border); border-radius: 4px; }
 
 .object-panel h3 { overflow-wrap: anywhere; font: 650 15px var(--font-mono); }

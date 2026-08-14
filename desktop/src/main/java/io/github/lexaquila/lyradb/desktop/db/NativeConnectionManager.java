@@ -7,9 +7,11 @@ import io.github.lexaquila.lyradb.driver.DatabaseDriver;
 import io.github.lexaquila.lyradb.driver.DriverFactory;
 import io.github.lexaquila.lyradb.driver.StatementRegistry;
 import io.github.lexaquila.lyradb.model.dto.ColumnMetadata;
+import io.github.lexaquila.lyradb.model.dto.PartitionMetadataPage;
 import io.github.lexaquila.lyradb.model.dto.QueryResult;
 import io.github.lexaquila.lyradb.model.dto.SqlReviewFinding;
 import io.github.lexaquila.lyradb.model.dto.TableConstraintMetadata;
+import io.github.lexaquila.lyradb.model.dto.TableCommentMetadata;
 import io.github.lexaquila.lyradb.model.dto.TreeNode;
 import io.github.lexaquila.lyradb.service.SqlParseUtil;
 import io.github.lexaquila.lyradb.service.SqlReviewService;
@@ -190,6 +192,29 @@ public final class NativeConnectionManager implements AutoCloseable {
                 session.connection, schemaName, tableName));
     }
 
+    public TableCommentMetadata tableCommentMetadata(
+            String connectionId,
+            String schemaName,
+            String tableName) throws Exception {
+        ActiveSession session = requireActive(connectionId);
+        return withLock(session, () -> session.driver.getTableCommentMetadata(
+                session.connection, schemaName, tableName));
+    }
+
+    public PartitionMetadataPage partitions(
+            String connectionId,
+            String schemaName,
+            String tableName,
+            int offset,
+            int requestedLimit) throws Exception {
+        ActiveSession session = requireActive(connectionId);
+        int safeOffset = Math.max(0, offset);
+        int limit = Math.max(1, Math.min(requestedLimit, 200));
+        return withLock(session, () -> session.driver.listTablePartitions(
+                session.connection, schemaName, tableName,
+                safeOffset, limit));
+    }
+
     public List<TableConstraintMetadata> constraints(String connectionId,
             String schemaName, String tableName) throws Exception {
         ActiveSession session = requireActive(connectionId);
@@ -215,6 +240,38 @@ public final class NativeConnectionManager implements AutoCloseable {
                 requestedLimit, properties.getMaxQueryRows()));
         return withLock(session, () -> session.driver.previewTable(
                 session.connection, schemaName, tableName, limit));
+    }
+
+    public String partitionPreviewSql(
+            String connectionId,
+            String schemaName,
+            String tableName,
+            String partitionSpec,
+            int requestedLimit) throws Exception {
+        ActiveSession session = requireActive(connectionId);
+        int limit = Math.max(1, Math.min(
+                requestedLimit, properties.getMaxQueryRows()));
+        return withLock(session, () -> session.driver.buildPartitionPreviewSql(
+                session.connection, schemaName, tableName,
+                partitionSpec, limit));
+    }
+
+    public QueryResult previewPartition(
+            String connectionId,
+            String schemaName,
+            String tableName,
+            String partitionSpec,
+            int requestedLimit) throws Exception {
+        ActiveSession session = requireActive(connectionId);
+        int limit = Math.max(1, Math.min(
+                requestedLimit, properties.getMaxQueryRows()));
+        return withLock(session, () -> {
+            String sql = session.driver.buildPartitionPreviewSql(
+                    session.connection, schemaName, tableName,
+                    partitionSpec, limit);
+            return session.driver.executeQuery(
+                    session.connection, sql, limit);
+        });
     }
 
     public String ddl(String connectionId,

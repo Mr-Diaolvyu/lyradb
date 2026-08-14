@@ -4,8 +4,18 @@
       :inspection="tab.inspection"
       :loading="loading"
       :error="tab.error"
+      :partition-page="tab.partitionPage"
+      :partition-loading="tab.partitionLoading"
+      :partition-error="tab.partitionError"
+      :partition-filter="tab.partitionFilter"
+      :selected-partition="tab.selectedPartition"
+      :preview-loading="tab.previewLoading"
+      :preview-error="tab.previewError"
       @refresh="refreshInspection"
       @open-sql="openPreviewSql"
+      @load-partitions="request => editorStore.loadTablePartitions(tab.id, request)"
+      @select-partition="partition => editorStore.selectTablePartition(tab.id, partition)"
+      @load-preview="editorStore.loadTablePreview(tab.id)"
     />
 
     <template v-if="false">

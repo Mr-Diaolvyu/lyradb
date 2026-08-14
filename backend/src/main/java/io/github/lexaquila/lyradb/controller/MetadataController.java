@@ -1,6 +1,7 @@
 package io.github.lexaquila.lyradb.controller;
 
 import io.github.lexaquila.lyradb.model.dto.ColumnMetadata;
+import io.github.lexaquila.lyradb.model.dto.EnterprisePartitionPageView;
 import io.github.lexaquila.lyradb.model.dto.TableInspection;
 import io.github.lexaquila.lyradb.model.dto.TreeNode;
 import io.github.lexaquila.lyradb.model.entity.DriverCapability;
@@ -97,7 +98,8 @@ public class MetadataController {
     }
 
     /**
-     * 获取表工作台快照。预览最多 200 行，各区域可独立降级。
+     * 获取表工作台快照。数据预览默认不执行，显式请求也最多 200 行；
+     * MaxCompute 分区表必须提供服务端返回的完整 partitionSpec。
      */
     @GetMapping("/{connectionId}/inspect")
     public ResponseEntity<TableInspection> inspectTable(
@@ -105,15 +107,41 @@ public class MetadataController {
             @RequestParam(value = "schema", required = false) String schema,
             @RequestParam("table") String table,
             @RequestParam(value = "type", defaultValue = "TABLE") String type,
-            @RequestParam(value = "limit", defaultValue = "200") int limit) {
+            @RequestParam(value = "limit", defaultValue = "200") int limit,
+            @RequestParam(value = "includePreview", defaultValue = "false")
+            boolean includePreview,
+            @RequestParam(value = "partitionSpec", required = false)
+            String partitionSpec) {
         try {
             return ResponseEntity.ok(metadataService.inspectTable(
-                    connectionId, schema, table, type, limit));
+                    connectionId, schema, table, type, limit,
+                    includePreview, partitionSpec));
         } catch (IllegalArgumentException exception) {
             log.warn("表工作台参数无效: {}", exception.getMessage());
             return ResponseEntity.badRequest().build();
         } catch (Exception exception) {
             log.error("加载表工作台失败: {} - {}",
+                    table, exception.getMessage(), exception);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @GetMapping("/{connectionId}/partitions")
+    public ResponseEntity<EnterprisePartitionPageView> tablePartitions(
+            @PathVariable String connectionId,
+            @RequestParam(value = "schema", required = false) String schema,
+            @RequestParam("table") String table,
+            @RequestParam(value = "offset", defaultValue = "0") int offset,
+            @RequestParam(value = "limit", defaultValue = "50") int limit,
+            @RequestParam(value = "filter", defaultValue = "") String filter) {
+        try {
+            return ResponseEntity.ok(metadataService.listTablePartitions(
+                    connectionId, schema, table, offset, limit, filter));
+        } catch (IllegalArgumentException exception) {
+            log.warn("分区浏览参数无效: {}", exception.getMessage());
+            return ResponseEntity.badRequest().build();
+        } catch (Exception exception) {
+            log.error("加载分区失败: {} - {}",
                     table, exception.getMessage(), exception);
             return ResponseEntity.internalServerError().build();
         }

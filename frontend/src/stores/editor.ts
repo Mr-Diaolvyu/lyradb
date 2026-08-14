@@ -6,13 +6,14 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { queryApi, metadataApi } from '@/api/metadata'
-import type { QueryResult, ColumnMetadata, SqlReviewFinding, TableInspection } from '@/types/metadata'
+import type { QueryResult, ColumnMetadata, SqlReviewFinding, TableInspection, TablePartitionPage } from '@/types/metadata'
 import type { BackgroundTask } from '@/types/task'
 import { useUiStore } from '@/stores/ui'
 import { useTaskStore } from '@/stores/tasks'
 import { useConnectionStore } from '@/stores/connection'
 import { LatestRequestGate } from '@/utils/requestControl'
 import { buildReviewFindingsMessage } from '@/utils/reviewFindings'
+import { normalizedTableIdentity } from '@/utils/workspaceTabs'
 
 /** Tab 类型 */
 export type TabType = 'sql' | 'table-detail'
@@ -47,6 +48,13 @@ export interface TableDetailTab extends TabBase {
     inspection: TableInspection | null
     loading: boolean
     error: string | null
+    partitionPage: TablePartitionPage | null
+    partitionLoading: boolean
+    partitionError: string | null
+    partitionFilter: string
+    selectedPartition: string | null
+    previewLoading: boolean
+    previewError: string | null
 }
 
 /** 联合 Tab 类型 */
@@ -99,11 +107,14 @@ export const useEditorStore = defineStore('editor', () => {
         objectType = 'TABLE',
     ): Promise<string> {
         // 检查是否已存在同表 Tab
+        const requestedIdentity = normalizedTableIdentity(
+            connectionId, schema, tableName,
+        )
         const existing = tabs.value.find(t =>
             t.type === 'table-detail' &&
-            t.connectionId === connectionId &&
-            t.tableName === tableName &&
-            t.schema === schema
+            normalizedTableIdentity(
+                t.connectionId, t.schema, t.tableName,
+            ) === requestedIdentity
         )
         if (existing) {
             activeTabId.value = existing.id
@@ -125,6 +136,13 @@ export const useEditorStore = defineStore('editor', () => {
             inspection: null,
             loading: true,
             error: null,
+            partitionPage: null,
+            partitionLoading: false,
+            partitionError: null,
+            partitionFilter: '',
+            selectedPartition: null,
+            previewLoading: false,
+            previewError: null,
         }
         tabs.value.push(tab)
         activeTabId.value = id
@@ -146,7 +164,8 @@ export const useEditorStore = defineStore('editor', () => {
                 tab.schema,
                 tab.tableName,
                 tab.objectType,
-                200,
+                100,
+                { includePreview: false },
             )
             if (!requestGate.isCurrent(id, version)) return
             const targetTab = tabs.value.find(t => t.id === id) as TableDetailTab | undefined
@@ -155,6 +174,14 @@ export const useEditorStore = defineStore('editor', () => {
                 targetTab.columns = inspection.columns
                 targetTab.ddl = inspection.ddl
                 targetTab.loading = false
+                targetTab.selectedPartition = null
+                targetTab.partitionPage = null
+                targetTab.previewError = null
+                if (inspection.partitioned) {
+                    void loadTablePartitions(id, {
+                        filter: '', offset: 0, limit: 50,
+                    })
+                }
             }
         } catch (e: any) {
             if (!requestGate.isCurrent(id, version)) return
@@ -166,9 +193,114 @@ export const useEditorStore = defineStore('editor', () => {
         }
     }
 
+    async function loadTablePartitions(
+        id: string,
+        request: { filter: string; offset: number; limit: number },
+    ): Promise<void> {
+        const tab = tabs.value.find(t => t.id === id)
+        if (!tab || tab.type !== 'table-detail' || tab.partitionLoading) return
+        const requestKey = `${id}:partitions`
+        const version = requestGate.begin(requestKey)
+        tab.partitionLoading = true
+        tab.partitionError = null
+        tab.partitionFilter = request.filter
+        try {
+            const page = await metadataApi.getTablePartitions(
+                tab.connectionId,
+                tab.schema,
+                tab.tableName,
+                request.offset,
+                request.limit,
+                request.filter,
+            )
+            if (!requestGate.isCurrent(requestKey, version)) return
+            const target = tabs.value.find(t => t.id === id)
+            if (target?.type === 'table-detail') target.partitionPage = page
+        } catch (e: any) {
+            if (!requestGate.isCurrent(requestKey, version)) return
+            const target = tabs.value.find(t => t.id === id)
+            if (target?.type === 'table-detail') {
+                target.partitionError = e.message || '分区元数据加载失败'
+            }
+        } finally {
+            if (requestGate.isCurrent(requestKey, version)) {
+                const target = tabs.value.find(t => t.id === id)
+                if (target?.type === 'table-detail') target.partitionLoading = false
+            }
+        }
+    }
+
+    function selectTablePartition(id: string, partition: string) {
+        const tab = tabs.value.find(t => t.id === id)
+        if (!tab || tab.type !== 'table-detail' || !partition) return
+        tab.selectedPartition = partition
+        tab.previewError = null
+        if (tab.inspection) {
+            tab.inspection = {
+                ...tab.inspection,
+                preview: null,
+                previewSql: '',
+                selectedPartition: partition,
+                errors: { ...tab.inspection.errors, preview: '' },
+            }
+        }
+    }
+
+    async function loadTablePreview(id: string): Promise<void> {
+        const tab = tabs.value.find(t => t.id === id)
+        if (!tab || tab.type !== 'table-detail' || tab.previewLoading) return
+        if (tab.inspection?.previewRequiresPartition
+            && (!tab.inspection.partitioned || !tab.selectedPartition)) {
+            tab.previewError = tab.inspection.partitioned
+                ? '必须先选择完整分区，已阻止无分区预览'
+                : '无法确认分区状态，已阻止数据预览'
+            return
+        }
+        const requestKey = `${id}:preview`
+        const version = requestGate.begin(requestKey)
+        const partitionSnapshot = tab.selectedPartition
+        tab.previewLoading = true
+        tab.previewError = null
+        try {
+            const inspection = await metadataApi.inspectTable(
+                tab.connectionId,
+                tab.schema,
+                tab.tableName,
+                tab.objectType,
+                100,
+                { includePreview: true, partitionSpec: partitionSnapshot },
+            )
+            if (!requestGate.isCurrent(requestKey, version)) return
+            const target = tabs.value.find(t => t.id === id)
+            if (target?.type !== 'table-detail'
+                || target.selectedPartition !== partitionSnapshot) return
+            target.inspection = {
+                ...(target.inspection || inspection),
+                preview: inspection.preview,
+                previewSql: inspection.previewSql,
+                selectedPartition: partitionSnapshot,
+                errors: inspection.errors,
+            }
+            target.previewError = inspection.errors?.preview || null
+        } catch (e: any) {
+            if (!requestGate.isCurrent(requestKey, version)) return
+            const target = tabs.value.find(t => t.id === id)
+            if (target?.type === 'table-detail') {
+                target.previewError = e.message || '数据预览加载失败'
+            }
+        } finally {
+            if (requestGate.isCurrent(requestKey, version)) {
+                const target = tabs.value.find(t => t.id === id)
+                if (target?.type === 'table-detail') target.previewLoading = false
+            }
+        }
+    }
+
     /** 关闭 Tab */
     function closeTab(id: string) {
         requestGate.invalidate(id)
+        requestGate.invalidate(`${id}:partitions`)
+        requestGate.invalidate(`${id}:preview`)
         const idx = tabs.value.findIndex(t => t.id === id)
         if (idx >= 0) {
             tabs.value.splice(idx, 1)
@@ -325,7 +457,9 @@ export const useEditorStore = defineStore('editor', () => {
 
     /** 设置活跃 Tab */
     function setActiveTab(id: string) {
-        activeTabId.value = id
+        if (tabs.value.some(tab => tab.id === id)) {
+            activeTabId.value = id
+        }
     }
 
     return {
@@ -337,6 +471,9 @@ export const useEditorStore = defineStore('editor', () => {
         createTab,
         createTableDetailTab,
         refreshTableDetailTab,
+        loadTablePartitions,
+        selectTablePartition,
+        loadTablePreview,
         closeTab,
         updateSql,
         executeSql,

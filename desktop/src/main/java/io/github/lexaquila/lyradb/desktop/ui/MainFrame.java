@@ -18,6 +18,7 @@ import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.JFrame;
 import javax.swing.Icon;
+import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JList;
@@ -180,6 +181,7 @@ public final class MainFrame extends JFrame {
         workspaces.setOpaque(false);
         workspaces.addTab("开始", new WelcomePanel(
                 this::newConnection, this::openAiSettings, this::openAiAssistant));
+        configureWorkspaceTabs();
 
         JPanel workspaceShell = UiKit.glass(new BorderLayout(), 16);
         workspaceShell.setBorder(BorderFactory.createEmptyBorder(1, 1, 2, 1));
@@ -1236,7 +1238,7 @@ public final class MainFrame extends JFrame {
                     schema,
                     table,
                     item.node.getType(),
-                    nodeComment(item.node),
+                    TableInspectorPanel.MetadataHint.fromNode(item.node),
                     this::status,
                     sql -> openWorkspace(item.connectionId, sql));
             tableWorkspaceByKey.put(key, existing);
@@ -1262,6 +1264,47 @@ public final class MainFrame extends JFrame {
                 () -> closeWorkspace(component)));
     }
 
+    private void configureWorkspaceTabs() {
+        workspaces.getAccessibleContext().setAccessibleName("工作区标签页");
+        workspaces.getInputMap(
+                        JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke(
+                        KeyEvent.VK_PAGE_DOWN,
+                        InputEvent.CTRL_DOWN_MASK), "next-workspace");
+        workspaces.getActionMap().put("next-workspace",
+                new javax.swing.AbstractAction() {
+                    @Override
+                    public void actionPerformed(
+                            java.awt.event.ActionEvent event) {
+                        selectRelativeWorkspace(1);
+                    }
+                });
+        workspaces.getInputMap(
+                        JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke(
+                        KeyEvent.VK_PAGE_UP,
+                        InputEvent.CTRL_DOWN_MASK), "previous-workspace");
+        workspaces.getActionMap().put("previous-workspace",
+                new javax.swing.AbstractAction() {
+                    @Override
+                    public void actionPerformed(
+                            java.awt.event.ActionEvent event) {
+                        selectRelativeWorkspace(-1);
+                    }
+                });
+    }
+
+    private void selectRelativeWorkspace(int direction) {
+        int count = workspaces.getTabCount();
+        if (count < 2) {
+            return;
+        }
+        int selected = Math.max(0, workspaces.getSelectedIndex());
+        workspaces.setSelectedIndex(
+                Math.floorMod(selected + direction, count));
+        workspaces.requestFocusInWindow();
+    }
+
     private void closeCurrentWorkspace() {
         closeWorkspace(workspaces.getSelectedComponent());
     }
@@ -1285,9 +1328,36 @@ public final class MainFrame extends JFrame {
             databaseWorkspaceByConnection.entrySet().removeIf(
                     entry -> entry.getValue() == component);
         }
+        Component nextSelection = selectionAfterClose(
+                workspaces, component);
+        Component tabHeader = workspaces.getTabComponentAt(index);
+        if (tabHeader instanceof ClosableTabHeader closableHeader) {
+            closableHeader.disposeHeader();
+        }
         String title = workspaces.getTitleAt(index);
         workspaces.remove(component);
+        if (nextSelection != null
+                && workspaces.indexOfComponent(nextSelection) >= 0) {
+            workspaces.setSelectedComponent(nextSelection);
+        }
         status("已关闭标签页：" + title);
+    }
+
+    static Component selectionAfterClose(
+            JTabbedPane tabs, Component closing) {
+        int index = tabs == null || closing == null
+                ? -1 : tabs.indexOfComponent(closing);
+        if (index < 0) {
+            return tabs == null ? null : tabs.getSelectedComponent();
+        }
+        Component selected = tabs.getSelectedComponent();
+        if (selected != closing) {
+            return selected;
+        }
+        if (index + 1 < tabs.getTabCount()) {
+            return tabs.getComponentAt(index + 1);
+        }
+        return index > 0 ? tabs.getComponentAt(index - 1) : null;
     }
 
     private void refreshSelected() {
@@ -1368,19 +1438,6 @@ public final class MainFrame extends JFrame {
         }
         return String.join("/",
                 java.util.Arrays.copyOf(parts, parts.length - 1));
-    }
-
-    private static String nodeComment(TreeNode node) {
-        if (node == null || node.getProperties() == null) {
-            return null;
-        }
-        for (String key : List.of("remarks", "comment", "description")) {
-            Object value = node.getProperties().get(key);
-            if (value != null && !value.toString().isBlank()) {
-                return value.toString().trim();
-            }
-        }
-        return null;
     }
 
     private void connectAsync(String connectionId, Runnable after) {

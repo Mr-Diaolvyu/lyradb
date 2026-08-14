@@ -2,7 +2,7 @@
  * 企业治理 API（数据源/授权/查询/审批/审计/管理）
  */
 import apiClient from './index'
-import type { ColumnMetadata, ErDiagram, QueryResult, TableInspection } from '@/types/metadata'
+import type { ColumnMetadata, ErDiagram, QueryResult, TableInspection, TablePartitionPage } from '@/types/metadata'
 import type {
     AiAgentOrchestrationRequest,
     AiAgentOrchestrationView,
@@ -81,6 +81,11 @@ export interface EnterpriseMetadataTable {
     qualifiedName: string
     type: string
     remarks?: string | null
+    metadataSource?: string | null
+    metadataStatus?: string | null
+    metadataReason?: string | null
+    remarksStatus?: string | null
+    partitioned?: boolean | null
 }
 
 export interface EnterpriseMetadataCatalog {
@@ -91,6 +96,8 @@ export interface EnterpriseMetadataCatalog {
     truncated: boolean
     refreshedAt: number
 }
+
+export type EnterprisePartitionPage = TablePartitionPage
 
 export interface AiTableRecommendation {
     path: string
@@ -262,10 +269,32 @@ export const entApi = {
         table: string,
         objectType = 'TABLE',
         limit = 200,
+        options?: {
+            includePreview?: boolean
+            partitionSpec?: string | null
+        },
     ): Promise<TableInspection> {
         return apiClient.post('/ent/table-inspection', {
             grantedSourceName, schema, table, objectType,
             limit: Math.min(200, Math.max(1, limit)),
+            includePreview: options?.includePreview ?? false,
+            partitionSpec: options?.partitionSpec || null,
+        })
+    },
+
+    tablePartitions(
+        grantedSourceName: string,
+        schema: string,
+        table: string,
+        offset = 0,
+        limit = 50,
+        filter = '',
+    ): Promise<EnterprisePartitionPage> {
+        return apiClient.post('/ent/table-partitions', {
+            grantedSourceName, schema, table,
+            offset: Math.max(0, offset),
+            limit: Math.min(100, Math.max(1, limit)),
+            filter,
         })
     },
 

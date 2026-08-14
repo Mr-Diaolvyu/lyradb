@@ -233,6 +233,8 @@ final class DatabaseWorkspacePanel extends JPanel {
         objectTable.getColumnModel().getColumn(5).setPreferredWidth(360);
         objectTable.getColumnModel().getColumn(1)
                 .setCellRenderer(new TypeRenderer());
+        objectTable.getColumnModel().getColumn(3)
+                .setCellRenderer(new MetadataCommentRenderer());
         objectTable.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent event) {
@@ -678,6 +680,50 @@ final class DatabaseWorkspacePanel extends JPanel {
         return "";
     }
 
+    static String nodeCommentDisplay(TreeNode node) {
+        String comment = nodeComment(node);
+        if (!comment.isBlank()) {
+            return comment;
+        }
+        String remarksStatus = nodeProperty(node, "remarksStatus")
+                .toUpperCase(Locale.ROOT);
+        String reason = nodeProperty(node, "metadataReason");
+        if ("EMPTY".equals(remarksStatus)) {
+            return "未设置注释";
+        }
+        if ("UNAVAILABLE".equals(remarksStatus)) {
+            return reason.isBlank()
+                    ? "注释元数据不可用"
+                    : "注释元数据不可用 · " + reason;
+        }
+        if ("AVAILABLE".equals(remarksStatus)) {
+            return "注释状态异常：标记可用但内容为空";
+        }
+        if (!reason.isBlank()) {
+            return "注释未获取 · " + reason;
+        }
+        String status = nodeProperty(node, "metadataStatus");
+        String source = nodeProperty(node, "metadataSource");
+        if (!status.isBlank() && !source.isBlank()) {
+            return "注释未返回（" + source + " · " + status + "）";
+        }
+        if (!status.isBlank()) {
+            return "注释未返回（" + status + "）";
+        }
+        if (!source.isBlank()) {
+            return "注释未返回（" + source + "）";
+        }
+        return "注释尚未获取";
+    }
+
+    static String nodeProperty(TreeNode node, String key) {
+        if (node == null || node.getProperties() == null) {
+            return "";
+        }
+        Object value = node.getProperties().get(key);
+        return value == null ? "" : value.toString().trim();
+    }
+
     private static final class ObjectTableModel
             extends AbstractTableModel {
         private static final List<String> COLUMNS = List.of(
@@ -774,7 +820,7 @@ final class DatabaseWorkspacePanel extends JPanel {
                 case 1 -> object.node().getType();
                 case 2 -> object.namespace().isBlank()
                         ? "当前连接" : object.namespace();
-                case 3 -> nodeComment(object.node());
+                case 3 -> nodeCommentDisplay(object.node());
                 case 4 -> object.node().getPath();
                 case 5 -> recommendations.getOrDefault(
                         object.catalogEntry().key(),
@@ -825,6 +871,41 @@ final class DatabaseWorkspacePanel extends JPanel {
             label.setIcon(LyraIcons.treeNode(
                     type, Map.of(), 15));
             label.setFont(label.getFont().deriveFont(Font.BOLD, 11F));
+            return label;
+        }
+    }
+
+    private static final class MetadataCommentRenderer
+            extends DefaultTableCellRenderer {
+        @Override
+        public java.awt.Component getTableCellRendererComponent(
+                JTable table, Object value, boolean selected,
+                boolean focused, int row, int column) {
+            JLabel label = (JLabel) super.getTableCellRendererComponent(
+                    table, value, selected, focused, row, column);
+            int modelRow = table.convertRowIndexToModel(row);
+            ObjectTableModel tableModel = (ObjectTableModel) table.getModel();
+            TreeNode node = tableModel.objectAt(modelRow).node();
+            List<String> details = new ArrayList<>();
+            String source = nodeProperty(node, "metadataSource");
+            String status = nodeProperty(node, "metadataStatus");
+            String remarksStatus = nodeProperty(node, "remarksStatus");
+            String reason = nodeProperty(node, "metadataReason");
+            if (!source.isBlank()) {
+                details.add("来源：" + source);
+            }
+            if (!status.isBlank()) {
+                details.add("状态：" + status);
+            }
+            if (!remarksStatus.isBlank()) {
+                details.add("注释状态：" + remarksStatus);
+            }
+            if (!reason.isBlank()) {
+                details.add("说明：" + reason);
+            }
+            label.setToolTipText(details.isEmpty()
+                    ? String.valueOf(value)
+                    : String.join(" · ", details));
             return label;
         }
     }

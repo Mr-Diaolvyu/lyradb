@@ -2,19 +2,36 @@
   <div class="work-space">
     <!-- Tab栏 -->
     <div class="tab-bar" v-if="editorStore.tabs.length > 0">
-      <div class="tab-tabs">
+      <div class="tab-tabs" role="tablist" aria-label="工作区标签">
         <div
-          v-for="tab in editorStore.tabs"
+          v-for="(tab, index) in editorStore.tabs"
           :key="tab.id"
           class="tab-item"
           :class="{ active: tab.id === editorStore.activeTabId }"
-          @click="editorStore.setActiveTab(tab.id)"
         >
-          <span class="tab-icon" :class="tab.type === 'table-detail' ? 'tab-icon-table' : 'tab-icon-sql'">
-            {{ tab.type === 'table-detail' ? 'T' : 'S' }}
-          </span>
-          <span class="tab-title">{{ tab.title }}</span>
-          <el-icon class="tab-close" @click.stop="editorStore.closeTab(tab.id)">
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="tab.id === editorStore.activeTabId"
+            :tabindex="tab.id === editorStore.activeTabId ? 0 : -1"
+            :title="tab.title"
+            @click="activateTab(tab.id)"
+            @keydown="onTabKeydown($event, index)"
+          >
+            <span class="tab-icon" :class="tab.type === 'table-detail' ? 'tab-icon-table' : 'tab-icon-sql'">
+              {{ tab.type === 'table-detail' ? 'T' : 'S' }}
+            </span>
+            <span class="tab-title">{{ tab.title }}</span>
+          </button>
+          <el-icon
+            class="tab-close"
+            role="button"
+            tabindex="0"
+            :aria-label="`关闭 ${tab.title}`"
+            @click.stop="editorStore.closeTab(tab.id)"
+            @keydown.enter.stop="editorStore.closeTab(tab.id)"
+            @keydown.space.prevent.stop="editorStore.closeTab(tab.id)"
+          >
             <Close />
           </el-icon>
         </div>
@@ -31,6 +48,7 @@
         @drop="handleDrop"
       >
         <SqlEditor
+          :key="editorStore.activeTab.id"
           :model-value="(editorStore.activeTab as SqlTab).sql"
           :db-type="activeDbType"
           :connection-id="(editorStore.activeTab as SqlTab).connectionId"
@@ -42,7 +60,10 @@
 
       <!-- 表详情 Tab -->
       <div class="table-detail-area" v-else-if="editorStore.activeTab.type === 'table-detail'">
-        <TableDetailTabView :tab="editorStore.activeTab as TableDetailTab" />
+        <TableDetailTabView
+          :key="editorStore.activeTab.id"
+          :tab="editorStore.activeTab as TableDetailTab"
+        />
       </div>
     </template>
 
@@ -73,6 +94,7 @@ import TableDetailTabView from '@/components/editor/TableDetailTab.vue'
 import FilterBar from '@/components/editor/FilterBar.vue'
 import BottomPanel from '@/components/layout/BottomPanel.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import { resolveTabNavigationIndex } from '@/utils/workspaceTabs'
 
 const editorStore = useEditorStore()
 const connectionStore = useConnectionStore()
@@ -97,6 +119,25 @@ function explainSql() {
   if (editorStore.activeTabId) {
     editorStore.explainSql(editorStore.activeTabId)
   }
+}
+
+function activateTab(tabId: string, focus = false) {
+  editorStore.setActiveTab(tabId)
+  if (focus) {
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('.tab-item.active [role="tab"]')?.focus()
+    })
+  }
+}
+
+function onTabKeydown(event: KeyboardEvent, index: number) {
+  const nextIndex = resolveTabNavigationIndex(
+    event.key, index, editorStore.tabs.length,
+  )
+  if (nextIndex === null) return
+  event.preventDefault()
+  const next = editorStore.tabs[nextIndex]
+  if (next) activateTab(next.id, true)
 }
 
 function handleDrop(e: DragEvent) {
@@ -141,15 +182,34 @@ function handleDrop(e: DragEvent) {
 }
 
 .tab-item {
-  display: flex;
+  display: grid;
+  min-width: 160px;
+  max-width: 360px;
+  grid-template-columns: minmax(0, 1fr) 36px;
   align-items: center;
-  gap: var(--space-2);
   height: 100%;
-  padding: 0 var(--space-3);
-  cursor: pointer;
   border-right: 1px solid var(--color-border);
   transition: background var(--transition-fast);
   white-space: nowrap;
+}
+
+.tab-item > button[role="tab"] {
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tab-item > button[role="tab"]:focus-visible,
+.tab-close:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: -3px;
 }
 
 .tab-item:hover {
@@ -184,10 +244,18 @@ function handleDrop(e: DragEvent) {
 }
 
 .tab-title {
+  min-width: 0;
+  overflow: hidden;
   font-size: var(--text-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tab-close {
+  display: grid;
+  width: 36px;
+  height: 100%;
+  place-items: center;
   cursor: pointer;
   font-size: 12px;
   color: var(--color-text-muted);

@@ -15,6 +15,16 @@ public class TableInspection {
     private String schema;
     private String table;
     private String objectType;
+    private String dbType = "";
+    private String tableComment;
+    private String metadataSource = "UNKNOWN";
+    private String metadataStatus = "PARTIAL";
+    private String metadataReason = "";
+    private String remarksStatus = "UNAVAILABLE";
+    private boolean partitioned;
+    private List<String> partitionColumns = new ArrayList<>();
+    private boolean previewRequiresPartition;
+    private String selectedPartition = "";
     private List<ColumnMetadata> columns = new ArrayList<>();
     private List<TableConstraintMetadata> constraints = new ArrayList<>();
     private QueryResult preview;
@@ -44,6 +54,89 @@ public class TableInspection {
 
     public void setObjectType(String objectType) {
         this.objectType = objectType;
+    }
+
+    public String getDbType() {
+        return dbType;
+    }
+
+    public void setDbType(String dbType) {
+        this.dbType = dbType == null ? "" : dbType;
+    }
+
+    public String getTableComment() {
+        return tableComment;
+    }
+
+    public void setTableComment(String tableComment) {
+        this.tableComment = tableComment == null || tableComment.isBlank()
+                ? null : tableComment.trim();
+    }
+
+    public String getMetadataSource() {
+        return metadataSource;
+    }
+
+    public void setMetadataSource(String metadataSource) {
+        this.metadataSource = metadataSource == null ? "" : metadataSource;
+    }
+
+    public String getMetadataStatus() {
+        return metadataStatus;
+    }
+
+    public void setMetadataStatus(String metadataStatus) {
+        this.metadataStatus = metadataStatus == null ? "" : metadataStatus;
+    }
+
+    public String getMetadataReason() {
+        return metadataReason;
+    }
+
+    public void setMetadataReason(String metadataReason) {
+        this.metadataReason = metadataReason == null ? "" : metadataReason;
+    }
+
+    public String getRemarksStatus() {
+        return remarksStatus;
+    }
+
+    public void setRemarksStatus(String remarksStatus) {
+        this.remarksStatus = remarksStatus == null ? "" : remarksStatus;
+    }
+
+    public boolean isPartitioned() {
+        return partitioned;
+    }
+
+    public void setPartitioned(boolean partitioned) {
+        this.partitioned = partitioned;
+    }
+
+    public List<String> getPartitionColumns() {
+        return partitionColumns;
+    }
+
+    public void setPartitionColumns(List<String> partitionColumns) {
+        this.partitionColumns = partitionColumns == null
+                ? new ArrayList<>() : new ArrayList<>(partitionColumns);
+    }
+
+    public boolean isPreviewRequiresPartition() {
+        return previewRequiresPartition;
+    }
+
+    public void setPreviewRequiresPartition(boolean previewRequiresPartition) {
+        this.previewRequiresPartition = previewRequiresPartition;
+    }
+
+    public String getSelectedPartition() {
+        return selectedPartition;
+    }
+
+    public void setSelectedPartition(String selectedPartition) {
+        this.selectedPartition = selectedPartition == null
+                ? "" : selectedPartition;
     }
 
     public List<ColumnMetadata> getColumns() {

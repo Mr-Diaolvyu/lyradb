@@ -1,7 +1,10 @@
 package io.github.lexaquila.lyradb.service;
 
-import io.github.lexaquila.lyradb.driver.DatabaseDriver;
 import io.github.lexaquila.lyradb.model.dto.ColumnMetadata;
+import io.github.lexaquila.lyradb.model.dto.EnterprisePartitionPageView;
+import io.github.lexaquila.lyradb.model.dto.PartitionMetadata;
+import io.github.lexaquila.lyradb.model.dto.PartitionMetadataPage;
+import io.github.lexaquila.lyradb.model.dto.TableCommentMetadata;
 import io.github.lexaquila.lyradb.model.dto.TableInspection;
 import io.github.lexaquila.lyradb.model.dto.TreeNode;
 import org.slf4j.Logger;
@@ -10,6 +13,8 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -30,6 +35,8 @@ import java.util.stream.Collectors;
 public class MetadataService {
 
     private static final Logger log = LoggerFactory.getLogger(MetadataService.class);
+    private static final int MAX_PARTITION_PAGE_SIZE = 100;
+    private static final int MAX_FILTERED_PARTITION_SCAN = 10_000;
 
     private final ConnectionService connectionService;
 
@@ -96,6 +103,18 @@ public class MetadataService {
             String tableName,
             String objectType,
             int requestedLimit) throws Exception {
+        return inspectTable(connectionId, schemaName, tableName,
+                objectType, requestedLimit, true, null);
+    }
+
+    public TableInspection inspectTable(
+            String connectionId,
+            String schemaName,
+            String tableName,
+            String objectType,
+            int requestedLimit,
+            boolean includePreview,
+            String partitionSpec) throws Exception {
         if (tableName == null || tableName.isBlank()) {
             throw new IllegalArgumentException("table 不能为空");
         }
@@ -108,16 +127,47 @@ public class MetadataService {
         inspection.setObjectType(
                 objectType == null || objectType.isBlank()
                         ? "TABLE" : objectType.toUpperCase());
+        String dbType = active.driver.getDriverInfo() == null
+                ? "" : active.driver.getDriverInfo().getDbType();
+        inspection.setDbType(dbType);
+        boolean maxCompute = "MAXCOMPUTE".equalsIgnoreCase(dbType);
+        boolean partitionMetadataFailed = false;
 
         log.debug("加载表工作台: connectionId={}, schema={}, table={}, limit={}",
                 connectionId, schemaName, tableName, limit);
         try (ConnectionService.ActiveConnection.Lease ignored =
                      active.acquire()) {
             try {
-                inspection.setPreview(active.driver.previewTable(
-                        active.connection, schemaName, tableName, limit));
+                TableCommentMetadata comment =
+                        active.driver.getTableCommentMetadata(
+                                active.connection, schemaName, tableName);
+                applyTableComment(inspection, comment);
             } catch (Exception exception) {
-                inspection.addError("preview", safeMessage(exception));
+                inspection.setMetadataStatus("ERROR");
+                inspection.setRemarksStatus("UNAVAILABLE");
+                inspection.setMetadataReason(
+                        "表注释读取失败: " + safeMessage(exception));
+                inspection.addError("remarks", safeMessage(exception));
+            }
+            if (maxCompute) {
+                try {
+                    PartitionMetadataPage page =
+                            active.driver.listTablePartitions(
+                                    active.connection, schemaName,
+                                    tableName, 0, 1);
+                    inspection.setPartitioned(page.isPartitioned());
+                    inspection.setPartitionColumns(page.getPartitionKeys());
+                    if (!page.isPartitioned()
+                            && !"COMPLETE".equals(page.getMetadataStatus())) {
+                        partitionMetadataFailed = true;
+                        inspection.addError("partitions",
+                                page.getMetadataReason());
+                    }
+                } catch (Exception exception) {
+                    partitionMetadataFailed = true;
+                    inspection.addError(
+                            "partitions", safeMessage(exception));
+                }
             }
             try {
                 inspection.setColumns(active.driver.getTableColumns(
@@ -137,8 +187,202 @@ public class MetadataService {
             } catch (Exception exception) {
                 inspection.addError("ddl", safeMessage(exception));
             }
+            inspection.setPreviewRequiresPartition(maxCompute
+                    && (inspection.isPartitioned()
+                    || partitionMetadataFailed));
+            if (includePreview) {
+                if (maxCompute && partitionMetadataFailed) {
+                    inspection.addError("preview",
+                            "无法确认 MaxCompute 分区状态，为避免全表扫描已阻止数据预览");
+                } else if (inspection.isPartitioned()
+                        && (partitionSpec == null || partitionSpec.isBlank())) {
+                    inspection.addError("preview",
+                            "必须先选择一个完整分区，已阻止无分区预览");
+                } else {
+                    try {
+                        String previewSql;
+                        if (inspection.isPartitioned()) {
+                            previewSql = active.driver.buildPartitionPreviewSql(
+                                    active.connection, schemaName, tableName,
+                                    partitionSpec.trim(), limit);
+                            inspection.setSelectedPartition(
+                                    partitionSpec.trim());
+                        } else {
+                            if (partitionSpec != null
+                                    && !partitionSpec.isBlank()) {
+                                throw new IllegalArgumentException(
+                                        "非分区表不能指定 partitionSpec");
+                            }
+                            previewSql = active.driver.buildTablePreviewSql(
+                                    active.connection, schemaName,
+                                    tableName, limit);
+                        }
+                        inspection.setPreviewSql(previewSql);
+                        inspection.setPreview(active.driver.executeQuery(
+                                active.connection, previewSql, limit));
+                    } catch (Exception exception) {
+                        inspection.addError(
+                                "preview", safeMessage(exception));
+                    }
+                }
+            }
         }
         return inspection;
+    }
+
+    public EnterprisePartitionPageView listTablePartitions(
+            String connectionId,
+            String schemaName,
+            String tableName,
+            int requestedOffset,
+            int requestedLimit,
+            String requestedFilter) throws Exception {
+        if (tableName == null || tableName.isBlank()) {
+            throw new IllegalArgumentException("table 不能为空");
+        }
+        int offset = Math.max(0, requestedOffset);
+        int limit = Math.max(1,
+                Math.min(MAX_PARTITION_PAGE_SIZE, requestedLimit));
+        String filter = requestedFilter == null
+                ? "" : requestedFilter.trim();
+        if (filter.length() > 200) {
+            throw new IllegalArgumentException(
+                    "分区筛选内容不能超过 200 个字符");
+        }
+        ConnectionService.ActiveConnection active =
+                connectionService.getActiveConnection(connectionId);
+        String dbType = active.driver.getDriverInfo() == null
+                ? "" : active.driver.getDriverInfo().getDbType();
+        if (!"MAXCOMPUTE".equalsIgnoreCase(dbType)) {
+            throw new IllegalArgumentException(
+                    "分区浏览当前仅适用于 MaxCompute 数据源");
+        }
+        try (ConnectionService.ActiveConnection.Lease ignored =
+                     active.acquire()) {
+            if (filter.isBlank()) {
+                PartitionMetadataPage page =
+                        active.driver.listTablePartitions(
+                                active.connection, schemaName, tableName,
+                                offset, limit);
+                List<String> items = partitionSpecs(page.getItems());
+                String suggested = page.getOffset() == 0
+                        && "PARTITION_SPEC_DESC".equals(page.getOrdering())
+                        && !items.isEmpty() ? items.get(0) : null;
+                return partitionView(page, items, false,
+                        suggested, page.getOrdering(), filter);
+            }
+            return filteredPartitionPage(active, schemaName,
+                    tableName, offset, limit, filter);
+        }
+    }
+
+    private EnterprisePartitionPageView filteredPartitionPage(
+            ConnectionService.ActiveConnection active,
+            String schemaName,
+            String tableName,
+            int offset,
+            int limit,
+            String filter) throws Exception {
+        String keyword = filter.toLowerCase(Locale.ROOT);
+        List<String> matches = new ArrayList<>();
+        PartitionMetadataPage evidence = null;
+        int cursor = 0;
+        int scanned = 0;
+        boolean upstreamHasMore = true;
+        while (upstreamHasMore
+                && scanned < MAX_FILTERED_PARTITION_SCAN
+                && matches.size() <= offset + limit) {
+            int chunkSize = Math.min(200,
+                    MAX_FILTERED_PARTITION_SCAN - scanned);
+            PartitionMetadataPage page =
+                    active.driver.listTablePartitions(
+                            active.connection, schemaName, tableName,
+                            cursor, chunkSize);
+            if (evidence == null) evidence = page;
+            List<PartitionMetadata> items = page.getItems() == null
+                    ? List.of() : page.getItems();
+            for (PartitionMetadata item : items) {
+                String specification = item == null ? "" : item.getSpec();
+                if (specification != null
+                        && specification.toLowerCase(Locale.ROOT)
+                        .contains(keyword)) {
+                    matches.add(specification);
+                }
+            }
+            int read = items.size();
+            scanned += read;
+            cursor += read;
+            upstreamHasMore = page.isHasMore();
+            if (read == 0) break;
+        }
+        if (evidence == null) {
+            evidence = new PartitionMetadataPage();
+            evidence.setSchema(schemaName);
+            evidence.setTable(tableName);
+        }
+        int from = Math.min(offset, matches.size());
+        int to = Math.min(matches.size(), from + limit);
+        List<String> visible = List.copyOf(matches.subList(from, to));
+        boolean truncated = upstreamHasMore
+                && scanned >= MAX_FILTERED_PARTITION_SCAN;
+        boolean hasMore = matches.size() > to;
+        String suggested = offset == 0
+                && "PARTITION_SPEC_DESC".equals(evidence.getOrdering())
+                && !visible.isEmpty() ? visible.get(0) : null;
+        return new EnterprisePartitionPageView(
+                evidence.getPartitionKeys(), visible,
+                offset, limit, hasMore, truncated,
+                suggested, evidence.getOrdering(), filter,
+                evidence.getMetadataSource(),
+                evidence.getMetadataStatus(),
+                truncated
+                        ? "筛选最多扫描前 "
+                        + MAX_FILTERED_PARTITION_SCAN
+                        + " 个分区，结果可能不完整"
+                        : evidence.getMetadataReason());
+    }
+
+    private static EnterprisePartitionPageView partitionView(
+            PartitionMetadataPage page,
+            List<String> items,
+            boolean truncated,
+            String suggested,
+            String ordering,
+            String filter) {
+        return new EnterprisePartitionPageView(
+                page.getPartitionKeys(), items,
+                page.getOffset(), page.getLimit(),
+                page.isHasMore(), truncated,
+                suggested, ordering, filter,
+                page.getMetadataSource(),
+                page.getMetadataStatus(),
+                page.getMetadataReason());
+    }
+
+    private static List<String> partitionSpecs(
+            List<PartitionMetadata> items) {
+        if (items == null) return List.of();
+        return items.stream()
+                .filter(Objects::nonNull)
+                .map(PartitionMetadata::getSpec)
+                .filter(value -> value != null && !value.isBlank())
+                .toList();
+    }
+
+    private static void applyTableComment(
+            TableInspection inspection,
+            TableCommentMetadata comment) {
+        if (comment == null) {
+            inspection.setMetadataStatus("PARTIAL");
+            inspection.setRemarksStatus("UNAVAILABLE");
+            inspection.setMetadataReason("驱动未返回表注释元数据");
+            return;
+        }
+        inspection.setTableComment(comment.getRemarks());
+        inspection.setMetadataSource(comment.getMetadataSource());
+        inspection.setMetadataStatus(comment.getMetadataStatus());
+        inspection.setMetadataReason(comment.getMetadataReason());
+        inspection.setRemarksStatus(comment.getRemarksStatus());
     }
 
     private String safeMessage(Exception exception) {

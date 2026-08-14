@@ -1,6 +1,7 @@
 # LyraDB 个人版原生桌面打包：core/desktop 测试 → jpackage → 独立架构扫描 → 原生冒烟 → zip。
 param(
-    [string]$Version = "3.1.2"
+    [string]$Version = "3.1.2",
+    [string]$TestTempDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -310,10 +311,23 @@ Clear-ReadOnlyBuildArtifacts
 Write-Host "==> [1/5] 运行 core 与原生 desktop 测试并生成应用镜像"
 Push-Location $RootPath
 try {
-    Invoke-Native "mvn" @(
+    $mavenArguments = @(
         "-B", "-ntp", "-pl", "desktop", "-am",
         "-Pdesktop-package", "clean", "verify", "-Drevision=$Version"
     )
+    if (-not [string]::IsNullOrWhiteSpace($TestTempDir)) {
+        # 已是绝对路径时保留调用方给出的 8.3 ASCII 形式；Windows 上把它
+        # 展开为含非 ASCII 字符的长路径会导致 ByteBuddy/Mockito 附加失败。
+        $resolvedTestTemp = if ([System.IO.Path]::IsPathRooted(
+                $TestTempDir)) {
+            $TestTempDir
+        } else {
+            [System.IO.Path]::GetFullPath($TestTempDir)
+        }
+        New-Item -ItemType Directory -Path $resolvedTestTemp -Force | Out-Null
+        $mavenArguments += "-DargLine=-Djava.io.tmpdir=$resolvedTestTemp"
+    }
+    Invoke-Native "mvn" $mavenArguments
 } finally {
     Pop-Location
 }

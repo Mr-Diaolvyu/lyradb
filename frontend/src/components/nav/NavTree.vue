@@ -611,7 +611,8 @@ async function handleContextAction(action: string) {
       const schema = namespaceFromNode(node)
       try {
         const inspection = await metadataApi.inspectTable(
-          connId, schema, tableName, node.type, 200)
+          connId, schema, tableName, node.type, 100,
+          { includePreview: true })
         if (!inspection.preview?.sql) {
           throw new Error(inspection.errors?.preview || '当前驱动未生成预览 SQL')
         }

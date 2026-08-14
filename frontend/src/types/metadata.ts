@@ -45,6 +45,32 @@ export interface TableInspection {
     previewSql: string
     ddl: string
     errors: Record<string, string>
+    dbType?: string | null
+    tableComment?: string | null
+    remarks?: string | null
+    metadataSource?: string | null
+    metadataStatus?: string | null
+    metadataReason?: string | null
+    remarksStatus?: string | null
+    partitioned?: boolean
+    partitionColumns?: string[]
+    previewRequiresPartition?: boolean
+    selectedPartition?: string | null
+}
+
+export interface TablePartitionPage {
+    partitionColumns: string[]
+    partitions: string[]
+    offset: number
+    limit: number
+    hasMore: boolean
+    truncated: boolean
+    suggestedPartition?: string | null
+    ordering?: 'PARTITION_SPEC_DESC' | 'SERVICE_DEFINED' | string
+    filter: string
+    metadataSource?: string | null
+    metadataStatus?: string | null
+    metadataReason?: string | null
 }
 
 /** SQL 审核命中条目（迭代二 E2） */

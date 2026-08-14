@@ -365,14 +365,36 @@ public class EnterpriseMetadataCatalogService {
         }
         String qualified = authorized.schema()
                 + "." + node.getName();
-        String remarks = node.getProperties() == null ? null
-                : text(node.getProperties().get("remarks"));
+        Map<String, Object> properties = node.getProperties() == null
+                ? Map.of() : node.getProperties();
+        String remarks = blankToNull(text(properties.get("remarks")));
         EnterpriseMetadataCatalog.Table table =
                 new EnterpriseMetadataCatalog.Table(
                         authorized.schema(),
                         authorized.driverNamespace(),
                         node.getName(), qualified,
                         upper(node.getType()), remarks);
+        String metadataSource = blankToNull(
+                text(properties.get("metadataSource")));
+        String metadataStatus = blankToNull(
+                text(properties.get("metadataStatus")));
+        String metadataReason = blankToNull(
+                text(properties.get("metadataReason")));
+        String remarksStatus = blankToNull(
+                text(properties.get("remarksStatus")));
+        table.setMetadataSource(metadataSource == null
+                ? "CATALOG" : metadataSource);
+        table.setMetadataStatus(metadataStatus == null
+                ? (remarks == null ? "PARTIAL" : "COMPLETE")
+                : upper(metadataStatus));
+        table.setMetadataReason(metadataReason == null && remarks == null
+                ? "目录元数据未返回表注释；请打开表详情进行单表核验"
+                : metadataReason);
+        table.setRemarksStatus(remarksStatus == null
+                ? (remarks == null ? "UNAVAILABLE" : "AVAILABLE")
+                : upper(remarksStatus));
+        table.setPartitioned(nullableBoolean(
+                properties.get("partitioned")));
         tables.putIfAbsent(
                 qualified.toLowerCase(Locale.ROOT), table);
     }
@@ -614,6 +636,16 @@ public class EnterpriseMetadataCatalogService {
     private static String text(Object value) {
         return value == null ? null
                 : value.toString();
+    }
+
+    private static Boolean nullableBoolean(Object value) {
+        if (value instanceof Boolean booleanValue) {
+            return booleanValue;
+        }
+        if (value == null || value.toString().isBlank()) {
+            return null;
+        }
+        return Boolean.parseBoolean(value.toString());
     }
 
     private static String blankToNull(String value) {

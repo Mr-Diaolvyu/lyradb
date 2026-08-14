@@ -1,11 +1,18 @@
 package io.github.lexaquila.lyradb.driver;
 
 import io.github.lexaquila.lyradb.model.dto.ColumnMetadata;
+import io.github.lexaquila.lyradb.model.dto.PartitionMetadata;
+import io.github.lexaquila.lyradb.model.dto.PartitionMetadataPage;
 import io.github.lexaquila.lyradb.model.dto.QueryResult;
+import io.github.lexaquila.lyradb.model.dto.TableCommentMetadata;
 import io.github.lexaquila.lyradb.model.dto.TableConstraintMetadata;
 import io.github.lexaquila.lyradb.model.dto.TreeNode;
 import io.github.lexaquila.lyradb.model.entity.DriverInfo;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
@@ -14,13 +21,19 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -46,16 +59,29 @@ import java.util.regex.Pattern;
 public class MaxComputeDriver extends AbstractJdbcDriver {
 
     private static final int MAX_CATALOG_OBJECTS = 20_000;
-    private static final String INFORMATION_SCHEMA_TABLES_SQL =
-            "SELECT table_name, table_type, table_comment "
-                    + "FROM INFORMATION_SCHEMA.TABLES LIMIT "
+    private static final int SDK_TABLE_BATCH_SIZE = 200;
+    private static final int MAX_PARTITION_PAGE_SIZE = 500;
+    private static final int MAX_PARTITION_OFFSET = 60_000;
+    private static final String TABLE_METADATA_COLUMNS =
+            "table_name, table_type, table_comment, is_partitioned";
+    private static final String PROJECT_INFORMATION_SCHEMA_TABLES_SQL =
+            "SELECT " + TABLE_METADATA_COLUMNS
+                    + " FROM INFORMATION_SCHEMA.TABLES LIMIT "
                     + MAX_CATALOG_OBJECTS;
+    private static final Pattern PROJECT_URL_PATTERN = Pattern.compile(
+            "(?i)(?:[?&]|^)project=([^&;]+)");
     private static final Pattern PRIMARY_KEY_PATTERN = Pattern.compile(
             "(?is)\\bPRIMARY\\s+KEY\\s*\\(([^)]*)\\)");
     private static final Pattern TABLE_COMMENT_PATTERN = Pattern.compile(
             "(?is)\\)\\s*COMMENT\\s+'((?:''|[^'])*)'");
     private static final Pattern EXTENDED_INFO_LINE_PATTERN = Pattern.compile(
             "(?i)^([a-z][a-z0-9 _-]*)\\s*[:=\\t]\\s*(.*)$");
+
+    /**
+     * 目录批量加载得到的 SDK 元数据缓存。弱引用连接键避免已关闭连接被长期持有。
+     */
+    private final Map<Connection, Map<String, SdkTableMetadata>> sdkTableCache =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     public MaxComputeDriver(DriverInfo driverInfo, ClassLoader driverClassLoader) {
         super(driverInfo, driverClassLoader);
@@ -128,28 +154,51 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
      * 的对象类型和注释；不可用时再用 SHOW TABLES 保住基础目录。</p>
      */
     private List<TreeNode> getProjectTables(Connection conn) throws SQLException {
-        try {
-            return readInformationSchemaTables(conn);
-        } catch (SQLException ignored) {
-            // 老版本、无 INFORMATION_SCHEMA 权限时仍需保证目录可用。
-            return readShowTables(conn, "SHOW TABLES");
+        List<String> failures = new ArrayList<>();
+        String project = executionProject(conn);
+
+        Boolean namespaceSchema = namespaceSchemaMode(conn);
+        if (project != null && !Boolean.FALSE.equals(namespaceSchema)) {
+            try {
+                List<TreeNode> nodes = readInformationSchemaTables(
+                        conn, tenantInformationSchemaSql(project),
+                        "TENANT_INFORMATION_SCHEMA");
+                return verifyBlankCommentsWithSdk(
+                        conn, nodes, failures);
+            } catch (SQLException exception) {
+                failures.add("租户级 Information Schema 不可用："
+                        + safeFailureReason(exception));
+            }
+        } else if (project == null) {
+            failures.add("无法从当前 JDBC 连接识别执行 Project，"
+                    + "未执行租户级 Information Schema 查询");
+        } else {
+            failures.add("当前 JDBC 连接未启用 schema namespace；"
+                    + "租户级 Information Schema 官方入口要求"
+                    + " odps.namespace.schema=true。为避免改变后续 SQL 语义，"
+                    + "未在共享连接上执行 SET");
         }
+
+        try {
+            List<TreeNode> nodes = readInformationSchemaTables(
+                    conn, PROJECT_INFORMATION_SCHEMA_TABLES_SQL,
+                    "PROJECT_INFORMATION_SCHEMA");
+            return verifyBlankCommentsWithSdk(conn, nodes, failures);
+        } catch (SQLException exception) {
+            failures.add("项目级 Information Schema 不可用："
+                    + safeFailureReason(exception));
+        }
+
+        List<TreeNode> showNodes = readShowTables(conn, "SHOW TABLES");
+        return enrichShowTablesWithSdk(conn, showNodes, failures);
     }
 
     private List<TreeNode> getProjectTables(
             Connection conn, String keyword) throws SQLException {
-        try {
-            String normalized = keyword.toLowerCase(Locale.ROOT);
-            return readInformationSchemaTables(conn).stream()
-                    .filter(node -> searchableText(node).contains(normalized))
-                    .toList();
-        } catch (SQLException ignored) {
-            if (!keyword.matches("[A-Za-z0-9_]+")) {
-                return List.of();
-            }
-            return readShowTables(
-                    conn, "SHOW TABLES LIKE '*" + keyword + "*'");
-        }
+        String normalized = keyword.toLowerCase(Locale.ROOT);
+        return getProjectTables(conn).stream()
+                .filter(node -> searchableText(node).contains(normalized))
+                .toList();
     }
 
     /**
@@ -158,12 +207,11 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
      * <p>目录加载不能逐表执行 DESCRIBE，否则数千张表会形成 N+1 请求。
      * INFORMATION_SCHEMA 不可用时由调用方回退 SHOW TABLES。</p>
      */
-    private List<TreeNode> readInformationSchemaTables(Connection conn)
-            throws SQLException {
+    private List<TreeNode> readInformationSchemaTables(
+            Connection conn, String sql, String source) throws SQLException {
         Map<String, TreeNode> uniqueNodes = new LinkedHashMap<>();
         try (Statement stmt = conn.createStatement();
-                ResultSet rs = stmt.executeQuery(
-                        INFORMATION_SCHEMA_TABLES_SQL)) {
+                ResultSet rs = stmt.executeQuery(sql)) {
             int loaded = 0;
             while (rs.next() && loaded < MAX_CATALOG_OBJECTS) {
                 String tableName = rs.getString(1);
@@ -179,7 +227,19 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
                 String remarks = rs.getString(3);
                 if (remarks != null && !remarks.isBlank()) {
                     node.getProperties().put("remarks", remarks.trim());
+                    node.getProperties().put("remarksStatus", "AVAILABLE");
+                } else {
+                    node.getProperties().put("remarksStatus", "EMPTY");
                 }
+                Object partitioned = resultValue(rs, 4);
+                if (partitioned != null) {
+                    boolean isPartitioned = booleanValue(partitioned);
+                    node.getProperties().put("partitioned", isPartitioned);
+                    node.setHasChildren(isPartitioned);
+                }
+                applyMetadataStatus(node, source, "COMPLETE",
+                        "已从 MaxCompute " + sourceLabel(source)
+                                + " 批量读取表元数据");
                 uniqueNodes.putIfAbsent(
                         nodeType + ":" + normalizedName, node);
                 loaded++;
@@ -188,6 +248,62 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
         List<TreeNode> nodes = new ArrayList<>(uniqueNodes.values());
         nodes.sort(Comparator.comparing(
                 TreeNode::getName, String.CASE_INSENSITIVE_ORDER));
+        return nodes;
+    }
+
+    private List<TreeNode> verifyBlankCommentsWithSdk(
+            Connection conn,
+            List<TreeNode> nodes,
+            List<String> priorFailures) {
+        List<String> names = nodes.stream()
+                .filter(node -> !node.getProperties().containsKey("remarks"))
+                .map(TreeNode::getName)
+                .toList();
+        if (names.isEmpty()) {
+            return nodes;
+        }
+        SdkBatchLoadResult sdk = loadSdkTableMetadata(conn, names);
+        for (TreeNode node : nodes) {
+            if (node.getProperties().containsKey("remarks")) {
+                continue;
+            }
+            SdkTableMetadata metadata = sdk.tables().get(
+                    node.getName().toLowerCase(Locale.ROOT));
+            if (metadata != null) {
+                applySdkMetadata(node, metadata,
+                        "Information Schema 注释为空，已使用实时 SDK 核验");
+            } else {
+                node.getProperties().put("remarksStatus", "UNAVAILABLE");
+                node.getProperties().put("metadataStatus", "PARTIAL");
+                node.getProperties().put("metadataReason", joinReasons(
+                        priorFailures,
+                        "Information Schema 返回空注释，SDK 核验失败："
+                                + sdk.reason()));
+            }
+        }
+        return nodes;
+    }
+
+    private List<TreeNode> enrichShowTablesWithSdk(
+            Connection conn,
+            List<TreeNode> nodes,
+            List<String> priorFailures) {
+        SdkBatchLoadResult sdk = loadSdkTableMetadata(
+                conn, nodes.stream().map(TreeNode::getName).toList());
+        for (TreeNode node : nodes) {
+            SdkTableMetadata metadata = sdk.tables().get(
+                    node.getName().toLowerCase(Locale.ROOT));
+            if (metadata != null) {
+                applySdkMetadata(node, metadata,
+                        "Information Schema 不可用，已通过当前 JDBC 连接内置 SDK 批量补齐");
+                continue;
+            }
+            node.getProperties().put("remarksStatus", "UNAVAILABLE");
+            applyMetadataStatus(node, "SHOW_TABLES", "FALLBACK",
+                    joinReasons(priorFailures,
+                            "SDK 元数据不可用：" + sdk.reason()
+                                    + "；SHOW TABLES 只能返回对象名，无法返回注释和分区属性"));
+        }
         return nodes;
     }
 
@@ -215,12 +331,360 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
         return nodes;
     }
 
+    private static void applySdkMetadata(
+            TreeNode node, SdkTableMetadata metadata, String reason) {
+        node.setType(metadata.type());
+        node.setIconType(metadata.type().toLowerCase(Locale.ROOT));
+        node.setHasChildren(metadata.partitioned());
+        node.getProperties().put("partitioned", metadata.partitioned());
+        if (!metadata.partitionKeys().isEmpty()) {
+            node.getProperties().put(
+                    "partitionKeys", String.join(",", metadata.partitionKeys()));
+        }
+        if (metadata.comment() == null || metadata.comment().isBlank()) {
+            node.getProperties().remove("remarks");
+            node.getProperties().put("remarksStatus", "EMPTY");
+        } else {
+            node.getProperties().put("remarks", metadata.comment().trim());
+            node.getProperties().put("remarksStatus", "AVAILABLE");
+        }
+        applyMetadataStatus(node, "MAXCOMPUTE_JAVA_SDK", "COMPLETE", reason);
+    }
+
+    private static void applyMetadataStatus(
+            TreeNode node, String source, String status, String reason) {
+        node.getProperties().put("metadataSource", source);
+        node.getProperties().put("metadataStatus", status);
+        node.getProperties().put("metadataReason", reason);
+    }
+
     private static TreeNode tableNode(String tableName, String type) {
         TreeNode node = TreeNode.of(
                 tableName, tableName, type, tableName);
         node.setIconType(type.toLowerCase(Locale.ROOT));
         node.setHasChildren(true);
         return node;
+    }
+
+    private static String tenantInformationSchemaSql(String project) {
+        return "SELECT " + TABLE_METADATA_COLUMNS
+                + " FROM SYSTEM_CATALOG.INFORMATION_SCHEMA.TABLES"
+                + " WHERE table_catalog = '"
+                + project.replace("'", "''") + "' LIMIT "
+                + MAX_CATALOG_OBJECTS;
+    }
+
+    private String executionProject(Connection connection) {
+        try {
+            Object value = invokeNoArgs(connection, "getExecuteProject");
+            if (hasText(value)) {
+                return value.toString().trim();
+            }
+        } catch (ReflectiveOperationException ignored) {
+            // 非官方连接包装器时继续使用标准 JDBC/URL。
+        }
+        try {
+            Object odps = invokeNoArgs(connection, "getOdps");
+            Object value = invokeNoArgs(odps, "getDefaultProject");
+            if (hasText(value)) {
+                return value.toString().trim();
+            }
+        } catch (ReflectiveOperationException ignored) {
+            // 继续使用标准 JDBC。
+        }
+        try {
+            String catalog = connection.getCatalog();
+            if (catalog != null && !catalog.isBlank()) {
+                return catalog.trim();
+            }
+        } catch (SQLException | UnsupportedOperationException ignored) {
+            // 继续解析 URL。
+        }
+        try {
+            String url = connection.getMetaData().getURL();
+            Matcher matcher = PROJECT_URL_PATTERN.matcher(
+                    url == null ? "" : url);
+            if (matcher.find()) {
+                return URLDecoder.decode(
+                        matcher.group(1), StandardCharsets.UTF_8).trim();
+            }
+        } catch (Exception ignored) {
+            // 调用方会记录“无法识别 Project”，不会静默。
+        }
+        return null;
+    }
+
+    private static Boolean namespaceSchemaMode(Connection connection) {
+        try {
+            Object value = invokeNoArgs(
+                    connection, "isOdpsNamespaceSchema");
+            return value instanceof Boolean bool ? bool : null;
+        } catch (ReflectiveOperationException ignored) {
+            return null;
+        }
+    }
+
+    private SdkBatchLoadResult loadSdkTableMetadata(
+            Connection connection, Collection<String> rawNames) {
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        if (rawNames != null) {
+            for (String name : rawNames) {
+                if (name != null && !name.isBlank()) {
+                    names.add(name.trim());
+                }
+            }
+        }
+        if (names.isEmpty()) {
+            return new SdkBatchLoadResult(Map.of(), "无需补充表元数据");
+        }
+
+        Map<String, SdkTableMetadata> cached = sdkCache(connection);
+        Map<String, SdkTableMetadata> result = new LinkedHashMap<>();
+        List<String> missing = new ArrayList<>();
+        for (String name : names) {
+            SdkTableMetadata metadata = cached.get(
+                    name.toLowerCase(Locale.ROOT));
+            if (metadata == null) {
+                missing.add(name);
+            } else {
+                result.put(name.toLowerCase(Locale.ROOT), metadata);
+            }
+        }
+        if (missing.isEmpty()) {
+            return new SdkBatchLoadResult(result, "已复用当前连接的 SDK 元数据缓存");
+        }
+
+        List<String> failures = new ArrayList<>();
+        try {
+            Object odps = invokeNoArgs(connection, "getOdps");
+            Object tables = invokeNoArgs(odps, "tables");
+            String project = executionProject(connection);
+            String schema = optionalText(invokeNoArgs(odps, "getCurrentSchema"));
+            boolean namespaceSchema = optionalBoolean(
+                    connection, "isOdpsNamespaceSchema");
+
+            for (int start = 0; start < missing.size();
+                    start += SDK_TABLE_BATCH_SIZE) {
+                int end = Math.min(
+                        missing.size(), start + SDK_TABLE_BATCH_SIZE);
+                List<String> batch = missing.subList(start, end);
+                try {
+                    Object loaded = invokeLoadTables(
+                            tables, project, schema,
+                            namespaceSchema, batch);
+                    if (!(loaded instanceof Iterable<?> iterable)) {
+                        failures.add("SDK loadTables 返回了非列表结果");
+                        continue;
+                    }
+                    for (Object table : iterable) {
+                        SdkTableMetadata metadata = sdkTableMetadata(table);
+                        if (metadata == null) {
+                            continue;
+                        }
+                        String key = metadata.name()
+                                .toLowerCase(Locale.ROOT);
+                        result.put(key, metadata);
+                        cached.put(key, metadata);
+                    }
+                } catch (ReflectiveOperationException exception) {
+                    failures.add("SDK 批次 " + (start / SDK_TABLE_BATCH_SIZE + 1)
+                            + " 失败：" + safeFailureReason(exception));
+                }
+            }
+        } catch (ReflectiveOperationException exception) {
+            failures.add("当前 JDBC 连接未提供可用的 MaxCompute SDK："
+                    + safeFailureReason(exception));
+        }
+
+        String reason = failures.isEmpty()
+                ? "SDK 批量元数据读取成功"
+                : String.join("；", failures);
+        return new SdkBatchLoadResult(result, reason);
+    }
+
+    private Map<String, SdkTableMetadata> sdkCache(Connection connection) {
+        synchronized (sdkTableCache) {
+            return sdkTableCache.computeIfAbsent(
+                    connection, ignored -> Collections.synchronizedMap(
+                            new LinkedHashMap<>()));
+        }
+    }
+
+    private static Object invokeLoadTables(
+            Object tables,
+            String project,
+            String schema,
+            boolean namespaceSchema,
+            Collection<String> names) throws ReflectiveOperationException {
+        if (namespaceSchema && hasText(project) && hasText(schema)) {
+            Method method = tables.getClass().getMethod(
+                    "loadTables", String.class, String.class,
+                    Collection.class);
+            return invoke(method, tables, project, schema, names);
+        }
+        if (hasText(project)) {
+            Method method = tables.getClass().getMethod(
+                    "loadTables", String.class, Collection.class);
+            return invoke(method, tables, project, names);
+        }
+        Method method = tables.getClass().getMethod(
+                "loadTables", Collection.class);
+        return invoke(method, tables, names);
+    }
+
+    private static SdkTableMetadata sdkTableMetadata(Object table)
+            throws ReflectiveOperationException {
+        String name = optionalText(invokeNoArgs(table, "getName"));
+        if (name == null) {
+            return null;
+        }
+        String comment = optionalText(invokeNoArgs(table, "getComment"));
+        boolean partitioned = Boolean.TRUE.equals(
+                invokeNoArgs(table, "isPartitioned"));
+        boolean view = Boolean.TRUE.equals(
+                invokeNoArgs(table, "isVirtualView"));
+        List<String> partitionKeys = sdkPartitionKeys(table);
+        return new SdkTableMetadata(
+                name, view ? "VIEW" : "TABLE", comment,
+                partitioned, partitionKeys, table);
+    }
+
+    private static List<String> sdkPartitionKeys(Object table) {
+        try {
+            Object schema = invokeNoArgs(table, "getSchema");
+            Object columns = invokeNoArgs(schema, "getPartitionColumns");
+            if (!(columns instanceof Iterable<?> iterable)) {
+                return List.of();
+            }
+            List<String> keys = new ArrayList<>();
+            for (Object column : iterable) {
+                String name = optionalText(invokeNoArgs(column, "getName"));
+                if (name != null) {
+                    keys.add(name);
+                }
+            }
+            return List.copyOf(keys);
+        } catch (ReflectiveOperationException ignored) {
+            return List.of();
+        }
+    }
+
+    private static Object invokeNoArgs(Object target, String method)
+            throws ReflectiveOperationException {
+        if (target == null) {
+            throw new NoSuchMethodException(method + "（目标为空）");
+        }
+        return invoke(target.getClass().getMethod(method), target);
+    }
+
+    private static Object invoke(
+            Method method, Object target, Object... arguments)
+            throws ReflectiveOperationException {
+        try {
+            return method.invoke(target, arguments);
+        } catch (InvocationTargetException exception) {
+            Throwable cause = exception.getCause();
+            if (cause instanceof ReflectiveOperationException reflective) {
+                throw reflective;
+            }
+            throw new ReflectiveOperationException(cause);
+        }
+    }
+
+    private static boolean optionalBoolean(Object target, String method) {
+        try {
+            return Boolean.TRUE.equals(invokeNoArgs(target, method));
+        } catch (ReflectiveOperationException ignored) {
+            return false;
+        }
+    }
+
+    private static boolean hasText(Object value) {
+        return value != null && !value.toString().isBlank();
+    }
+
+    private static String optionalText(Object value) {
+        return hasText(value) ? value.toString().trim() : null;
+    }
+
+    private static Object resultValue(ResultSet resultSet, int index) {
+        try {
+            return resultSet.getObject(index);
+        } catch (SQLException ignored) {
+            return null;
+        }
+    }
+
+    private static boolean booleanValue(Object value) {
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        return "true".equalsIgnoreCase(value.toString())
+                || "1".equals(value.toString());
+    }
+
+    private static String sourceLabel(String source) {
+        return switch (source) {
+            case "TENANT_INFORMATION_SCHEMA" -> "租户级 Information Schema";
+            case "PROJECT_INFORMATION_SCHEMA" -> "项目级 Information Schema";
+            default -> source;
+        };
+    }
+
+    private static String safeFailureReason(Throwable failure) {
+        Throwable current = failure;
+        while (current.getCause() != null
+                && current != current.getCause()) {
+            current = current.getCause();
+        }
+        String message = current.getMessage();
+        if (message == null || message.isBlank()) {
+            message = current.getClass().getSimpleName();
+        } else {
+            message = current.getClass().getSimpleName() + ": " + message;
+        }
+        String scrubbed = message
+                .replaceAll("(?i)(access[_-]?key|access[_-]?id|token|password)"
+                        + "\\s*[=:]\\s*[^,;\\s]+", "$1=***")
+                .replaceAll("[\\r\\n]+", " ").trim();
+        return scrubbed.length() > 240
+                ? scrubbed.substring(0, 240) + "…" : scrubbed;
+    }
+
+    private static String joinReasons(
+            List<String> previous, String current) {
+        List<String> reasons = new ArrayList<>();
+        if (previous != null) {
+            reasons.addAll(previous);
+        }
+        if (current != null && !current.isBlank()) {
+            reasons.add(current);
+        }
+        return String.join("；", reasons);
+    }
+
+    private record SdkTableMetadata(
+            String name,
+            String type,
+            String comment,
+            boolean partitioned,
+            List<String> partitionKeys,
+            Object sdkTable) {
+
+        private SdkTableMetadata {
+            partitionKeys = partitionKeys == null
+                    ? List.of() : List.copyOf(partitionKeys);
+        }
+    }
+
+    private record SdkBatchLoadResult(
+            Map<String, SdkTableMetadata> tables,
+            String reason) {
+
+        private SdkBatchLoadResult {
+            tables = tables == null ? Map.of() : Map.copyOf(tables);
+            reason = reason == null ? "" : reason;
+        }
     }
 
     private static String searchableText(TreeNode node) {
@@ -245,58 +709,12 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
                 : normalized).trim();
     }
 
-    /**
-     * 为表节点添加MaxCompute特有属性
-     */
-    private void enrichTableNode(Connection conn, TreeNode node) throws SQLException {
-        String tableName = node.getName();
-
-        // 检查分区表
-        List<String> partitionKeys = getPartitionKeys(conn, tableName);
-        if (!partitionKeys.isEmpty()) {
-            node.getProperties().put("partitioned", true);
-            node.getProperties().put("partitionKeys", String.join(",", partitionKeys));
-            // 获取分区数
-            int partitionCount = getPartitionCount(conn, tableName);
-            node.getProperties().put("partitionCount", partitionCount);
-        } else {
-            node.getProperties().put("partitioned", false);
-        }
-
-        // 获取表大小和行数 (通过DESCRIBE EXTENDED)
-        try {
-            Map<String, Object> extendedInfo = getExtendedTableInfo(conn, tableName);
-            if (extendedInfo != null) {
-                node.getProperties().putAll(extendedInfo);
-            }
-        } catch (Exception e) {
-            // DESCRIBE EXTENDED可能不被所有版本支持
-        }
-    }
-
     /** 校验 MaxCompute 表标识符（DESCRIBE/SHOW 无法参数化），仅允许字母数字下划线与点，防注入 */
     private static String safeIdentifier(String identifier) throws SQLException {
         if (identifier == null || !identifier.matches("[A-Za-z_][A-Za-z0-9_.]*")) {
             throw new SQLException("非法的表标识符: " + identifier);
         }
         return identifier;
-    }
-
-    /**
-     * 获取分区数量
-     */
-    private int getPartitionCount(Connection conn, String tableName) throws SQLException {
-        int count = 0;
-        try (Statement stmt = conn.createStatement()) {
-            try (ResultSet rs = stmt.executeQuery("SHOW PARTITIONS " + safeIdentifier(tableName))) {
-                while (rs.next()) {
-                    count++;
-                }
-            }
-        } catch (SQLException e) {
-            // 非分区表
-        }
-        return count;
     }
 
     /**
@@ -364,52 +782,327 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
 
     private static void putExtendedInfo(
             Map<String, Object> info, String key, String value) {
-        if (key == null || value == null || value.isBlank()) {
+        if (key == null || value == null) {
             return;
         }
         String normalizedKey = key.trim().toLowerCase(Locale.ROOT);
         String normalizedValue = value.trim();
-        if (normalizedKey.contains("size")) {
+        if (normalizedKey.contains("comment")
+                || normalizedKey.contains("description")) {
+            info.put("remarksStatus",
+                    normalizedValue.isBlank() ? "EMPTY" : "AVAILABLE");
+            if (!normalizedValue.isBlank()) {
+                info.put("remarks", normalizedValue);
+            }
+        } else if (normalizedValue.isBlank()) {
+            return;
+        } else if (normalizedKey.contains("size")) {
             info.put("tableSize", normalizedValue);
         } else if (normalizedKey.contains("lifecycle")) {
             info.put("lifecycle", normalizedValue);
         } else if (normalizedKey.contains("rows")
                 || normalizedKey.contains("count")) {
             info.put("rowCount", normalizedValue);
-        } else if (normalizedKey.contains("comment")
-                || normalizedKey.contains("description")) {
-            info.put("remarks", normalizedValue);
         }
     }
 
-    /**
-     * 获取分区键列表
-     */
-    private List<String> getPartitionKeys(Connection conn, String tableName) throws SQLException {
-        List<String> keys = new ArrayList<>();
-        // MaxCompute JDBC支持getColumns，分区字段通过特定查询获取
-        try (Statement stmt = conn.createStatement()) {
-            // 使用SHOW PARTITIONS获取分区信息
-            try (ResultSet rs = stmt.executeQuery("SHOW PARTITIONS " + safeIdentifier(tableName))) {
-                // 有分区结果则说明是分区表
-                if (rs.next()) {
-                    // 从分区值中解析分区键名
-                    String partitionStr = rs.getString(1);
-                    if (partitionStr != null && partitionStr.contains("=")) {
-                        String[] parts = partitionStr.split(",");
-                        for (String part : parts) {
-                            String[] kv = part.trim().split("=", 2);
-                            if (kv.length == 2 && !keys.contains(kv[0].trim())) {
-                                keys.add(kv[0].trim());
-                            }
+    @Override
+    public PartitionMetadataPage listTablePartitions(
+            Object connection,
+            String schemaName,
+            String tableName,
+            int offset,
+            int limit) throws Exception {
+        if (offset < 0 || offset > MAX_PARTITION_OFFSET) {
+            throw new IllegalArgumentException(
+                    "分区分页 offset 必须在 0 到 "
+                            + MAX_PARTITION_OFFSET + " 之间");
+        }
+        int safeLimit = Math.max(
+                1, Math.min(limit, MAX_PARTITION_PAGE_SIZE));
+        String tableRef = qualifiedTableIdentifier(schemaName, tableName);
+        Connection conn = (Connection) connection;
+        PartitionMetadataPage page = basePartitionPage(
+                schemaName, tableName, offset, safeLimit);
+
+        SdkBatchLoadResult sdk = loadSdkTableMetadata(
+                conn, List.of(tableName));
+        SdkTableMetadata table = sdk.tables().get(
+                tableName.toLowerCase(Locale.ROOT));
+        List<String> partitionKeys = List.of();
+        String sdkPartitionReason = sdk.reason();
+        if (table != null) {
+            page.setPartitioned(table.partitioned());
+            page.setPartitionKeys(table.partitionKeys());
+            page.setMetadataSource("MAXCOMPUTE_JAVA_SDK");
+            page.setMetadataStatus("COMPLETE");
+            page.setOrdering("PARTITION_SPEC_DESC");
+            page.setMetadataReason("已通过当前 JDBC 连接内置 SDK 有界读取分区元数据");
+            if (!table.partitioned()) {
+                return page;
+            }
+            partitionKeys = table.partitionKeys();
+            try {
+                SdkPartitionPage sdkPage = readSdkPartitionPage(
+                        table.sdkTable(), offset, safeLimit);
+                page.setItems(sdkPage.items());
+                page.setHasMore(sdkPage.hasMore());
+                if (page.getPartitionKeys().isEmpty()
+                        && !page.getItems().isEmpty()) {
+                    page.setPartitionKeys(new ArrayList<>(
+                            page.getItems().get(0).getValues().keySet()));
+                }
+                return page;
+            } catch (ReflectiveOperationException exception) {
+                sdkPartitionReason = "SDK 已确认分区表，但分页读取失败："
+                        + safeFailureReason(exception);
+            }
+        } else {
+            try {
+                partitionKeys = partitionKeysFromDescribe(conn, tableRef);
+            } catch (SQLException exception) {
+                partitionKeys = List.of();
+            }
+        }
+        page.setPartitionKeys(partitionKeys);
+
+        try {
+            ShowPartitionPage show = readShowPartitionPage(
+                    conn, tableRef, offset, safeLimit);
+            page.setItems(show.items());
+            page.setHasMore(show.hasMore());
+            if (partitionKeys.isEmpty() && !show.items().isEmpty()) {
+                partitionKeys = new ArrayList<>(
+                        show.items().get(0).getValues().keySet());
+                page.setPartitionKeys(partitionKeys);
+            }
+            page.setPartitioned(
+                    !partitionKeys.isEmpty() || !show.items().isEmpty());
+            page.setMetadataSource("SHOW_PARTITIONS");
+            page.setMetadataStatus("FALLBACK");
+            page.setOrdering("SERVICE_DEFINED");
+            page.setMetadataReason("SDK 分区元数据不可用：" + sdkPartitionReason
+                    + "；已回退 SHOW PARTITIONS，结果按读取行数硬限制");
+            return page;
+        } catch (SQLException showFailure) {
+            page.setPartitioned(!partitionKeys.isEmpty());
+            page.setMetadataSource(partitionKeys.isEmpty()
+                    ? "UNAVAILABLE" : "DESCRIBE_TABLE");
+            page.setMetadataStatus(partitionKeys.isEmpty()
+                    ? "PARTIAL" : "COMPLETE");
+            page.setMetadataReason("SDK 分区元数据不可用：" + sdkPartitionReason
+                    + "；SHOW PARTITIONS 不可用："
+                    + safeFailureReason(showFailure)
+                    + (partitionKeys.isEmpty()
+                    ? "；无法确认该表是否为分区表"
+                    : "；DESCRIBE 已确认分区字段，但暂时无法列出分区值"));
+            return page;
+        }
+    }
+
+    private static PartitionMetadataPage basePartitionPage(
+            String schemaName, String tableName, int offset, int limit) {
+        PartitionMetadataPage page = new PartitionMetadataPage();
+        page.setSchema(schemaName);
+        page.setTable(tableName);
+        page.setOffset(offset);
+        page.setLimit(limit);
+        return page;
+    }
+
+    private static SdkPartitionPage readSdkPartitionPage(
+            Object sdkTable, int offset, int limit)
+            throws ReflectiveOperationException {
+        Method iteratorMethod = null;
+        for (Method method : sdkTable.getClass().getMethods()) {
+            if ("getPartitionIterator".equals(method.getName())
+                    && method.getParameterCount() == 4) {
+                iteratorMethod = method;
+                break;
+            }
+        }
+        if (iteratorMethod == null) {
+            throw new NoSuchMethodException(
+                    "Table.getPartitionIterator(PartitionSpec,boolean,Long,Long)");
+        }
+        long boundedRead = (long) offset + limit + 1L;
+        long batchSize = Math.max(1L, Math.min(1_000L, limit + 1L));
+        Object rawIterator = invoke(
+                iteratorMethod, sdkTable, null, true,
+                Long.valueOf(batchSize), Long.valueOf(boundedRead));
+        if (!(rawIterator instanceof Iterator<?> iterator)) {
+            throw new ReflectiveOperationException(
+                    "SDK 分区迭代器类型不兼容");
+        }
+        List<PartitionMetadata> items = new ArrayList<>();
+        int skipped = 0;
+        boolean hasMore = false;
+        while (iterator.hasNext()) {
+            Object partition = iterator.next();
+            if (skipped < offset) {
+                skipped++;
+                continue;
+            }
+            if (items.size() >= limit) {
+                hasMore = true;
+                break;
+            }
+            Object rawSpec = invokeNoArgs(partition, "getPartitionSpec");
+            items.add(partitionMetadata(String.valueOf(rawSpec)));
+        }
+        return new SdkPartitionPage(items, hasMore);
+    }
+
+    private static ShowPartitionPage readShowPartitionPage(
+            Connection connection,
+            String tableRef,
+            int offset,
+            int limit) throws SQLException {
+        List<PartitionMetadata> items = new ArrayList<>();
+        int skipped = 0;
+        boolean hasMore = false;
+        int hardRowLimit = offset + limit + 1;
+        try (Statement statement = connection.createStatement()) {
+            try {
+                statement.setMaxRows(hardRowLimit);
+            } catch (SQLException | UnsupportedOperationException ignored) {
+                // 读取循环仍执行硬上限。
+            }
+            try (ResultSet rows = statement.executeQuery(
+                    "SHOW PARTITIONS " + tableRef)) {
+                int read = 0;
+                while (rows.next() && read < hardRowLimit) {
+                    String payload = rows.getString(1);
+                    if (payload == null || payload.isBlank()) {
+                        continue;
+                    }
+                    for (String rawLine : payload.split("\\R")) {
+                        String spec = rawLine == null ? "" : rawLine.trim();
+                        if (spec.isEmpty()) {
+                            continue;
                         }
+                        read++;
+                        if (skipped < offset) {
+                            skipped++;
+                            continue;
+                        }
+                        if (items.size() >= limit) {
+                            hasMore = true;
+                            break;
+                        }
+                        items.add(partitionMetadata(spec));
+                    }
+                    if (hasMore) {
+                        break;
                     }
                 }
             }
-        } catch (SQLException e) {
-            // 非分区表或无分区时忽略错误
         }
-        return keys;
+        return new ShowPartitionPage(items, hasMore);
+    }
+
+    private static PartitionMetadata partitionMetadata(String rawSpec) {
+        PartitionMetadata metadata = new PartitionMetadata();
+        metadata.setSpec(rawSpec == null ? "" : rawSpec.trim());
+        metadata.setValues(parsePartitionSpec(rawSpec));
+        return metadata;
+    }
+
+    private static Map<String, String> parsePartitionSpec(String rawSpec) {
+        if (rawSpec == null || rawSpec.isBlank()) {
+            return Map.of();
+        }
+        List<String> segments = splitPartitionSegments(rawSpec.trim());
+        Map<String, String> values = new LinkedHashMap<>();
+        for (String segment : segments) {
+            int separator = segment.indexOf('=');
+            if (separator <= 0) {
+                throw new IllegalArgumentException(
+                        "无法解析 MaxCompute 分区：" + rawSpec);
+            }
+            String key = segment.substring(0, separator).trim();
+            String value = segment.substring(separator + 1).trim();
+            try {
+                safeIdentifier(key);
+            } catch (SQLException exception) {
+                throw new IllegalArgumentException(exception.getMessage(), exception);
+            }
+            if ((value.startsWith("'") && value.endsWith("'"))
+                    || (value.startsWith("\"") && value.endsWith("\""))) {
+                value = value.substring(1, value.length() - 1);
+            }
+            if (values.putIfAbsent(key, value) != null) {
+                throw new IllegalArgumentException("分区字段重复：" + key);
+            }
+        }
+        return values;
+    }
+
+    private static List<String> splitPartitionSegments(String spec) {
+        List<String> segments = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        char quote = 0;
+        for (int index = 0; index < spec.length(); index++) {
+            char value = spec.charAt(index);
+            if ((value == '\'' || value == '\"')) {
+                if (quote == 0) {
+                    quote = value;
+                } else if (quote == value) {
+                    if (index + 1 < spec.length()
+                            && spec.charAt(index + 1) == value) {
+                        current.append(value);
+                        index++;
+                        continue;
+                    }
+                    quote = 0;
+                }
+            }
+            if (quote == 0 && (value == '/' || value == ',')) {
+                if (!current.toString().isBlank()) {
+                    segments.add(current.toString().trim());
+                }
+                current.setLength(0);
+            } else {
+                current.append(value);
+            }
+        }
+        if (quote != 0) {
+            throw new IllegalArgumentException("分区值引号未闭合：" + spec);
+        }
+        if (!current.toString().isBlank()) {
+            segments.add(current.toString().trim());
+        }
+        return segments;
+    }
+
+    private List<String> partitionKeysFromDescribe(
+            Connection connection, String tableRef) throws SQLException {
+        return readDescribeColumns(connection, tableRef).stream()
+                .filter(DescribeColumn::partition)
+                .map(DescribeColumn::name)
+                .toList();
+    }
+
+    private static SQLException asSqlException(
+            String message, Exception exception) {
+        return exception instanceof SQLException sql
+                ? sql : new SQLException(message, exception);
+    }
+
+    private record SdkPartitionPage(
+            List<PartitionMetadata> items, boolean hasMore) {
+
+        private SdkPartitionPage {
+            items = items == null ? List.of() : List.copyOf(items);
+        }
+    }
+
+    private record ShowPartitionPage(
+            List<PartitionMetadata> items, boolean hasMore) {
+
+        private ShowPartitionPage {
+            items = items == null ? List.of() : List.copyOf(items);
+        }
     }
 
     /**
@@ -419,7 +1112,13 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
         List<TreeNode> nodes = new ArrayList<>();
         String tableName = parentPath;
 
-        List<String> partitionKeys = getPartitionKeys(conn, tableName);
+        PartitionMetadataPage page;
+        try {
+            page = listTablePartitions(conn, null, tableName, 0, 1);
+        } catch (Exception exception) {
+            throw asSqlException("读取 MaxCompute 分区字段失败", exception);
+        }
+        List<String> partitionKeys = page.getPartitionKeys();
         for (String key : partitionKeys) {
             TreeNode node = TreeNode.of(
                     parentPath + "/" + key,
@@ -429,6 +1128,12 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
             node.setIconType("partition");
             node.setHasChildren(true);
             node.getProperties().put("partitionKey", key);
+            node.getProperties().put(
+                    "metadataSource", page.getMetadataSource());
+            node.getProperties().put(
+                    "metadataStatus", page.getMetadataStatus());
+            node.getProperties().put(
+                    "metadataReason", page.getMetadataReason());
             nodes.add(node);
         }
         return nodes;
@@ -440,29 +1145,30 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
     private List<TreeNode> getPartitionValues(Connection conn, String tableName, String parentPath)
             throws SQLException {
         List<TreeNode> nodes = new ArrayList<>();
-
-        try (Statement stmt = conn.createStatement()) {
-            String sql = "SHOW PARTITIONS " + safeIdentifier(tableName);
-            try (ResultSet rs = stmt.executeQuery(sql)) {
-                while (rs.next()) {
-                    String partitionSpec = rs.getString(1);
-                    if (partitionSpec != null) {
-                        TreeNode node = TreeNode.of(
-                                parentPath + "/" + partitionSpec,
-                                partitionSpec,
-                                "PARTITION",
-                                parentPath + "/" + partitionSpec);
-                        node.setIconType("partition");
-                        node.setHasChildren(false);
-                        node.getProperties().put("partitionSpec", partitionSpec);
-                        nodes.add(node);
-                    }
-                }
-            }
-        } catch (SQLException e) {
-            // 非分区表忽略
+        PartitionMetadataPage page;
+        try {
+            page = listTablePartitions(
+                    conn, null, tableName, 0, MAX_PARTITION_PAGE_SIZE);
+        } catch (Exception exception) {
+            throw asSqlException("读取 MaxCompute 分区值失败", exception);
         }
-
+        for (PartitionMetadata partition : page.getItems()) {
+            String spec = partition.getSpec();
+            TreeNode node = TreeNode.of(
+                    parentPath + "/" + spec,
+                    spec,
+                    "PARTITION",
+                    parentPath + "/" + spec);
+            node.setIconType("partition");
+            node.setHasChildren(false);
+            node.getProperties().put("partitionSpec", spec);
+            node.getProperties().put("partitionValues", partition.getValues());
+            node.getProperties().put("metadataSource", page.getMetadataSource());
+            node.getProperties().put("metadataStatus", page.getMetadataStatus());
+            node.getProperties().put("metadataReason", page.getMetadataReason());
+            node.getProperties().put("hasMore", page.isHasMore());
+            nodes.add(node);
+        }
         return nodes;
     }
 
@@ -470,27 +1176,96 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
     protected String getTableComment(
             Connection conn, String schemaName, String tableName)
             throws SQLException {
+        return readTableCommentMetadata(conn, schemaName, tableName)
+                .getRemarks();
+    }
+
+    @Override
+    public TableCommentMetadata getTableCommentMetadata(
+            Object connection, String schemaName, String tableName)
+            throws Exception {
+        return readTableCommentMetadata(
+                (Connection) connection, schemaName, tableName);
+    }
+
+    private TableCommentMetadata readTableCommentMetadata(
+            Connection conn, String schemaName, String tableName)
+            throws SQLException {
         String tableRef = qualifiedTableIdentifier(schemaName, tableName);
+        List<String> failures = new ArrayList<>();
+
+        SdkBatchLoadResult sdk = loadSdkTableMetadata(
+                conn, List.of(tableName));
+        SdkTableMetadata sdkTable = sdk.tables().get(
+                tableName.toLowerCase(Locale.ROOT));
+        if (sdkTable != null) {
+            return commentMetadata(
+                    sdkTable.comment(), "MAXCOMPUTE_JAVA_SDK", "COMPLETE",
+                    sdkTable.comment() == null
+                            ? "SDK 已确认该表未设置注释"
+                            : "SDK 已读取表注释");
+        }
+        failures.add("SDK 不可用：" + sdk.reason());
+
         try {
-            Object value = getExtendedTableInfo(conn, tableRef).get("remarks");
+            Map<String, Object> extended = getExtendedTableInfo(
+                    conn, tableRef);
+            Object status = extended.get("remarksStatus");
+            Object value = extended.get("remarks");
             if (value != null && !value.toString().isBlank()) {
-                return value.toString().trim();
+                return commentMetadata(
+                        value.toString(), "DESCRIBE_TABLE", "COMPLETE",
+                        "DESC EXTENDED 已读取表注释");
             }
-        } catch (SQLException ignored) {
-            // 部分服务端未开放 DESCRIBE EXTENDED，继续从原生 DDL 提取。
+            if ("EMPTY".equals(status)) {
+                return commentMetadata(
+                        null, "DESCRIBE_TABLE", "COMPLETE",
+                        "DESC EXTENDED 已确认该表未设置注释");
+            }
+            failures.add("DESC EXTENDED 返回结果中未识别到 TableComment");
+        } catch (SQLException exception) {
+            failures.add("DESC EXTENDED 不可用："
+                    + safeFailureReason(exception));
         }
         try {
-            Matcher matcher = TABLE_COMMENT_PATTERN.matcher(
-                    getNativeTableDdl(conn, tableRef));
+            String nativeDdl = getNativeTableDdl(conn, tableRef);
+            Matcher matcher = TABLE_COMMENT_PATTERN.matcher(nativeDdl);
             if (matcher.find()) {
                 String comment = matcher.group(1)
                         .replace("''", "'").trim();
-                return comment.isEmpty() ? null : comment;
+                return commentMetadata(
+                        comment.isEmpty() ? null : comment,
+                        "SHOW_CREATE_TABLE", "COMPLETE",
+                        comment.isEmpty()
+                                ? "SHOW CREATE TABLE 已确认该表未设置注释"
+                                : "SHOW CREATE TABLE 已读取表注释");
             }
-        } catch (SQLException ignored) {
-            // 表注释是补充元数据，缺少权限时返回空而不阻断字段结构。
+            if (!nativeDdl.isBlank()) {
+                return commentMetadata(
+                        null, "SHOW_CREATE_TABLE", "COMPLETE",
+                        "SHOW CREATE TABLE 已确认该表未设置注释");
+            }
+            failures.add("SHOW CREATE TABLE 返回空结果");
+        } catch (SQLException exception) {
+            failures.add("SHOW CREATE TABLE 不可用："
+                    + safeFailureReason(exception));
         }
-        return null;
+        return commentMetadata(
+                null, "UNAVAILABLE", "PARTIAL",
+                String.join("；", failures));
+    }
+
+    private static TableCommentMetadata commentMetadata(
+            String remarks, String source, String status, String reason) {
+        TableCommentMetadata metadata = new TableCommentMetadata();
+        metadata.setRemarks(remarks);
+        metadata.setMetadataSource(source);
+        metadata.setMetadataStatus(status);
+        metadata.setMetadataReason(reason);
+        metadata.setRemarksStatus(remarks == null || remarks.isBlank()
+                ? ("COMPLETE".equals(status) ? "EMPTY" : "UNAVAILABLE")
+                : "AVAILABLE");
+        return metadata;
     }
 
     @Override
@@ -638,7 +1413,9 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
         String normalizedName = name.trim();
         if (normalizedName.startsWith("#")
                 || "col_name".equalsIgnoreCase(normalizedName)
-                || "data_type".equalsIgnoreCase(typeName.trim())) {
+                || "field".equalsIgnoreCase(normalizedName)
+                || "data_type".equalsIgnoreCase(typeName.trim())
+                || "type".equalsIgnoreCase(typeName.trim())) {
             return null;
         }
         return new DescribeColumn(
@@ -653,8 +1430,10 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
         }
         String normalized = value.replace('|', ' ').trim()
                 .toLowerCase(Locale.ROOT);
-        return normalized.startsWith("#")
-                && normalized.contains("partition");
+        return (normalized.startsWith("#")
+                && normalized.contains("partition"))
+                || normalized.startsWith("partition columns")
+                || normalized.startsWith("partition column");
     }
 
     private static ColumnMetadata toColumnMetadata(
@@ -708,12 +1487,76 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
 
     @Override
     public String buildTablePreviewSql(
-            Object connection, String schemaName, String tableName, int limit) {
+            Object connection, String schemaName, String tableName, int limit)
+            throws Exception {
+        PartitionMetadataPage partitions = listTablePartitions(
+                connection, schemaName, tableName, 0, 1);
+        if (partitions.isPartitioned()) {
+            throw new IllegalStateException(
+                    "MaxCompute 分区表禁止无分区预览，请先选择一个完整分区");
+        }
+        if (!"COMPLETE".equals(partitions.getMetadataStatus())) {
+            throw new IllegalStateException(
+                    "无法可靠确认 MaxCompute 表是否分区，已阻止全表预览："
+                            + partitions.getMetadataReason());
+        }
         int safeLimit = Math.max(
                 1, Math.min(limit, JdbcTableInspector.MAX_PREVIEW_ROWS));
         return "SELECT * FROM "
                 + qualifiedTableIdentifier(schemaName, tableName)
                 + " TABLESAMPLE (" + safeLimit + " ROWS)";
+    }
+
+    @Override
+    public String buildPartitionPreviewSql(
+            Object connection,
+            String schemaName,
+            String tableName,
+            String partitionSpec,
+            int limit) throws Exception {
+        Map<String, String> supplied = parsePartitionSpec(partitionSpec);
+        PartitionMetadataPage metadata = listTablePartitions(
+                connection, schemaName, tableName, 0, 1);
+        if (!metadata.isPartitioned()) {
+            throw new IllegalArgumentException(
+                    "目标表不是已确认的 MaxCompute 分区表："
+                            + metadata.getMetadataReason());
+        }
+        if (metadata.getPartitionKeys().isEmpty()) {
+            throw new IllegalStateException(
+                    "无法取得 MaxCompute 分区字段，已阻止预览："
+                            + metadata.getMetadataReason());
+        }
+
+        Map<String, Map.Entry<String, String>> normalized =
+                new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : supplied.entrySet()) {
+            normalized.put(entry.getKey().toLowerCase(Locale.ROOT), entry);
+        }
+        Set<String> required = metadata.getPartitionKeys().stream()
+                .map(key -> key.toLowerCase(Locale.ROOT))
+                .collect(java.util.stream.Collectors.toCollection(
+                        LinkedHashSet::new));
+        if (!normalized.keySet().equals(required)) {
+            throw new IllegalArgumentException(
+                    "必须提供完整且仅包含以下分区字段的分区规范："
+                            + String.join(",", metadata.getPartitionKeys()));
+        }
+
+        List<String> predicates = new ArrayList<>();
+        for (String key : metadata.getPartitionKeys()) {
+            Map.Entry<String, String> entry = normalized.get(
+                    key.toLowerCase(Locale.ROOT));
+            String value = entry.getValue() == null ? "" : entry.getValue();
+            predicates.add(safeIdentifier(key) + " = '"
+                    + value.replace("'", "''") + "'");
+        }
+        int safeLimit = Math.max(
+                1, Math.min(limit, JdbcTableInspector.MAX_PREVIEW_ROWS));
+        return "SELECT * FROM "
+                + qualifiedTableIdentifier(schemaName, tableName)
+                + " WHERE " + String.join(" AND ", predicates)
+                + " LIMIT " + safeLimit;
     }
 
     /**
@@ -788,6 +1631,7 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
                 // 收集列信息和分区信息
                 List<String> columnDefs = new ArrayList<>();
                 List<String> partitionDefs = new ArrayList<>();
+                List<String> partitionNames = new ArrayList<>();
                 boolean inPartitionSection = false;
 
                 while (rs.next()) {
@@ -810,6 +1654,7 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
 
                         if (inPartitionSection) {
                             partitionDefs.add(colDef.toString());
+                            partitionNames.add(colName.trim());
                         } else {
                             columnDefs.add(colDef.toString());
                         }
@@ -839,16 +1684,10 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
                     ddl.append(")\n");
                 }
 
-                // Lifecycle信息
-                try {
-                    List<String> partitionKeys = getPartitionKeys(conn, tableName);
-                    if (!partitionKeys.isEmpty()) {
-                        int partCount = getPartitionCount(conn, tableName);
-                        ddl.append("-- Partitions: ").append(partCount).append(" (keys: ")
-                                .append(String.join(",", partitionKeys)).append(")\n");
-                    }
-                } catch (Exception e) {
-                    // ignore
+                if (!partitionNames.isEmpty()) {
+                    ddl.append("-- Partition keys: ")
+                            .append(String.join(",", partitionNames))
+                            .append("\n");
                 }
             }
         } catch (SQLException e) {

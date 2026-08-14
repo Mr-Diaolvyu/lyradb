@@ -31,6 +31,16 @@ public class EnterpriseMetadataCatalog {
         private String qualifiedName;
         private String type;
         private String remarks;
+        /** 表注释/分区标识来自哪一层元数据。 */
+        private String metadataSource;
+        /** AVAILABLE / PARTIAL / UNAVAILABLE / ERROR。 */
+        private String metadataStatus;
+        /** 元数据不完整时面向用户的真实原因，不把空白伪装成“无注释”。 */
+        private String metadataReason;
+        /** AVAILABLE / EMPTY / UNAVAILABLE，区分确实为空与没有读取到。 */
+        private String remarksStatus;
+        /** 驱动已明确识别为分区表时为 true；未知时为 null。 */
+        private Boolean partitioned;
 
         public Table() {
         }

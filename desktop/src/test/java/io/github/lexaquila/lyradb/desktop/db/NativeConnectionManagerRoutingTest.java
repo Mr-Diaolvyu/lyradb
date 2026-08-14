@@ -6,6 +6,7 @@ import io.github.lexaquila.lyradb.desktop.storage.DesktopStateStore;
 import io.github.lexaquila.lyradb.desktop.storage.DesktopVault;
 import io.github.lexaquila.lyradb.driver.DatabaseDriver;
 import io.github.lexaquila.lyradb.driver.DriverFactory;
+import io.github.lexaquila.lyradb.model.dto.PartitionMetadataPage;
 import io.github.lexaquila.lyradb.model.dto.QueryResult;
 import io.github.lexaquila.lyradb.model.entity.DriverCapability;
 import io.github.lexaquila.lyradb.service.SqlReviewService;
@@ -28,6 +29,51 @@ class NativeConnectionManagerRoutingTest {
 
     @TempDir
     Path tempDirectory;
+
+    @Test
+    void shouldUseCorePartitionSpecForBoundedMaxComputePreview()
+            throws Exception {
+        DatabaseDriver maxCompute = mockDriver();
+        Object nativeConnection = new Object();
+        when(maxCompute.connect(any())).thenReturn(nativeConnection);
+        PartitionMetadataPage page = new PartitionMetadataPage();
+        page.setPartitioned(true);
+        when(maxCompute.listTablePartitions(
+                nativeConnection, "project_a", "visit_detail", 0, 200))
+                .thenReturn(page);
+        String spec = "ds=20260814/region=hangzhou";
+        String safeSql = "SELECT * FROM `project_a`.`visit_detail` "
+                + "WHERE `ds`='20260814' AND `region`='hangzhou' LIMIT 100";
+        when(maxCompute.buildPartitionPreviewSql(
+                nativeConnection, "project_a", "visit_detail", spec, 100))
+                .thenReturn(safeSql);
+
+        try (DesktopVault vault = new DesktopVault(tempDirectory)) {
+            DesktopStateStore store = new DesktopStateStore(
+                    tempDirectory, vault);
+            DesktopConnection definition = saveConnection(
+                    store, "MAXCOMPUTE");
+            AppProperties properties = new AppProperties();
+            properties.setMaxQueryRows(100);
+            try (NativeConnectionManager manager = new NativeConnectionManager(
+                    new MapDriverFactory(Map.of(
+                            "MAXCOMPUTE", maxCompute)),
+                    store, new SqlReviewService(), properties)) {
+                manager.connect(definition.getId());
+
+                assertThat(manager.partitions(
+                        definition.getId(), "project_a",
+                        "visit_detail", 0, 500)).isSameAs(page);
+                manager.previewPartition(
+                        definition.getId(), "project_a",
+                        "visit_detail", spec, 100);
+            }
+        }
+
+        verify(maxCompute).buildPartitionPreviewSql(
+                nativeConnection, "project_a", "visit_detail", spec, 100);
+        verify(maxCompute).executeQuery(nativeConnection, safeSql, 100);
+    }
 
     @Test
     void shouldRouteRedisAndMongoCommandsByTheirNativeSemantics() throws Exception {
