@@ -84,6 +84,72 @@ class OpenAiCompatibleClientTest {
     }
 
     @Test
+    void findTableShouldUseStrictCandidateJsonContract() throws Exception {
+        AtomicReference<String> requestBody = new AtomicReference<>();
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(),
+                    StandardCharsets.UTF_8));
+            byte[] response = """
+                    {"choices":[{"message":{"content":"{\\\"recommendations\\\":[]}"}}]}
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+
+        AiProfile profile = new AiProfile();
+        profile.setProviderKey("custom");
+        profile.setBaseUrl(
+                "http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
+        profile.setModel("test-model");
+        profile.setApiKey("secret-key");
+
+        OpenAiCompatibleClient client = new OpenAiCompatibleClient();
+        String result = client.complete(profile, AiTask.FIND_TABLE,
+                "项目客户到访", "MAXCOMPUTE",
+                "T1 | dwd_visit | 项目客户到访明细", "");
+
+        assertThat(result).contains("recommendations");
+        assertThat(requestBody.get())
+                .contains("candidateId", "候选外对象", "不得输出 SQL")
+                .doesNotContain("优先输出适配当前数据库方言的 SQL");
+    }
+
+    @Test
+    void metadataAnalysisShouldNotBeForcedToGenerateSql() throws Exception {
+        AtomicReference<String> requestBody = new AtomicReference<>();
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(),
+                    StandardCharsets.UTF_8));
+            byte[] response = """
+                    {"choices":[{"message":{"content":"信息边界已说明"}}]}
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+
+        AiProfile profile = new AiProfile();
+        profile.setProviderKey("custom");
+        profile.setBaseUrl(
+                "http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
+        profile.setModel("test-model");
+        profile.setApiKey("secret-key");
+
+        new OpenAiCompatibleClient().complete(profile, AiTask.LINEAGE_IMPACT,
+                "评估字段变更", "MAXCOMPUTE", "已附加元数据", "");
+
+        assertThat(requestBody.get())
+                .contains("不得把非 SQL 任务强行改写为生成 SQL")
+                .doesNotContain("优先输出适配当前数据库方言的 SQL");
+    }
+
+    @Test
     void shouldRejectOversizedProviderResponse() throws Exception {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/chat/completions", exchange -> {

@@ -92,6 +92,22 @@ export interface EnterpriseMetadataCatalog {
     refreshedAt: number
 }
 
+export interface AiTableRecommendation {
+    path: string
+    name?: string
+    schema?: string
+    type?: string
+    remarks?: string | null
+    reason: string
+    confidence: number
+}
+
+export interface AiTableSearchResponse {
+    mode: 'AI' | 'LOCAL_FALLBACK' | string
+    message: string
+    recommendations: AiTableRecommendation[]
+}
+
 export interface ApprovalRequest {
     id: string
     applicantId?: string
@@ -300,6 +316,13 @@ export const entApi = {
     },
     aiChat(body: AiChatRequest): Promise<AiChatResponse> {
         return apiClient.post('/ai/chat', body)
+    },
+    aiTableSearch(body: {
+        grantedSourceName: string
+        query: string
+        limit?: number
+    }): Promise<AiTableSearchResponse> {
+        return apiClient.post('/ai/table-search', body)
     },
     aiAgentOrchestrate(body: AiAgentOrchestrationRequest): Promise<AiAgentOrchestrationView> {
         return apiClient.post('/ai/agent/orchestrate', body)

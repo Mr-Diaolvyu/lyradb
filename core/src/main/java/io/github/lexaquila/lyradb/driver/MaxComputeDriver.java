@@ -45,10 +45,17 @@ import java.util.regex.Pattern;
  */
 public class MaxComputeDriver extends AbstractJdbcDriver {
 
+    private static final int MAX_CATALOG_OBJECTS = 20_000;
+    private static final String INFORMATION_SCHEMA_TABLES_SQL =
+            "SELECT table_name, table_type, table_comment "
+                    + "FROM INFORMATION_SCHEMA.TABLES LIMIT "
+                    + MAX_CATALOG_OBJECTS;
     private static final Pattern PRIMARY_KEY_PATTERN = Pattern.compile(
             "(?is)\\bPRIMARY\\s+KEY\\s*\\(([^)]*)\\)");
     private static final Pattern TABLE_COMMENT_PATTERN = Pattern.compile(
             "(?is)\\)\\s*COMMENT\\s+'((?:''|[^'])*)'");
+    private static final Pattern EXTENDED_INFO_LINE_PATTERN = Pattern.compile(
+            "(?i)^([a-z][a-z0-9 _-]*)\\s*[:=\\t]\\s*(.*)$");
 
     public MaxComputeDriver(DriverInfo driverInfo, ClassLoader driverClassLoader) {
         super(driverInfo, driverClassLoader);
@@ -88,18 +95,13 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
             return List.of();
         }
         String keyword = query.trim();
-        if (!keyword.matches("[A-Za-z0-9_]+")) {
-            return List.of();
-        }
         String normalized = keyword.toLowerCase(Locale.ROOT);
         int safeLimit = Math.max(1, Math.min(limit, 500));
-        // 让服务端先按名称收敛结果，避免数千张表的 Project 在每次搜索时
-        // 都传输完整清单；MaxCompute SHOW TABLES LIKE 使用 * 作为通配符。
+        // INFORMATION_SCHEMA 同时返回表名和表注释，因此中文业务名称也能
+        // 命中；不支持该系统视图时仅对安全的物理表名回退 SHOW TABLES LIKE。
         return getProjectTables(
                 (Connection) connection, keyword).stream()
-                .filter(node -> node.getName() != null
-                        && node.getName().toLowerCase(Locale.ROOT)
-                                .contains(normalized))
+                .filter(node -> searchableText(node).contains(normalized))
                 .limit(safeLimit)
                 .toList();
     }
@@ -108,8 +110,8 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
      * 获取表列表 (MaxCompute覆盖父类方法)
      * 
      * <p>
-     * MaxCompute的表列表通过JDBC getTables获取，
-     * 但同时检查每个表是否为分区表并添加属性。
+     * MaxCompute 的表/视图列表优先从 INFORMATION_SCHEMA 批量读取；
+     * 系统视图不可用时回退 SHOW TABLES。
      * </p>
      */
     @Override
@@ -122,17 +124,71 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
      *
      * <p>MaxCompute JDBC 的 DatabaseMetaData 在部分版本中会额外枚举旧公共
      * Project（MAXCOMPUTE_PUBLIC_DATA），从而让有效连接在导航阶段误报
-     * Schema 不存在。SHOW TABLES 只作用于当前执行 Project，可避开该兼容性
-     * 路径，也避免为每张表发起分区/扩展信息 N+1 查询。</p>
+     * Schema 不存在。INFORMATION_SCHEMA 可在一次请求中取得当前 Project
+     * 的对象类型和注释；不可用时再用 SHOW TABLES 保住基础目录。</p>
      */
     private List<TreeNode> getProjectTables(Connection conn) throws SQLException {
-        return readShowTables(conn, "SHOW TABLES");
+        try {
+            return readInformationSchemaTables(conn);
+        } catch (SQLException ignored) {
+            // 老版本、无 INFORMATION_SCHEMA 权限时仍需保证目录可用。
+            return readShowTables(conn, "SHOW TABLES");
+        }
     }
 
     private List<TreeNode> getProjectTables(
             Connection conn, String keyword) throws SQLException {
-        return readShowTables(
-                conn, "SHOW TABLES LIKE '*" + keyword + "*'");
+        try {
+            String normalized = keyword.toLowerCase(Locale.ROOT);
+            return readInformationSchemaTables(conn).stream()
+                    .filter(node -> searchableText(node).contains(normalized))
+                    .toList();
+        } catch (SQLException ignored) {
+            if (!keyword.matches("[A-Za-z0-9_]+")) {
+                return List.of();
+            }
+            return readShowTables(
+                    conn, "SHOW TABLES LIKE '*" + keyword + "*'");
+        }
+    }
+
+    /**
+     * 一次批量读取当前 Project 的对象类型和表级注释。
+     *
+     * <p>目录加载不能逐表执行 DESCRIBE，否则数千张表会形成 N+1 请求。
+     * INFORMATION_SCHEMA 不可用时由调用方回退 SHOW TABLES。</p>
+     */
+    private List<TreeNode> readInformationSchemaTables(Connection conn)
+            throws SQLException {
+        Map<String, TreeNode> uniqueNodes = new LinkedHashMap<>();
+        try (Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        INFORMATION_SCHEMA_TABLES_SQL)) {
+            int loaded = 0;
+            while (rs.next() && loaded < MAX_CATALOG_OBJECTS) {
+                String tableName = rs.getString(1);
+                if (tableName == null || tableName.isBlank()) {
+                    continue;
+                }
+                String rawType = rs.getString(2);
+                String nodeType = rawType != null
+                        && rawType.toUpperCase(Locale.ROOT).contains("VIEW")
+                        ? "VIEW" : "TABLE";
+                String normalizedName = tableName.trim();
+                TreeNode node = tableNode(normalizedName, nodeType);
+                String remarks = rs.getString(3);
+                if (remarks != null && !remarks.isBlank()) {
+                    node.getProperties().put("remarks", remarks.trim());
+                }
+                uniqueNodes.putIfAbsent(
+                        nodeType + ":" + normalizedName, node);
+                loaded++;
+            }
+        }
+        List<TreeNode> nodes = new ArrayList<>(uniqueNodes.values());
+        nodes.sort(Comparator.comparing(
+                TreeNode::getName, String.CASE_INSENSITIVE_ORDER));
+        return nodes;
     }
 
     private List<TreeNode> readShowTables(
@@ -150,17 +206,29 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
                     if (tableName.isBlank()) {
                         continue;
                     }
-                    TreeNode node = TreeNode.of(
-                            tableName, tableName, "TABLE", tableName);
-                    node.setIconType("table");
-                    node.setHasChildren(true);
-                    nodes.add(node);
+                    nodes.add(tableNode(tableName, "TABLE"));
                 }
             }
         }
         nodes.sort(Comparator.comparing(
                 TreeNode::getName, String.CASE_INSENSITIVE_ORDER));
         return nodes;
+    }
+
+    private static TreeNode tableNode(String tableName, String type) {
+        TreeNode node = TreeNode.of(
+                tableName, tableName, type, tableName);
+        node.setIconType(type.toLowerCase(Locale.ROOT));
+        node.setHasChildren(true);
+        return node;
+    }
+
+    private static String searchableText(TreeNode node) {
+        Object remarks = node.getProperties() == null
+                ? null : node.getProperties().get("remarks");
+        return ((node.getName() == null ? "" : node.getName()) + " "
+                + (remarks == null ? "" : remarks))
+                .toLowerCase(Locale.ROOT);
     }
 
     /**
@@ -241,12 +309,27 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
                 ResultSetMetaData metadata = rs.getMetaData();
                 int columnCount = metadata == null ? 2 : metadata.getColumnCount();
                 while (rs.next()) {
-                    String key = rs.getString(1);
-                    String value = columnCount >= 2 ? rs.getString(2) : null;
-                    putExtendedInfo(info, key, value);
-                    if (key != null && (columnCount == 1
-                            || key.contains("\n") || key.contains("\r"))) {
-                        parseExtendedInfoPayload(info, key);
+                    List<String> values = new ArrayList<>();
+                    int boundedColumnCount = Math.max(
+                            1, Math.min(columnCount, 8));
+                    for (int index = 1; index <= boundedColumnCount; index++) {
+                        try {
+                            values.add(rs.getString(index));
+                        } catch (SQLException exception) {
+                            if (index == 1) {
+                                throw exception;
+                            }
+                            break;
+                        }
+                    }
+                    for (int index = 0; index + 1 < values.size(); index++) {
+                        putExtendedInfo(
+                                info, values.get(index), values.get(index + 1));
+                    }
+                    for (String value : values) {
+                        if (value != null) {
+                            parseExtendedInfoPayload(info, value);
+                        }
                     }
                 }
             }
@@ -260,15 +343,19 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
             String line = rawLine == null ? "" : rawLine.trim();
             if (line.startsWith("|") && line.endsWith("|")) {
                 String[] cells = line.substring(1, line.length() - 1)
-                        .split("\\|", 2);
-                if (cells.length == 2) {
-                    putExtendedInfo(info, cells[0], cells[1]);
+                        .split("\\|");
+                if (cells.length >= 2) {
+                    for (int index = 0; index + 1 < cells.length; index++) {
+                        putExtendedInfo(
+                                info, cells[index], cells[index + 1]);
+                    }
+                    continue;
                 }
-                continue;
+                if (cells.length == 1) {
+                    line = cells[0].trim();
+                }
             }
-            Matcher matcher = Pattern.compile(
-                    "(?i)^([a-z][a-z _-]*)\\s*[:=\\t]\\s*(.+)$")
-                    .matcher(line);
+            Matcher matcher = EXTENDED_INFO_LINE_PATTERN.matcher(line);
             if (matcher.matches()) {
                 putExtendedInfo(info, matcher.group(1), matcher.group(2));
             }
@@ -396,7 +483,9 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
             Matcher matcher = TABLE_COMMENT_PATTERN.matcher(
                     getNativeTableDdl(conn, tableRef));
             if (matcher.find()) {
-                return matcher.group(1).replace("''", "'").trim();
+                String comment = matcher.group(1)
+                        .replace("''", "'").trim();
+                return comment.isEmpty() ? null : comment;
             }
         } catch (SQLException ignored) {
             // 表注释是补充元数据，缺少权限时返回空而不阻断字段结构。

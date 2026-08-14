@@ -65,18 +65,36 @@
 
       <main class="table-browser">
         <div class="browser-toolbar">
-          <el-input
-            v-model="search"
-            :prefix-icon="Search"
-            clearable
-            placeholder="搜索已授权的 Schema、表名或注释"
-          />
+          <div class="search-control">
+            <el-input
+              v-model="search"
+              :prefix-icon="Search"
+              clearable
+              placeholder="输入表名、中文名称或业务描述"
+              aria-label="搜索已授权的 Schema、表名、完整路径或中文注释"
+            />
+            <el-button
+              type="primary"
+              plain
+              :icon="MagicStick"
+              :loading="aiSearching"
+              :disabled="!search.trim() || !catalog?.grantedSourceName"
+              @click="runAiSearch"
+            >
+              AI 找表
+            </el-button>
+          </div>
           <span class="result-count">
-            {{ filteredTables.length }} 个结果
+            {{ aiActive ? `AI 推荐 ${displayTables.length} 个` : `${filteredTables.length} 个结果` }}
             <template v-if="filteredTables.length > visibleTables.length">
               · 显示前 {{ visibleTables.length }} 个
             </template>
           </span>
+        </div>
+
+        <div v-if="aiMessage" class="ai-search-status" role="status">
+          <span><el-icon><MagicStick /></el-icon>{{ aiMessage }}</span>
+          <el-button link type="primary" @click="clearAiSearch">返回普通搜索</el-button>
         </div>
 
         <div v-if="visibleTables.length" class="table-list">
@@ -99,6 +117,13 @@
             </span>
             <span v-if="table.remarks" class="table-remarks">
               {{ table.remarks }}
+            </span>
+            <span
+              v-if="aiReasons.get(table.qualifiedName.toLocaleLowerCase())"
+              class="ai-reason"
+              :title="aiReasons.get(table.qualifiedName.toLocaleLowerCase())?.reason"
+            >
+              {{ aiReasons.get(table.qualifiedName.toLocaleLowerCase())?.reason }}
             </span>
             <span class="table-type">{{ table.type }}</span>
           </button>
@@ -141,11 +166,18 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Coin, Grid, Refresh, Search, Share } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { Coin, Grid, MagicStick, Refresh, Search, Share } from '@element-plus/icons-vue'
+import { entApi, type AiTableRecommendation } from '@/api/ent'
 import type {
   EnterpriseMetadataCatalog,
   EnterpriseMetadataTable,
 } from '@/api/ent'
+import {
+  filterMetadataTables,
+  recommendationReasons,
+  resolveRecommendedTables,
+} from '@/utils/tableSearch'
 
 const props = defineProps<{
   catalog: EnterpriseMetadataCatalog | null
@@ -163,6 +195,11 @@ defineEmits<{
 const search = ref('')
 const schemaFilter = ref('')
 const selected = ref<EnterpriseMetadataTable | null>(null)
+const aiSearching = ref(false)
+const aiMessage = ref('')
+const aiRecommendations = ref<AiTableRecommendation[]>([])
+const aiReasons = computed(() => recommendationReasons(aiRecommendations.value))
+const aiActive = computed(() => aiRecommendations.value.length > 0)
 
 const schemaCounts = computed<Record<string, number>>(() => {
   const counts: Record<string, number> = {}
@@ -173,18 +210,18 @@ const schemaCounts = computed<Record<string, number>>(() => {
 })
 
 const filteredTables = computed(() => {
-  const keyword = search.value.trim().toLocaleLowerCase()
-  return (props.catalog?.tables || []).filter(table => {
-    if (schemaFilter.value && table.schema !== schemaFilter.value) return false
-    if (!keyword) return true
-    return table.name.toLocaleLowerCase().includes(keyword)
-      || table.schema.toLocaleLowerCase().includes(keyword)
-      || table.qualifiedName.toLocaleLowerCase().includes(keyword)
-      || (table.remarks || '').toLocaleLowerCase().includes(keyword)
-  })
+  return filterMetadataTables(
+    props.catalog?.tables || [], search.value, schemaFilter.value,
+  )
 })
 
-const visibleTables = computed(() => filteredTables.value.slice(0, 500))
+const recommendedTables = computed(() => resolveRecommendedTables(
+  props.catalog?.tables || [], aiRecommendations.value, schemaFilter.value,
+))
+const displayTables = computed(() => aiActive.value
+  ? recommendedTables.value
+  : filteredTables.value)
+const visibleTables = computed(() => displayTables.value.slice(0, 500))
 const selectedSchema = computed(() =>
   selected.value?.schema || schemaFilter.value || props.catalog?.schemas[0] || '',
 )
@@ -193,9 +230,45 @@ watch(() => props.catalog, () => {
   search.value = ''
   schemaFilter.value = ''
   selected.value = props.catalog?.tables[0] || null
+  clearAiSearch()
 }, {
   immediate: true,
 })
+
+watch(search, clearAiSearch)
+watch(schemaFilter, clearAiSearch)
+
+async function runAiSearch() {
+  const query = search.value.trim()
+  const source = props.catalog?.grantedSourceName
+  if (!query || !source) return
+  aiSearching.value = true
+  aiMessage.value = ''
+  try {
+    const response = await entApi.aiTableSearch({
+      grantedSourceName: source,
+      query: schemaFilter.value
+        ? `在 Schema ${schemaFilter.value} 中查找：${query}`
+        : query,
+      limit: 20,
+    })
+    aiRecommendations.value = response.recommendations || []
+    aiMessage.value = response.message
+    if (!aiRecommendations.value.length) {
+      ElMessage.info(response.message || '未找到可推荐的授权对象')
+    }
+  } catch (error: any) {
+    clearAiSearch()
+    ElMessage.error(error.message || 'AI 找表失败，普通搜索仍可继续使用')
+  } finally {
+    aiSearching.value = false
+  }
+}
+
+function clearAiSearch() {
+  aiRecommendations.value = []
+  aiMessage.value = ''
+}
 </script>
 
 <style scoped>
@@ -305,13 +378,27 @@ watch(() => props.catalog, () => {
   padding: 8px 12px;
   border-bottom: 1px solid var(--color-border);
 }
-.browser-toolbar .el-input { max-width: 520px; }
+.search-control { display: flex; min-width: 0; flex: 1; gap: 8px; }
+.search-control .el-input { max-width: 520px; }
 .result-count { margin-left: auto; color: var(--color-text-muted); font-size: 10px; white-space: nowrap; }
+.ai-search-status {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-brand) 8%, transparent);
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+.ai-search-status span { display: flex; min-width: 0; align-items: center; gap: 6px; }
 .table-list { min-height: 0; flex: 1; overflow: auto; padding: 7px; }
 .table-row {
   display: grid;
   min-height: 45px;
-  grid-template-columns: 28px minmax(150px, 1fr) minmax(80px, .8fr) auto;
+  grid-template-columns: 28px minmax(150px, 1fr) minmax(80px, .8fr) minmax(100px, 1fr) auto;
   align-items: center;
   gap: 9px;
   padding: 5px 9px;
@@ -327,11 +414,13 @@ watch(() => props.catalog, () => {
 .table-copy { min-width: 0; display: flex; flex-direction: column; }
 .table-copy strong,
 .table-copy small,
-.table-remarks { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-remarks,
+.ai-reason { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .table-copy strong { font: 600 12px var(--font-mono); }
 .table-copy small,
 .table-remarks,
 .table-type { color: var(--color-text-muted); font-size: 9px; }
+.ai-reason { color: var(--color-brand); font-size: 9px; }
 .table-type { padding: 2px 5px; border: 1px solid var(--color-border); border-radius: 4px; }
 
 .object-panel h3 { overflow-wrap: anywhere; font: 650 15px var(--font-mono); }
@@ -352,6 +441,7 @@ watch(() => props.catalog, () => {
   .schema-rail { display: flex; max-height: 52px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--color-border); }
   .schema-item { min-width: max-content; }
   .table-row { grid-template-columns: 26px 1fr auto; }
-  .table-remarks { display: none; }
+  .table-remarks, .ai-reason { display: none; }
+  .browser-toolbar, .search-control { align-items: stretch; flex-direction: column; }
 }
 </style>

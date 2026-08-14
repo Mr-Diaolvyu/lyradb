@@ -1,8 +1,10 @@
 package io.github.lexaquila.lyradb.controller;
 
+import io.github.lexaquila.lyradb.model.dto.EnterpriseTableSearchResponse;
 import io.github.lexaquila.lyradb.service.AiFeatureGate;
 import io.github.lexaquila.lyradb.service.AiProviderService;
 import io.github.lexaquila.lyradb.service.EnterpriseAiService;
+import io.github.lexaquila.lyradb.service.EnterpriseTableSearchService;
 import io.github.lexaquila.lyradb.service.SecurityUtil;
 import jakarta.annotation.PreDestroy;
 import jakarta.servlet.http.HttpSession;
@@ -28,7 +30,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * AI SQL 助手控制器。
+ * AI 数据库工作助手控制器。
  */
 @RestController
 @RequestMapping("/ai")
@@ -36,6 +38,7 @@ public class AiController {
 
     private final AiProviderService aiProviderService;
     private final EnterpriseAiService enterpriseAiService;
+    private final EnterpriseTableSearchService tableSearchService;
     private final SecurityUtil securityUtil;
     private final AiFeatureGate featureGate;
     private final ThreadPoolExecutor streamExecutor = new ThreadPoolExecutor(
@@ -46,12 +49,36 @@ public class AiController {
             }, new ThreadPoolExecutor.AbortPolicy());
 
     public AiController(AiProviderService aiProviderService,
-            EnterpriseAiService enterpriseAiService, SecurityUtil securityUtil,
+            EnterpriseAiService enterpriseAiService,
+            EnterpriseTableSearchService tableSearchService,
+            SecurityUtil securityUtil,
             AiFeatureGate featureGate) {
         this.aiProviderService = aiProviderService;
         this.enterpriseAiService = enterpriseAiService;
+        this.tableSearchService = tableSearchService;
         this.securityUtil = securityUtil;
         this.featureGate = featureGate;
+    }
+
+    /**
+     * 仅基于当前用户已授权的轻量元数据目录智能推荐表，不读取业务数据行。
+     */
+    @PostMapping("/table-search")
+    public EnterpriseTableSearchResponse tableSearch(
+            @RequestBody Map<String, Object> body, HttpSession session)
+            throws Exception {
+        if (body == null) {
+            throw new IllegalArgumentException("请求体不能为空");
+        }
+        String source = body.get("grantedSourceName") instanceof String value
+                ? value : null;
+        String query = body.get("query") instanceof String value
+                ? value : null;
+        Integer limit = body.get("limit") instanceof Number value
+                ? value.intValue() : null;
+        return tableSearchService.search(
+                securityUtil.requireCurrentWorkspace(session),
+                source, query, limit);
     }
 
     /** 返回服务端实际生效的 AI 能力，供客户端灰度展示。 */

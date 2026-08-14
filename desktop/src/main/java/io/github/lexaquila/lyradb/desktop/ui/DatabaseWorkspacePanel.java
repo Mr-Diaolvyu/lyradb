@@ -1,6 +1,12 @@
 package io.github.lexaquila.lyradb.desktop.ui;
 
 import io.github.lexaquila.lyradb.desktop.DesktopRuntime;
+import io.github.lexaquila.lyradb.desktop.ai.AiTableSearchSupport;
+import io.github.lexaquila.lyradb.desktop.ai.AiTableSearchSupport.CatalogEntry;
+import io.github.lexaquila.lyradb.desktop.ai.AiTableSearchSupport.Prompt;
+import io.github.lexaquila.lyradb.desktop.ai.AiTableSearchSupport.Recommendation;
+import io.github.lexaquila.lyradb.desktop.ai.AiTask;
+import io.github.lexaquila.lyradb.desktop.model.AiProfile;
 import io.github.lexaquila.lyradb.desktop.model.DesktopConnection;
 import io.github.lexaquila.lyradb.model.dto.TreeNode;
 
@@ -14,6 +20,8 @@ import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowFilter;
+import javax.swing.RowSorter;
+import javax.swing.SortOrder;
 import javax.swing.SwingWorker;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -25,6 +33,7 @@ import java.awt.Font;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -63,8 +72,15 @@ final class DatabaseWorkspacePanel extends JPanel {
     private final JButton refresh = UiKit.button(
             "刷新目录", LyraIcons.of(LyraIcons.Kind.REFRESH),
             UiKit.ButtonStyle.SECONDARY);
+    private final JButton aiFind = UiKit.button(
+            "AI 找表", LyraIcons.of(LyraIcons.Kind.AI),
+            UiKit.ButtonStyle.SECONDARY);
     private SwingWorker<LoadSummary, DatabaseObject> worker;
+    private SwingWorker<List<Recommendation>, Void> aiWorker;
     private long generation;
+    private long aiGeneration;
+    private boolean catalogLoading;
+    private boolean aiSearching;
 
     DatabaseWorkspacePanel(
             DesktopRuntime runtime,
@@ -85,6 +101,7 @@ final class DatabaseWorkspacePanel extends JPanel {
         add(createHeader(), BorderLayout.NORTH);
         add(createCatalog(), BorderLayout.CENTER);
         refresh.addActionListener(event -> refresh());
+        aiFind.addActionListener(event -> findWithAi());
         refresh();
     }
 
@@ -96,6 +113,7 @@ final class DatabaseWorkspacePanel extends JPanel {
         if (worker != null && !worker.isDone()) {
             worker.cancel(true);
         }
+        cancelAiSearch(false);
     }
 
     private JPanel createHeader() {
@@ -168,11 +186,12 @@ final class DatabaseWorkspacePanel extends JPanel {
         toolbar.add(status, BorderLayout.WEST);
 
         search.putClientProperty("JTextField.placeholderText",
-                "在已加载目录中即时搜索表、视图或 Schema");
+                "搜索对象名、中文注释、所属库 / Schema 或完整路径");
         search.putClientProperty("JTextField.leadingIcon",
                 LyraIcons.of(LyraIcons.Kind.SEARCH, NativeTheme.MUTED));
         search.putClientProperty("JTextField.showClearButton", true);
-        search.setPreferredSize(new Dimension(360, 34));
+        search.setPreferredSize(new Dimension(400, 34));
+        search.setToolTipText("输入业务词可即时搜索；按 Enter 使用 AI 智能推荐");
         search.getDocument().addDocumentListener(
                 new javax.swing.event.DocumentListener() {
                     @Override public void insertUpdate(
@@ -188,7 +207,16 @@ final class DatabaseWorkspacePanel extends JPanel {
                         applyFilter();
                     }
                 });
-        toolbar.add(search, BorderLayout.EAST);
+        search.addActionListener(event -> findWithAi());
+        aiFind.setToolTipText(
+                "仅发送当前已加载的目录元数据，不发送业务明细；快捷键 Alt+I");
+        aiFind.setMnemonic(java.awt.event.KeyEvent.VK_I);
+        JPanel searchActions = new JPanel(new FlowLayout(
+                FlowLayout.RIGHT, 8, 0));
+        searchActions.setOpaque(false);
+        searchActions.add(search);
+        searchActions.add(aiFind);
+        toolbar.add(searchActions, BorderLayout.EAST);
         catalog.add(toolbar, BorderLayout.NORTH);
 
         objectTable.setRowSorter(sorter);
@@ -202,6 +230,7 @@ final class DatabaseWorkspacePanel extends JPanel {
         objectTable.getColumnModel().getColumn(2).setPreferredWidth(260);
         objectTable.getColumnModel().getColumn(3).setPreferredWidth(260);
         objectTable.getColumnModel().getColumn(4).setPreferredWidth(310);
+        objectTable.getColumnModel().getColumn(5).setPreferredWidth(360);
         objectTable.getColumnModel().getColumn(1)
                 .setCellRenderer(new TypeRenderer());
         objectTable.addMouseListener(new MouseAdapter() {
@@ -234,6 +263,7 @@ final class DatabaseWorkspacePanel extends JPanel {
 
     void refresh() {
         long request = ++generation;
+        cancelAiSearch(false);
         if (worker != null && !worker.isDone()) {
             worker.cancel(true);
         }
@@ -287,7 +317,9 @@ final class DatabaseWorkspacePanel extends JPanel {
                     }
                     String namespace = parentLabel == null
                             ? "" : parentLabel;
-                    publish(new DatabaseObject(node, namespace));
+                    String displayNamespace = namespace.isBlank()
+                            ? fallbackNamespace(node) : namespace;
+                    publish(new DatabaseObject(node, displayNamespace));
                     String type = normalizeType(node.getType());
                     if (node.isHasChildren()
                             && depth < MAX_DEPTH
@@ -341,10 +373,20 @@ final class DatabaseWorkspacePanel extends JPanel {
     }
 
     private void applyFilter() {
-        String keyword = search.getText().trim()
-                .toLowerCase(Locale.ROOT);
+        cancelAiSearch(true);
+        model.clearRecommendations();
+        sorter.setSortKeys(List.of());
+        applyPlainFilter();
+    }
+
+    private void applyPlainFilter() {
+        String keyword = search.getText().trim();
         if (keyword.isEmpty()) {
             sorter.setRowFilter(null);
+            if (!catalogLoading && !aiSearching) {
+                state.setText("目录加载完成，可按对象名、注释、所属库或路径搜索");
+                state.setForeground(NativeTheme.MUTED);
+            }
             return;
         }
         sorter.setRowFilter(new RowFilter<>() {
@@ -354,9 +396,164 @@ final class DatabaseWorkspacePanel extends JPanel {
                             ? extends Integer> entry) {
                 DatabaseObject value = model.objectAt(
                         entry.getIdentifier());
-                return value.searchText().contains(keyword);
+                return AiTableSearchSupport.matches(
+                        keyword, value.catalogEntry());
             }
         });
+        if (!catalogLoading && !aiSearching) {
+            state.setText("本地即时搜索：匹配 "
+                    + objectTable.getRowCount() + " 个对象");
+            state.setForeground(NativeTheme.MUTED);
+        }
+    }
+
+    private void findWithAi() {
+        String query = search.getText().trim();
+        if (query.isEmpty()) {
+            state.setText("请先输入表名、中文业务名称或业务描述");
+            state.setForeground(NativeTheme.WARNING);
+            search.requestFocusInWindow();
+            return;
+        }
+        if (catalogLoading) {
+            state.setText("目录仍在加载，请稍候再使用 AI 找表");
+            state.setForeground(NativeTheme.WARNING);
+            return;
+        }
+
+        List<CatalogEntry> entries = model.catalogEntries();
+        if (entries.isEmpty()) {
+            state.setText("当前已加载目录中没有可推荐的表或视图");
+            state.setForeground(NativeTheme.WARNING);
+            return;
+        }
+        List<Recommendation> local =
+                AiTableSearchSupport.localRecommendations(
+                        query, entries, 30);
+        AiProfile profile = runtime.stateStore().getAiProfile();
+        if (!profile.isConfigured()) {
+            showLocalFallback(local,
+                    "AI 模型未配置，已保留本地目录搜索；可在“模型设置”中配置");
+            return;
+        }
+
+        Prompt prompt = AiTableSearchSupport.preparePrompt(query, entries);
+        if (prompt.candidates().isEmpty()) {
+            showLocalFallback(local, "没有可发送给 AI 的目录候选，已保留本地搜索");
+            return;
+        }
+        cancelAiSearch(false);
+        long request = ++aiGeneration;
+        if (!local.isEmpty()) {
+            showRecommendations(local);
+        }
+        setAiSearching(true, "AI 正在基于 "
+                + prompt.candidates().size()
+                + " 个目录候选推荐表…仅发送元数据，不发送业务明细");
+        statusSink.accept("AI 正在智能找表：" + connection.getName());
+
+        aiWorker = new SwingWorker<>() {
+            @Override
+            protected List<Recommendation> doInBackground()
+                    throws Exception {
+                String response = runtime.aiClient().complete(
+                        profile,
+                        AiTask.FIND_TABLE,
+                        AiTableSearchSupport.requestText(query, prompt),
+                        connection.getDbType(),
+                        prompt.metadataContext(),
+                        "");
+                return AiTableSearchSupport.parseRecommendations(
+                        response, prompt);
+            }
+
+            @Override
+            protected void done() {
+                if (isCancelled() || request != aiGeneration) {
+                    return;
+                }
+                aiWorker = null;
+                try {
+                    List<Recommendation> recommendations = get();
+                    if (recommendations.isEmpty()) {
+                        showLocalFallback(local,
+                                "AI 未返回可匹配的目录对象，已降级为本地搜索");
+                        statusSink.accept("AI 找表无有效推荐，已使用本地结果");
+                        return;
+                    }
+                    showRecommendations(recommendations);
+                    String truncated = prompt.truncated()
+                            ? "；候选目录已在本地按相关度安全截断" : "";
+                    setAiSearching(false, "AI 推荐完成："
+                            + recommendations.size() + " 个对象" + truncated);
+                    state.setForeground(NativeTheme.SUCCESS);
+                    statusSink.accept("AI 找表完成：推荐 "
+                            + recommendations.size() + " 个对象");
+                } catch (Exception exception) {
+                    showLocalFallback(local, "AI 请求失败（"
+                            + shortMessage(exception)
+                            + "），已降级为本地搜索");
+                    statusSink.accept("AI 找表失败，已保留本地目录搜索");
+                }
+            }
+        };
+        aiWorker.execute();
+    }
+
+    private void showLocalFallback(
+            List<Recommendation> local, String message) {
+        if (local == null || local.isEmpty()) {
+            model.clearRecommendations();
+            sorter.setSortKeys(List.of());
+            applyPlainFilter();
+        } else {
+            showRecommendations(local);
+        }
+        setAiSearching(false, message);
+        state.setForeground(NativeTheme.WARNING);
+    }
+
+    private void showRecommendations(
+            List<Recommendation> recommendations) {
+        model.setRecommendations(recommendations);
+        sorter.setRowFilter(new RowFilter<>() {
+            @Override
+            public boolean include(
+                    Entry<? extends ObjectTableModel,
+                            ? extends Integer> entry) {
+                return model.hasRecommendation(entry.getIdentifier());
+            }
+        });
+        sorter.setSortKeys(List.of(
+                new RowSorter.SortKey(5, SortOrder.ASCENDING)));
+        if (objectTable.getRowCount() > 0) {
+            objectTable.setRowSelectionInterval(0, 0);
+        }
+    }
+
+    private void cancelAiSearch(boolean showLocalStatus) {
+        boolean running = aiWorker != null && !aiWorker.isDone();
+        ++aiGeneration;
+        if (running) {
+            aiWorker.cancel(true);
+        }
+        aiWorker = null;
+        if (running) {
+            setAiSearching(false, showLocalStatus
+                    ? "已停止 AI 推荐，当前为本地即时搜索"
+                    : "AI 推荐已取消");
+        }
+    }
+
+    private void setAiSearching(boolean searching, String message) {
+        aiSearching = searching;
+        progress.setVisible(searching || catalogLoading);
+        refresh.setEnabled(!searching && !catalogLoading);
+        aiFind.setEnabled(!searching && !catalogLoading);
+        aiFind.setText(searching ? "推荐中…" : "AI 找表");
+        state.setText(message);
+        state.setForeground(searching
+                ? NativeTheme.WARNING : NativeTheme.MUTED);
     }
 
     private void openSelected() {
@@ -373,11 +570,46 @@ final class DatabaseWorkspacePanel extends JPanel {
     }
 
     private void setLoading(boolean loading, String message) {
-        progress.setVisible(loading);
-        refresh.setEnabled(!loading);
+        catalogLoading = loading;
+        progress.setVisible(loading || aiSearching);
+        refresh.setEnabled(!loading && !aiSearching);
+        aiFind.setEnabled(!loading && !aiSearching);
         state.setText(message);
         state.setForeground(loading
                 ? NativeTheme.WARNING : NativeTheme.MUTED);
+    }
+
+    private String fallbackNamespace(TreeNode node) {
+        Map<String, Object> properties = node.getProperties();
+        if (properties != null) {
+            String catalog = property(properties, "catalog");
+            String schema = property(properties, "schema");
+            if (!catalog.isBlank() && !schema.isBlank()) {
+                return catalog + "." + schema;
+            }
+            if (!schema.isBlank()) {
+                return schema;
+            }
+            if (!catalog.isBlank()) {
+                return catalog;
+            }
+        }
+        Map<String, Object> params = connection.getParams();
+        for (String key : List.of(
+                "project", "database", "serviceName", "databaseIndex")) {
+            String value = property(params, key);
+            if (!value.isBlank()
+                    && !connection.getCredentialKeys().contains(key)) {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    private static String property(
+            Map<String, Object> values, String key) {
+        Object value = values == null ? null : values.get(key);
+        return value == null ? "" : value.toString().trim();
     }
 
     private String connectionSummary() {
@@ -414,30 +646,51 @@ final class DatabaseWorkspacePanel extends JPanel {
                 ? root.getClass().getSimpleName() : root.getMessage();
     }
 
+    private static String shortMessage(Throwable throwable) {
+        String message = safeMessage(throwable)
+                .replaceAll("\\s+", " ").trim();
+        return message.length() <= 120
+                ? message : message.substring(0, 120) + "…";
+    }
+
     private record LoadSummary(
             int count, boolean truncated, long elapsedMs) {
     }
 
     private record DatabaseObject(TreeNode node, String namespace) {
-        private String searchText() {
-            Object remarks = node.getProperties() == null
-                    ? null : node.getProperties().get("remarks");
-            return (node.getName() + " " + node.getType()
-                    + " " + namespace + " " + node.getPath()
-                    + " " + (remarks == null ? "" : remarks))
-                    .toLowerCase(Locale.ROOT);
+        private CatalogEntry catalogEntry() {
+            return new CatalogEntry(
+                    node.getName(), node.getType(), namespace,
+                    nodeComment(node), node.getPath());
         }
+    }
+
+    static String nodeComment(TreeNode node) {
+        if (node == null || node.getProperties() == null) {
+            return "";
+        }
+        for (String key : List.of("remarks", "comment", "description")) {
+            Object value = node.getProperties().get(key);
+            if (value != null && !value.toString().isBlank()) {
+                return value.toString().trim();
+            }
+        }
+        return "";
     }
 
     private static final class ObjectTableModel
             extends AbstractTableModel {
         private static final List<String> COLUMNS = List.of(
-                "对象名", "类型", "所属库 / Schema", "注释", "完整路径");
+                "对象名", "类型", "所属库 / Schema", "注释", "完整路径",
+                "推荐理由");
         private final List<DatabaseObject> objects = new ArrayList<>();
+        private final Map<String, RecommendationDisplay> recommendations =
+                new LinkedHashMap<>();
 
         private void clear() {
             int previous = objects.size();
             objects.clear();
+            recommendations.clear();
             if (previous > 0) {
                 fireTableRowsDeleted(0, previous - 1);
             }
@@ -456,6 +709,45 @@ final class DatabaseWorkspacePanel extends JPanel {
             return objects.get(row);
         }
 
+        private List<CatalogEntry> catalogEntries() {
+            return objects.stream()
+                    .filter(object -> OPENABLE_TYPES.contains(
+                            normalizeType(object.node().getType())))
+                    .map(DatabaseObject::catalogEntry)
+                    .toList();
+        }
+
+        private void clearRecommendations() {
+            if (recommendations.isEmpty()) {
+                return;
+            }
+            recommendations.clear();
+            fireTableDataChanged();
+        }
+
+        private void setRecommendations(List<Recommendation> values) {
+            recommendations.clear();
+            if (values != null) {
+                int rank = 1;
+                for (Recommendation recommendation : values) {
+                    if (recommendation == null
+                            || recommendations.containsKey(
+                            recommendation.entry().key())) {
+                        continue;
+                    }
+                    recommendations.put(recommendation.entry().key(),
+                            new RecommendationDisplay(
+                                    rank++, recommendation.reason()));
+                }
+            }
+            fireTableDataChanged();
+        }
+
+        private boolean hasRecommendation(int row) {
+            return recommendations.containsKey(
+                    objects.get(row).catalogEntry().key());
+        }
+
         @Override public int getRowCount() {
             return objects.size();
         }
@@ -469,6 +761,12 @@ final class DatabaseWorkspacePanel extends JPanel {
         }
 
         @Override
+        public Class<?> getColumnClass(int columnIndex) {
+            return columnIndex == 5
+                    ? RecommendationDisplay.class : String.class;
+        }
+
+        @Override
         public Object getValueAt(int rowIndex, int columnIndex) {
             DatabaseObject object = objects.get(rowIndex);
             return switch (columnIndex) {
@@ -476,12 +774,34 @@ final class DatabaseWorkspacePanel extends JPanel {
                 case 1 -> object.node().getType();
                 case 2 -> object.namespace().isBlank()
                         ? "当前连接" : object.namespace();
-                case 3 -> object.node().getProperties() != null
-                        && object.node().getProperties().get("remarks") != null
-                        ? object.node().getProperties().get("remarks") : "";
+                case 3 -> nodeComment(object.node());
                 case 4 -> object.node().getPath();
+                case 5 -> recommendations.getOrDefault(
+                        object.catalogEntry().key(),
+                        RecommendationDisplay.EMPTY);
                 default -> "";
             };
+        }
+    }
+
+    private record RecommendationDisplay(
+            int rank, String reason)
+            implements Comparable<RecommendationDisplay> {
+
+        private static final RecommendationDisplay EMPTY =
+                new RecommendationDisplay(Integer.MAX_VALUE, "");
+
+        @Override
+        public int compareTo(RecommendationDisplay other) {
+            return Comparator.comparingInt(RecommendationDisplay::rank)
+                    .thenComparing(RecommendationDisplay::reason)
+                    .compare(this, other);
+        }
+
+        @Override
+        public String toString() {
+            return reason == null || reason.isBlank()
+                    ? "" : rank + ". " + reason;
         }
     }
 

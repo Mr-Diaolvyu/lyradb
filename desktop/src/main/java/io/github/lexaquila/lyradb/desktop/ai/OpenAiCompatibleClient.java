@@ -151,7 +151,32 @@ public final class OpenAiCompatibleClient {
     private static String systemPrompt(AiTask task, String dbType) {
         String normalizedType = dbType == null
                 ? "" : dbType.trim().toUpperCase(Locale.ROOT);
-        String outputRule = switch (normalizedType) {
+        String outputRule = outputRule(task, normalizedType);
+        return """
+                你是 LyraDB 的数据库工作助手。当前数据库类型：%s。
+                任务：%s。
+                必须遵守：
+                1. 不得声称已执行 SQL 或检查过真实数据；你没有数据库执行权限。
+                2. 缺少表结构或业务口径时明确列出信息边界，不得仅凭字段名编造业务定义。
+                3. 涉及 UPDATE、DELETE、DROP、TRUNCATE、ALTER 时突出不可逆风险和回滚建议。
+                4. %s
+                5. 使用简体中文，回答紧凑、可复核。
+                """.formatted(dbType == null || dbType.isBlank() ? "未知" : dbType,
+                task.instruction(), outputRule);
+    }
+
+    private static String outputRule(AiTask task, String normalizedType) {
+        if (task == AiTask.FIND_TABLE) {
+            return "只能从已提供的候选元数据中选择对象，严格输出 JSON："
+                    + "{\"recommendations\":[{\"candidateId\":\"T1\","
+                    + "\"path\":\"候选中的完整路径\",\"reason\":\"简短中文理由\"}]}。"
+                    + "不得输出 SQL、Markdown、解释文字或候选外对象；无法推荐时返回空数组。";
+        }
+        if (!isCommandTask(task)) {
+            return "直接输出结构化的中文分析或建议；只有确有必要时才附带 SQL/命令片段，"
+                    + "不得把非 SQL 任务强行改写为生成 SQL。";
+        }
+        return switch (normalizedType) {
             case "REDIS" -> "仅输出 LyraDB 支持的单条 Redis 命令，并放在 "
                     + "```redis 代码块；支持 GET/KEYS/SCAN/TYPE/HGETALL/LRANGE/"
                     + "SMEMBERS/ZRANGE/STRLEN/DBSIZE/INFO/TTL/SET/DEL/EXPIRE/PERSIST。";
@@ -160,17 +185,12 @@ public final class OpenAiCompatibleClient {
                     + "并放在 ```mongodb 代码块。";
             default -> "优先输出适配当前数据库方言的 SQL，并放在 ```sql 代码块。";
         };
-        return """
-                你是 LyraDB 的数据库工程助手。当前数据库类型：%s。
-                任务：%s。
-                必须遵守：
-                1. 不得声称已执行 SQL；你没有数据库执行权限。
-                2. 缺少表结构或业务口径时明确列出假设，不得仅凭字段名编造业务定义。
-                3. 涉及 UPDATE、DELETE、DROP、TRUNCATE、ALTER 时突出不可逆风险和回滚建议。
-                4. %s
-                5. 使用简体中文，回答紧凑、可复核。
-                """.formatted(dbType == null || dbType.isBlank() ? "未知" : dbType,
-                task.instruction(), outputRule);
+    }
+
+    private static boolean isCommandTask(AiTask task) {
+        return task == AiTask.GENERATE
+                || task == AiTask.OPTIMIZE
+                || task == AiTask.FIX;
     }
 
     private static String userPrompt(String request, String schemaContext,

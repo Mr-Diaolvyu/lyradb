@@ -8,6 +8,7 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 import java.sql.Types;
@@ -21,6 +22,41 @@ import static org.mockito.Mockito.when;
 
 class MaxComputeDriverMetadataTest {
 
+    private static final String INFORMATION_SCHEMA_TABLES_SQL =
+            "SELECT table_name, table_type, table_comment "
+                    + "FROM INFORMATION_SCHEMA.TABLES LIMIT 20000";
+
+    @Test
+    void shouldLoadChineseCommentsAndViewsInOneBoundedCatalogQuery()
+            throws Exception {
+        Connection connection = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        ResultSet resultSet = mock(ResultSet.class);
+        when(connection.createStatement()).thenReturn(statement);
+        when(statement.executeQuery(INFORMATION_SCHEMA_TABLES_SQL))
+                .thenReturn(resultSet);
+        when(resultSet.next()).thenReturn(true, true, true, false);
+        when(resultSet.getString(1)).thenReturn(
+                "orders", "empty_comment", "project_summary");
+        when(resultSet.getString(2)).thenReturn(
+                "MANAGED_TABLE", "TABLE", "VIEW");
+        when(resultSet.getString(3)).thenReturn(
+                "订单事实表", "  ", "项目汇总视图");
+
+        var nodes = driver().getTreeNodes(connection, null);
+
+        assertThat(nodes).extracting("name")
+                .containsExactly("empty_comment", "orders", "project_summary");
+        assertThat(nodes.get(0).getProperties())
+                .doesNotContainKey("remarks");
+        assertThat(nodes.get(1).getProperties())
+                .containsEntry("remarks", "订单事实表");
+        assertThat(nodes.get(2).getType()).isEqualTo("VIEW");
+        assertThat(nodes.get(2).getProperties())
+                .containsEntry("remarks", "项目汇总视图");
+        verify(statement, never()).executeQuery("SHOW TABLES");
+    }
+
     @Test
     void shouldSplitShowTablesPayloadAndAvoidLegacyMetadataEnumeration()
             throws Exception {
@@ -28,6 +64,8 @@ class MaxComputeDriverMetadataTest {
         Statement statement = mock(Statement.class);
         ResultSet resultSet = mock(ResultSet.class);
         when(connection.createStatement()).thenReturn(statement);
+        when(statement.executeQuery(INFORMATION_SCHEMA_TABLES_SQL))
+                .thenThrow(new SQLException("无 INFORMATION_SCHEMA 权限"));
         when(statement.executeQuery("SHOW TABLES")).thenReturn(resultSet);
         when(resultSet.next()).thenReturn(true, false);
         when(resultSet.getString(1)).thenReturn(
@@ -48,6 +86,8 @@ class MaxComputeDriverMetadataTest {
         Statement statement = mock(Statement.class);
         ResultSet resultSet = mock(ResultSet.class);
         when(connection.createStatement()).thenReturn(statement);
+        when(statement.executeQuery(INFORMATION_SCHEMA_TABLES_SQL))
+                .thenThrow(new SQLException("旧版服务端不支持"));
         when(statement.executeQuery("SHOW TABLES LIKE '*ord*'"))
                 .thenReturn(resultSet);
         when(resultSet.next()).thenReturn(true, false);
@@ -59,6 +99,32 @@ class MaxComputeDriverMetadataTest {
         assertThat(nodes).extracting("name")
                 .containsExactly("order_items", "orders");
         verify(connection, never()).getMetaData();
+    }
+
+    @Test
+    void shouldSearchChineseBusinessNameFromTableComment()
+            throws Exception {
+        Connection connection = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        ResultSet resultSet = mock(ResultSet.class);
+        when(connection.createStatement()).thenReturn(statement);
+        when(statement.executeQuery(INFORMATION_SCHEMA_TABLES_SQL))
+                .thenReturn(resultSet);
+        when(resultSet.next()).thenReturn(true, true, false);
+        when(resultSet.getString(1)).thenReturn("orders", "customers");
+        when(resultSet.getString(2)).thenReturn("TABLE", "TABLE");
+        when(resultSet.getString(3)).thenReturn(
+                "项目订单事实表", "客户主数据");
+
+        var nodes = driver().searchTreeNodes(connection, "项目", 20);
+
+        assertThat(nodes).singleElement().satisfies(node -> {
+            assertThat(node.getName()).isEqualTo("orders");
+            assertThat(node.getProperties())
+                    .containsEntry("remarks", "项目订单事实表");
+        });
+        verify(statement, never())
+                .executeQuery("SHOW TABLES LIKE '*项目*'");
     }
 
     @Test
@@ -179,6 +245,64 @@ class MaxComputeDriverMetadataTest {
         assertThat(driver().getTableComment(
                 connection, null, "orders"))
                 .isEqualTo("订单事实表");
+    }
+
+    @Test
+    void shouldReadTableCommentFromSingleCellAsciiTablePayload()
+            throws Exception {
+        Connection connection = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        ResultSet resultSet = mock(ResultSet.class);
+        ResultSetMetaData metadata = mock(ResultSetMetaData.class);
+        when(connection.createStatement()).thenReturn(statement);
+        when(statement.executeQuery("DESCRIBE EXTENDED orders"))
+                .thenReturn(resultSet);
+        when(resultSet.getMetaData()).thenReturn(metadata);
+        when(metadata.getColumnCount()).thenReturn(1);
+        when(resultSet.next()).thenReturn(true, false);
+        when(resultSet.getString(1)).thenReturn(
+                "| TableComment: 订单事实表 |");
+
+        assertThat(driver().getTableComment(
+                connection, null, "orders"))
+                .isEqualTo("订单事实表");
+    }
+
+    @Test
+    void shouldTreatBlankTableCommentAsMissingMetadata()
+            throws Exception {
+        Connection connection = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        ResultSet resultSet = mock(ResultSet.class);
+        ResultSetMetaData metadata = mock(ResultSetMetaData.class);
+        when(connection.createStatement()).thenReturn(statement);
+        when(statement.executeQuery("DESCRIBE EXTENDED orders"))
+                .thenReturn(resultSet);
+        when(resultSet.getMetaData()).thenReturn(metadata);
+        when(metadata.getColumnCount()).thenReturn(2);
+        when(resultSet.next()).thenReturn(true, false);
+        when(resultSet.getString(1)).thenReturn("TableComment");
+        when(resultSet.getString(2)).thenReturn("   ");
+        when(statement.executeQuery("SHOW CREATE TABLE orders"))
+                .thenThrow(new SQLException("未开放 SHOW CREATE TABLE"));
+
+        assertThat(driver().getTableComment(
+                connection, null, "orders")).isNull();
+    }
+
+    @Test
+    void shouldReturnNullWhenAllTableCommentSourcesFail()
+            throws Exception {
+        Connection connection = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        when(connection.createStatement()).thenReturn(statement);
+        when(statement.executeQuery("DESCRIBE EXTENDED orders"))
+                .thenThrow(new SQLException("未开放 DESCRIBE EXTENDED"));
+        when(statement.executeQuery("SHOW CREATE TABLE orders"))
+                .thenThrow(new SQLException("未开放 SHOW CREATE TABLE"));
+
+        assertThat(driver().getTableComment(
+                connection, null, "orders")).isNull();
     }
 
     private static MaxComputeDriver driver() {

@@ -27,11 +27,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 企业 AI SQL 助手（NL→SQL）。
+ * 企业 AI 数据库工作助手。
  *
- * <p>服务仅向模型暴露当前工作空间、当前授权明确允许的表结构，不发送任何数据值。
- * 模型生成的 SQL 必须经过 AST 解析和资源授权校验；服务只返回建议，不自动执行。
- * DML 仅返回待审批状态，DDL、未知语句及解析失败均拒绝。</p>
+ * <p>服务可直接回答数据库理解类问题；需要 SQL 时，仅向模型暴露当前工作空间、
+ * 当前授权明确允许的表结构，不发送任何数据值。模型生成的 SQL 必须经过 AST
+ * 解析和资源授权校验；服务只返回建议，不自动执行。DML 仅返回待审批状态，
+ * DDL、未知语句及解析失败均拒绝。</p>
  */
 @Service
 public class EnterpriseAiService {
@@ -272,11 +273,14 @@ public class EnterpriseAiService {
                 : "未附加元数据快照；可使用当前用户消息中明确提供的表与列，但不得臆造结构。";
         List<Map<String, String>> messages = new ArrayList<>();
         messages.add(Map.of("role", "system", "content",
-                "你是 SQL 生成助手。仅生成 " + dbType + " 方言的 SQL。"
+                "你是 LyraDB 数据库工作助手，可帮助用户智能找表、解释结构、"
+                        + "生成或优化 SQL、诊断报错、分析血缘影响并给出数据质量检查建议。"
+                        + "需要 SQL 时仅生成 " + dbType + " 方言；不需要 SQL 时直接用简体中文回答。"
                         + ("READ_ONLY".equalsIgnoreCase(grant.getSqlCapability())
                                 ? "只允许只读查询。" : "允许只读查询与 DML，但 DML 不会自动执行。")
                         + metadataRule
-                        + "只返回一句中文说明和一个三反引号 sql 代码块。"));
+                        + "不得声称已执行 SQL，不得仅凭字段名编造业务口径。"
+                        + "若输出 SQL，使用三反引号 sql 代码块；否则不要为了满足格式强行生成 SQL。"));
         messages.add(Map.of("role", "system", "content", metadataAttached
                 ? "当前授权可用的表与列（JSON，不含数据值）：\n" + schemaJson
                 : "本次未附加服务端元数据快照；最终 SQL 仍必须通过服务端授权校验。"));
