@@ -56,6 +56,15 @@ export function stripLogControlCharacters(value: string): string {
         .join('')
 }
 
+/** 仅显示服务端生成的 UUID，便于用错误提示关联服务端日志。 */
+export function appendRequestId(message: string, value: unknown): string {
+    if (typeof value !== 'string'
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
+        return message
+    }
+    return `${message}（请求 ID：${value}）`
+}
+
 /** 将 Axios URL 收敛为无查询参数、无片段与控制字符的日志路径。 */
 export function safeRequestPath(value: unknown): string | undefined {
     if (typeof value !== 'string' || !value.trim()) return undefined

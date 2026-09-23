@@ -19,6 +19,16 @@ class GlobalExceptionHandlerSecurityTest {
     private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
 
     @Test
+    void userInputErrorReturnsActionableBadRequest() {
+        ResponseEntity<Map<String, Object>> response = handler.handleIllegalArgument(
+                new IllegalArgumentException("密码长度必须为 12-128 位"));
+
+        assertEquals(400, response.getStatusCode().value());
+        assertEquals("INVALID_REQUEST", response.getBody().get("error"));
+        assertEquals("密码长度必须为 12-128 位", response.getBody().get("message"));
+    }
+
+    @Test
     void approvalRequiredReturnsStructuredConflictWithoutSql() {
         ResponseEntity<Map<String, Object>> response =
                 handler.handleApprovalRequired(

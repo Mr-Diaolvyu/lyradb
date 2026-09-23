@@ -249,10 +249,13 @@
     </el-dialog>
 
     <!-- 用户创建 -->
-    <el-dialog v-model="userCreate.visible" title="新建用户" width="460">
+    <el-dialog v-model="userCreate.visible" title="新建用户" width="460" @closed="userCreate.form.password = ''">
       <el-form label-width="100px">
         <el-form-item label="用户名"><el-input v-model="userCreate.form.username" /></el-form-item>
-        <el-form-item label="密码"><el-input v-model="userCreate.form.password" type="password" show-password /></el-form-item>
+        <el-form-item label="密码">
+          <el-input v-model="userCreate.form.password" type="password" show-password autocomplete="new-password" />
+          <div class="user-password-hint">12–128 位，须包含大写字母、小写字母、数字和特殊字符，且不能包含用户名。</div>
+        </el-form-item>
         <el-form-item label="显示名"><el-input v-model="userCreate.form.displayName" /></el-form-item>
         <el-form-item label="角色">
           <el-checkbox-group v-model="userCreate.form.roles">
@@ -1064,6 +1067,7 @@ function fmt(d?: string) { return d ? new Date(d).toLocaleString() : '' }
 .credential-note { margin-bottom: 14px; }
 .credential-editor { display: flex; align-items: center; gap: 8px; width: 100%; }
 .credential-editor :deep(.el-input) { flex: 1; }
+.user-password-hint { width: 100%; color: var(--color-text-muted); font-size: 12px; line-height: 1.5; }
 .import-toolbar { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(220px, 1.5fr) auto auto; gap: 8px; align-items: center; margin-bottom: 12px; }
 .risk-confirm { margin-top: 12px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

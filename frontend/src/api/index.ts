@@ -7,7 +7,7 @@ import {
     DESKTOP_PROOF_HEADER,
     readDesktopSessionProof,
 } from '@/utils/desktopAccess'
-import { safeRequestPath, shouldExpireSession, stripLogControlCharacters } from '@/utils/requestControl'
+import { appendRequestId, safeRequestPath, shouldExpireSession, stripLogControlCharacters } from '@/utils/requestControl'
 
 const apiClient = axios.create({
     baseURL: '/api',
@@ -66,7 +66,10 @@ apiClient.interceptors.response.use(
             const msg = typeof error.response.data?.message === 'string'
                 ? error.response.data.message
                 : error.response.statusText
-            return Promise.reject(new Error(msg))
+            const displayMessage = error.response.status >= 500
+                ? appendRequestId(msg, error.response.data?.requestId)
+                : msg
+            return Promise.reject(new Error(displayMessage))
         }
         return Promise.reject(new Error(error.message || '网络请求失败'))
     }

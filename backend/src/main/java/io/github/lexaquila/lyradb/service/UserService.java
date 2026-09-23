@@ -62,7 +62,7 @@ public class UserService {
                        List<String> roles) {
         String normalizedUsername = normalizeUsername(username);
         if (userRepository.existsByUsername(normalizedUsername)) {
-            throw new RuntimeException("用户名已存在: " + normalizedUsername);
+            throw new IllegalArgumentException("用户名已存在: " + normalizedUsername);
         }
         validatePassword(normalizedUsername, password);
         List<String> normalizedRoles = normalizeRoles(roles);
@@ -200,7 +200,7 @@ public class UserService {
     private static String normalizeUsername(String username) {
         String value = username == null ? "" : username.trim();
         if (!USERNAME_PATTERN.matcher(value).matches()) {
-            throw new RuntimeException("用户名须为 3-64 位字母、数字、点、下划线或连字符");
+            throw new IllegalArgumentException("用户名须为 3-64 位字母、数字、点、下划线或连字符");
         }
         return value;
     }
@@ -211,7 +211,7 @@ public class UserService {
         for (String role : source) {
             String normalized = role == null ? "" : role.trim().toUpperCase(Locale.ROOT);
             if (!ALLOWED_ROLES.contains(normalized)) {
-                throw new RuntimeException("不支持的角色: " + role);
+                throw new IllegalArgumentException("不支持的角色: " + role);
             }
             result.add(normalized);
         }
@@ -227,7 +227,7 @@ public class UserService {
                     continue;
                 }
                 if (!WORKSPACE_ROLES.contains(normalized)) {
-                    throw new RuntimeException("不支持的工作空间角色: " + role);
+                    throw new IllegalArgumentException("不支持的工作空间角色: " + role);
                 }
                 result.add(normalized);
             }
@@ -240,18 +240,18 @@ public class UserService {
 
     public static void validatePassword(String username, String password) {
         if (password == null || password.length() < 12 || password.length() > 128) {
-            throw new RuntimeException("密码长度必须为 12-128 位");
+            throw new IllegalArgumentException("密码长度必须为 12-128 位");
         }
         boolean upper = password.chars().anyMatch(Character::isUpperCase);
         boolean lower = password.chars().anyMatch(Character::isLowerCase);
         boolean digit = password.chars().anyMatch(Character::isDigit);
         boolean special = password.chars().anyMatch(character -> !Character.isLetterOrDigit(character));
         if (!(upper && lower && digit && special)) {
-            throw new RuntimeException("密码必须同时包含大写字母、小写字母、数字和特殊字符");
+            throw new IllegalArgumentException("密码必须同时包含大写字母、小写字母、数字和特殊字符");
         }
         if (username != null && password.toLowerCase(Locale.ROOT)
                 .contains(username.toLowerCase(Locale.ROOT))) {
-            throw new RuntimeException("密码不能包含用户名");
+            throw new IllegalArgumentException("密码不能包含用户名");
         }
     }
 }

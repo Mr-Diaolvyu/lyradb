@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { LatestRequestGate, runPromptedAction, safeRequestPath, shouldExpireSession, validateAppInfoProbe } from './requestControl'
+import { appendRequestId, LatestRequestGate, runPromptedAction, safeRequestPath, shouldExpireSession, validateAppInfoProbe } from './requestControl'
 
 describe('LatestRequestGate', () => {
     it('新请求开始后拒绝旧响应提交结果', () => {
@@ -66,6 +66,18 @@ describe('safeRequestPath', () => {
     it('非字符串和空值不进入日志', () => {
         expect(safeRequestPath(undefined)).toBeUndefined()
         expect(safeRequestPath({ url: '/secret' })).toBeUndefined()
+    })
+})
+
+describe('appendRequestId', () => {
+    it('服务端错误提示可展示有效请求 ID', () => {
+        expect(appendRequestId('服务内部错误', '123e4567-e89b-12d3-a456-426614174000'))
+            .toBe('服务内部错误（请求 ID：123e4567-e89b-12d3-a456-426614174000）')
+    })
+
+    it('忽略非 UUID 内容', () => {
+        expect(appendRequestId('服务内部错误', 'bad\nrequest-id'))
+            .toBe('服务内部错误')
     })
 })
 
