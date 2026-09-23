@@ -61,7 +61,7 @@ class EnterpriseConnectionTransferExcelTest {
         try (XSSFWorkbook workbook = new XSSFWorkbook(
                 new ByteArrayInputStream(file.content()))) {
             assertThat(workbook.getSheet("连接导入")).isNotNull();
-            assertThat(workbook.getSheet("字段说明")).isNotNull();
+            assertThat(workbook.getSheet("填写说明")).isNotNull();
         }
     }
 

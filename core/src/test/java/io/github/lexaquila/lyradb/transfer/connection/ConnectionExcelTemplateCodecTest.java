@@ -24,19 +24,24 @@ class ConnectionExcelTemplateCodecTest {
         assertThat(ConnectionExcelTemplateCodec.hasXlsxSignature(content)).isTrue();
         try (XSSFWorkbook workbook = new XSSFWorkbook(
                 new ByteArrayInputStream(content))) {
-            assertThat(workbook.getNumberOfSheets()).isEqualTo(4);
+            assertThat(workbook.getNumberOfSheets()).isEqualTo(2);
             assertThat(workbook.getSheet(ConnectionExcelTemplateCodec.DATA_SHEET))
                     .isNotNull();
-            assertThat(workbook.getSheet(ConnectionExcelTemplateCodec.EXAMPLE_SHEET))
-                    .isNotNull();
-            assertThat(workbook.getSheet(ConnectionExcelTemplateCodec.FIELD_SHEET))
-                    .isNotNull();
-            assertThat(workbook.getSheet(ConnectionExcelTemplateCodec.DATABASE_SHEET))
-                    .isNotNull();
+            Sheet guide = workbook.getSheet(ConnectionExcelTemplateCodec.GUIDE_SHEET);
+            assertThat(guide).isNotNull();
+            assertThat(guide.getRow(2).getCell(0).getStringCellValue())
+                    .isEqualTo("MYSQL");
+            assertThat(guide.getRow(10).getCell(0).getStringCellValue())
+                    .isEqualTo("REDIS");
             Sheet data = workbook.getSheet(ConnectionExcelTemplateCodec.DATA_SHEET);
             assertThat(data.getRow(0).getCell(0).getStringCellValue())
                     .contains("明文").contains("第 3 行");
-            assertThat(data.getDataValidations()).hasSize(4);
+            assertThat(data.getRow(1).getLastCellNum()).isEqualTo((short) 13);
+            assertThat(data.getRow(1).getCell(8).getStringCellValue())
+                    .isEqualTo("SQLite 文件路径");
+            assertThat(data.getRow(1).getCell(12).getStringCellValue())
+                    .isEqualTo("AccessKey Secret（明文）");
+            assertThat(data.getDataValidations()).hasSize(1);
         }
     }
 
@@ -50,9 +55,9 @@ class ConnectionExcelTemplateCodecTest {
             set(row, header, "数据库名", "demo");
             set(row, header, "用户名", "app");
             set(row, header, "密码（明文）", "  secret-value  ");
-            set(row, header, "启用 SSL", "否");
-            set(row, header, "收藏", "是");
-            set(row, header, "其他参数 JSON", "{\"connectTimeout\":30}");
+            addColumn(row, header, "启用 SSL", "否");
+            addColumn(row, header, "收藏", "是");
+            addColumn(row, header, "其他参数 JSON", "{\"connectTimeout\":30}");
         });
 
         ConnectionPackageReadResult result = codec.read(filled);
@@ -82,7 +87,7 @@ class ConnectionExcelTemplateCodecTest {
             set(row, header, "连接名称 *", "本地 SQLite");
             set(row, header, "数据库类型 *", "SQLITE");
             set(row, header, "SQLite 文件路径", "D:\\data\\demo.db");
-            set(row, header, "凭据字段名", "password");
+            addColumn(row, header, "凭据字段名", "password");
         });
 
         ConnectionPackageReadResult result = codec.read(filled);
@@ -156,6 +161,13 @@ class ConnectionExcelTemplateCodecTest {
     private static void set(Row row, HeaderLookup header,
             String name, double value) {
         row.getCell(header.indexOf(name)).setCellValue(value);
+    }
+
+    private static void addColumn(Row row, HeaderLookup header,
+            String name, String value) {
+        int index = header.row().getLastCellNum();
+        header.row().createCell(index).setCellValue(name);
+        row.createCell(index).setCellValue(value);
     }
 
     @FunctionalInterface

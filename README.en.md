@@ -29,7 +29,7 @@ The `v3.0.0` Windows package wrapped a local Web server. Starting with `v3.0.1`,
 ## Personal Intelligence Workbench
 
 - Native database navigator, SQL tabs, result grids, exact cancellation, transactions, and CSV export.
-- Bulk connection import/export with omitted, password-encrypted, or explicitly acknowledged plaintext credentials. A downloadable `.xlsx` template includes examples, field guidance, and all nine supported database types; passwords and secrets entered in Excel remain plaintext.
+- Bulk connection import/export with omitted, password-encrypted, or explicitly acknowledged plaintext credentials. The downloadable `.xlsx` template has 13 common columns and a short guide for all nine database types; older full templates remain importable. Passwords and secrets entered in Excel remain plaintext.
 - Column, primary-key, DDL, and JDBC foreign-key ER metadata; selected metadata can be saved as JSON or Markdown.
 - SQL safety review with explicit confirmation for destructive statements.
 - Knowledge Assistant for SQL generation, explanation, repair, optimization, and security review. Metadata is collected manually, previewed with a token estimate, and attached only after explicit confirmation. Model output is never executed automatically.
