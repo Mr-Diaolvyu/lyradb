@@ -19,7 +19,7 @@
 
     <properties>
         <mongodb.driver.test.version>4.11.1</mongodb.driver.test.version>
-        <revision>3.1.2</revision>
+        <revision>3.2.0</revision>
         <java.version>17</java.version>
         <maven-resolver.version>1.9.18</maven-resolver.version>
         <jsqlparser.version>5.3</jsqlparser.version>
@@ -27,6 +27,11 @@
     </properties>
 
     <dependencies>
+        <dependency>
+            <groupId>com.aliyun</groupId>
+            <artifactId>dataworks_public20240518</artifactId>
+            <version>8.8.5</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot</artifactId>

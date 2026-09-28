@@ -66,6 +66,27 @@ class SecurityUtilWorkspaceTest {
     }
 
     @Test
+    void backgroundWorkspaceIsFixedAndClearedAfterFailure() throws Exception {
+        when(membershipRepository.existsByUserIdAndWorkspaceId("user-1", "workspace-1")).thenReturn(true);
+        assertThrows(IllegalStateException.class, () -> securityUtil.inBackgroundWorkspace("workspace-1", () -> {
+            assertEquals("workspace-1", securityUtil.requireCurrentWorkspace());
+            throw new IllegalStateException("任务失败");
+        }));
+        assertThrows(org.springframework.security.authentication.AuthenticationCredentialsNotFoundException.class,
+                () -> securityUtil.requireCurrentWorkspace());
+    }
+
+    @Test
+    void backgroundWorkspaceChecksMembershipAgainDuringExecution() throws Exception {
+        when(membershipRepository.existsByUserIdAndWorkspaceId("user-1", "workspace-1")).thenReturn(true);
+        securityUtil.inBackgroundWorkspace("workspace-1", () -> {
+            when(membershipRepository.existsByUserIdAndWorkspaceId("user-1", "workspace-1")).thenReturn(false);
+            assertThrows(AccessDeniedException.class, () -> securityUtil.requireCurrentWorkspace());
+            return null;
+        });
+    }
+
+    @Test
     void legacyManyToManyEntryDoesNotGrantWorkspaceAccess() {
         Workspace legacyWorkspace = new Workspace();
         legacyWorkspace.setId("workspace-legacy");

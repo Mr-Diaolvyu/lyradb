@@ -40,6 +40,25 @@ public class MaskingService {
         return repository.findByWorkspaceIdOrderByCreatedAtDesc(workspaceId);
     }
 
+    /** 表格编辑入口按实际源列判定是否被脱敏，禁止修改或用其作为行键。 */
+    public boolean isColumnMasked(String workspaceId, String dataSourceId,
+                                  String qualifiedTable, String column) {
+        List<MaskingRule> rules = new ArrayList<>(
+                repository.findByWorkspaceIdAndDataSourceIdIsNullAndEnabledTrue(workspaceId));
+        rules.addAll(repository.findByWorkspaceIdAndDataSourceIdAndEnabledTrue(
+                workspaceId, dataSourceId));
+        for (MaskingRule rule : rules) {
+            Set<String> tablePatterns = SqlParseUtil.splitCsv(rule.getTablePattern());
+            if ((tablePatterns.isEmpty()
+                    || maskingTableMatches(qualifiedTable, tablePatterns))
+                    && SqlParseUtil.matchAny(column,
+                            SqlParseUtil.splitCsv(rule.getColumnPattern()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @Transactional
     public MaskingRule save(MaskingRule input, String workspaceId) {
         if (input.getColumnPattern() == null || input.getColumnPattern().isBlank()) {

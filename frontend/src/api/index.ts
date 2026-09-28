@@ -9,6 +9,12 @@ import {
 } from '@/utils/desktopAccess'
 import { appendRequestId, safeRequestPath, shouldExpireSession, stripLogControlCharacters } from '@/utils/requestControl'
 
+export interface ApiError extends Error {
+    code?: string
+    approvalRequestId?: string
+    approvalStatus?: string
+}
+
 const apiClient = axios.create({
     baseURL: '/api',
     timeout: 60000,
@@ -69,7 +75,18 @@ apiClient.interceptors.response.use(
             const displayMessage = error.response.status >= 500
                 ? appendRequestId(msg, error.response.data?.requestId)
                 : msg
-            return Promise.reject(new Error(displayMessage))
+            const apiError: ApiError = new Error(displayMessage)
+            if (error.response.status === 409
+                && error.response.data?.error === 'APPROVAL_REQUIRED') {
+                apiError.code = 'APPROVAL_REQUIRED'
+                const id = error.response.data?.approvalRequestId
+                if (typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id)) {
+                    apiError.approvalRequestId = id
+                }
+                const status = error.response.data?.approvalStatus
+                if (typeof status === 'string') apiError.approvalStatus = status.slice(0, 24)
+            }
+            return Promise.reject(apiError)
         }
         return Promise.reject(new Error(error.message || '网络请求失败'))
     }

@@ -3,6 +3,7 @@ package io.github.lexaquila.lyradb.controller;
 import io.github.lexaquila.lyradb.model.entity.DataSource;
 import io.github.lexaquila.lyradb.service.AuditService;
 import io.github.lexaquila.lyradb.service.DataSourceService;
+import io.github.lexaquila.lyradb.service.DataSourceBatchTestService;
 import io.github.lexaquila.lyradb.service.SecurityUtil;
 import jakarta.servlet.http.HttpSession;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,8 @@ class AdminDataSourceControllerTest {
     private SecurityUtil securityUtil;
     @Mock
     private AuditService auditService;
+    @Mock
+    private DataSourceBatchTestService batchTestService;
     @Mock
     private HttpSession session;
 
@@ -74,7 +77,7 @@ class AdminDataSourceControllerTest {
 
     private AdminDataSourceController controller() {
         return new AdminDataSourceController(
-                dataSourceService, securityUtil, auditService);
+                dataSourceService, securityUtil, auditService, batchTestService);
     }
 
     private static DataSource source() {

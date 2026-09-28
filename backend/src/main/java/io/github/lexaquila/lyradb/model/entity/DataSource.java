@@ -47,6 +47,21 @@ public class DataSource {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
+    @Column(name = "last_test_status", length = 24)
+    private String lastTestStatus;
+
+    @Column(name = "last_tested_at")
+    private LocalDateTime lastTestedAt;
+
+    @Column(name = "last_test_elapsed_ms")
+    private Long lastTestElapsedMs;
+
+    @Column(name = "last_test_error_code", length = 80)
+    private String lastTestErrorCode;
+
+    @Column(name = "last_test_config_hash", length = 64)
+    private String lastTestConfigHash;
+
     @PrePersist
     public void prePersist() {
         LocalDateTime now = LocalDateTime.now();

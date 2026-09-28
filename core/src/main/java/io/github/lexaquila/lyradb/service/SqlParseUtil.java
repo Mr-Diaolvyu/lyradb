@@ -192,6 +192,9 @@ public final class SqlParseUtil {
         String target = normalizeQualifiedName(qualifiedName);
         for (String entry : entries) {
             String pattern = normalizeQualifiedName(entry);
+            if ("*.*".equals(pattern) && target.contains(".")) {
+                return true;
+            }
             if (pattern.endsWith("*")) {
                 if (target.startsWith(pattern.substring(0, pattern.length() - 1))) {
                     return true;

@@ -46,7 +46,7 @@ public class ApprovalService {
     private static final int MAX_REASON_CHARS = 500;
     private static final int MAX_COMMENT_CHARS = 1_000;
     private static final String PAYLOAD_INDEX_PURPOSE = "approval-payload-v1";
-    private static final Set<String> SUPPORTED_OPERATIONS = Set.of("EXPORT", "DANGEROUS_SQL");
+    private static final Set<String> SUPPORTED_OPERATIONS = Set.of("EXPORT", "DANGEROUS_SQL", "TABLE_EDIT");
     private static final Set<String> PAYLOAD_FIELDS = Set.of("sql", "format", "defaultDatabase");
 
     private final ApprovalRequestRepository repository;
@@ -124,6 +124,43 @@ public class ApprovalService {
                                               String defaultDatabase, String reason) {
         return create(grant, applicant, "DANGEROUS_SQL",
                 canonicalPayload(sql, null, defaultDatabase), reason);
+    }
+
+    @Transactional
+    public ApprovalRequest createTableEdit(Grant grant, User applicant,
+                                           String payloadJson, String reason) {
+        return create(grant, applicant, "TABLE_EDIT", payloadJson, reason);
+    }
+
+    /** 已批准的表格编辑只从加密审批载荷取执行内容，浏览器不能在执行时换包。 */
+    @Transactional
+    public String claimTableEdit(String id, User applicant, Grant grant) {
+        LocalDateTime beforeLock = now();
+        if (repository.expireByIdAndStatusBefore(id, "APPROVED", beforeLock) > 0) {
+            throw new IllegalArgumentException("审批单已过期");
+        }
+        securityContextService.lockWorkspace(grant.getWorkspaceId());
+        ApprovalRequest approval = getForUpdate(id);
+        if (!"APPROVED".equals(approval.getStatus())
+                || approval.getExpiresAt() == null
+                || !approval.getExpiresAt().isAfter(now())) {
+            throw new IllegalArgumentException("审批单尚未批准或已过期");
+        }
+        if (!"TABLE_EDIT".equals(approval.getOperationType())
+                || !applicant.getId().equals(approval.getApplicantId())
+                || !grant.getId().equals(approval.getGrantId())
+                || !grant.getWorkspaceId().equals(approval.getWorkspaceId())
+                || !grant.getDataSourceId().equals(approval.getDataSourceId())) {
+            throw new IllegalArgumentException("审批单与当前用户或授权资源不匹配");
+        }
+        if (!constantTimeEquals(approval.getSecurityContextHash(),
+                securityContextService.fingerprint(grant))) {
+            throw new IllegalArgumentException("审批后的授权或数据源安全配置已变化，请重新申请");
+        }
+        approval.setStatus("EXECUTING");
+        approval.setExpiresAt(now().plusHours(EXECUTION_STALE_HOURS));
+        repository.saveAndFlush(approval);
+        return credentialService.decryptValue(approval.getPayloadJson());
     }
 
     public List<ApprovalRequest> listMine(
@@ -336,7 +373,9 @@ public class ApprovalService {
         view.put("grantId", approval.getGrantId());
         view.put("grantedSourceName", approval.getGrantedSourceName());
         if (includePayload) {
-            view.put("payloadJson", credentialService.decryptValue(approval.getPayloadJson()));
+            String payload = credentialService.decryptValue(approval.getPayloadJson());
+            view.put("payloadJson", "TABLE_EDIT".equals(approval.getOperationType())
+                    ? tableEditSummary(payload) : payload);
         }
         view.put("reason", approval.getReason());
         view.put("status", approval.getStatus());
@@ -395,6 +434,17 @@ public class ApprovalService {
     private String canonicalize(String operationType, String payloadJson) {
         String operation = normalizeOperation(operationType);
         try {
+            if ("TABLE_EDIT".equals(operation)) {
+                var payload = objectMapper.readTree(payloadJson);
+                if (!payload.isObject() || !payload.path("schema").isTextual()
+                        || !payload.path("table").isTextual()
+                        || !payload.path("changes").isArray()
+                        || payload.path("changes").isEmpty()
+                        || payload.path("changes").size() > 100) {
+                    throw new IllegalArgumentException("表格编辑审批载荷无效");
+                }
+                return objectMapper.writeValueAsString(payload);
+            }
             Map<String, Object> payload = objectMapper.readValue(
                     payloadJson, new TypeReference<Map<String, Object>>() { });
             if (!PAYLOAD_FIELDS.containsAll(payload.keySet())) {
@@ -426,6 +476,25 @@ public class ApprovalService {
             throw exception;
         } catch (Exception exception) {
             throw new IllegalArgumentException("审批 payloadJson 必须是合法 JSON 对象", exception);
+        }
+    }
+
+    private String tableEditSummary(String encryptedPayload) {
+        try {
+            var payload = objectMapper.readTree(encryptedPayload);
+            java.util.Set<String> columns = new java.util.TreeSet<>();
+            java.util.Map<String, Integer> counts = new java.util.LinkedHashMap<>();
+            for (var change : payload.path("changes")) {
+                String action = change.path("action").asText();
+                counts.merge(action, 1, Integer::sum);
+                change.path("values").fieldNames().forEachRemaining(columns::add);
+            }
+            return objectMapper.writeValueAsString(Map.of(
+                    "schema", payload.path("schema").asText(),
+                    "table", payload.path("table").asText(),
+                    "counts", counts, "columns", columns));
+        } catch (Exception exception) {
+            throw new IllegalStateException("审批摘要无法生成", exception);
         }
     }
 
@@ -485,7 +554,7 @@ public class ApprovalService {
     private static String normalizeOperation(String value) {
         String operation = value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
         if (!SUPPORTED_OPERATIONS.contains(operation)) {
-            throw new IllegalArgumentException("当前仅支持 EXPORT/DANGEROUS_SQL 审批");
+            throw new IllegalArgumentException("当前仅支持 EXPORT/DANGEROUS_SQL/TABLE_EDIT 审批");
         }
         return operation;
     }

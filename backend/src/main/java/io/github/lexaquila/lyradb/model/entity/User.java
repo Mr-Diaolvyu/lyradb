@@ -40,6 +40,10 @@ public class User {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    /** 逻辑删除时间；保留用户主键及审计、脚本等历史关联。 */
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
     /** 密码或认证策略变化时递增，用于让既有会话立即失效。 */
     @Column(name = "credential_version", nullable = false)
     private long credentialVersion = 0;

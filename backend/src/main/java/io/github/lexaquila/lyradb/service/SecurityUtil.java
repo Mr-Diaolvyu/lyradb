@@ -25,6 +25,22 @@ import java.util.Set;
 @Component
 public class SecurityUtil {
 
+    private final ThreadLocal<String> backgroundWorkspace = new ThreadLocal<>();
+
+    /** 后台任务固定工作空间；不把已结束的 HTTP 请求传入线程池。 */
+    public <T> T inBackgroundWorkspace(String workspaceId, java.util.concurrent.Callable<T> action)
+            throws Exception {
+        requireWorkspaceAccess(workspaceId);
+        String previous = backgroundWorkspace.get();
+        backgroundWorkspace.set(workspaceId);
+        try {
+            return action.call();
+        } finally {
+            if (previous == null) backgroundWorkspace.remove();
+            else backgroundWorkspace.set(previous);
+        }
+    }
+
     public static final String CURRENT_WORKSPACE_ID = "currentWorkspaceId";
     public static final String CREDENTIAL_VERSION = "credentialVersion";
     public static final String REQUEST_WORKSPACE_SNAPSHOT =
@@ -171,6 +187,11 @@ public class SecurityUtil {
     }
 
     public String requireCurrentWorkspace() {
+        String background = backgroundWorkspace.get();
+        if (background != null) {
+            requireWorkspaceAccess(background);
+            return background;
+        }
         HttpServletRequest request = currentRequest();
         if (request != null) {
             Object snapshot = request.getAttribute(

@@ -39,7 +39,7 @@
     </div>
 
     <!-- Vxe-table 数据表格 -->
-    <div class="table-container">
+    <div ref="containerRef" class="table-container">
       <vxe-table
         ref="tableRef"
         :data="filteredRows"
@@ -61,14 +61,19 @@
           :key="col"
           :field="col"
           :title="col"
-          min-width="120"
+          :min-width="fieldDisplayMode === 'both' ? 180 : 140"
           :align="colTypes[col] === 'number' ? 'right' : 'left'"
           show-overflow
         >
           <template #header>
-            <span class="col-type-badge" :title="colTypes[col]">{{ typeBadge(colTypes[col]) }}</span>
-            <span :title="headerTitle(col) === col ? undefined : col">{{ headerTitle(col) }}</span>
-            <el-icon v-if="isPk(col)" class="pk-icon" title="主键"><Key /></el-icon>
+            <span class="column-heading" :title="headerTitle(col)">
+              <span class="column-heading-line">
+                <span class="col-type-badge" :title="colTypes[col]">{{ typeBadge(colTypes[col]) }}</span>
+                <span class="column-heading-name">{{ fieldDisplayMode === 'comment' && remarksMap?.[col] ? remarksMap[col] : col }}</span>
+                <el-icon v-if="isPk(col)" class="pk-icon" title="主键"><Key /></el-icon>
+              </span>
+              <small v-if="fieldDisplayMode === 'both' && remarksMap?.[col]" class="column-heading-remark">{{ remarksMap[col] }}</small>
+            </span>
           </template>
           <template #default="{ row }">
             <el-input
@@ -388,18 +393,23 @@ function getCellClass(val: any): string {
 
 // === 表格高度自适应 ===
 function updateTableHeight() {
-  const container = tableRef.value?.$el?.parentElement as HTMLElement
-  if (container) {
-    tableHeight.value = container.clientHeight - 40 // 减去工具栏高度
-  }
+  if (containerRef.value?.clientHeight) tableHeight.value = containerRef.value.clientHeight
 }
 
+let resizeObserver: ResizeObserver | undefined
 onMounted(() => {
-  nextTick(updateTableHeight)
+  nextTick(() => {
+    updateTableHeight()
+    if (containerRef.value && typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(updateTableHeight)
+      resizeObserver.observe(containerRef.value)
+    }
+  })
   window.addEventListener('resize', updateTableHeight)
 })
 
 onUnmounted(() => {
+  resizeObserver?.disconnect()
   window.removeEventListener('resize', updateTableHeight)
 })
 
@@ -536,11 +546,32 @@ watch(() => props.editable, () => {
 :deep(.vxe-table) {
   --vxe-ui-font-family: var(--font-ui);
   --vxe-ui-font-size: var(--text-body);
+  --vxe-ui-font-color: var(--color-foreground);
+  --vxe-ui-table-header-font-color: var(--color-foreground);
+  --vxe-ui-layout-background-color: var(--color-panel);
+  --vxe-ui-table-header-background-color: var(--color-panel-header);
+  --vxe-ui-table-border-color: var(--color-panel-border);
+  --vxe-ui-table-row-striped-background-color: var(--color-background);
+  --vxe-ui-table-row-current-background-color: var(--color-active);
+  --vxe-ui-table-row-hover-background-color: var(--color-hover);
+  --vxe-ui-table-row-hover-current-background-color: var(--color-hover);
 }
+
+.column-heading { display: block; min-width: 0; width: 100%; overflow: hidden; }
+.column-heading-line { display: flex; min-width: 0; align-items: center; }
+.column-heading-name, .column-heading-remark { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.column-heading-name { flex: 1; }
+.column-heading-remark { padding-left: 24px; color: var(--color-text-muted); font-size: 11px; font-weight: 400; }
 
 :deep(.vxe-table .vxe-header--column) {
   background: var(--color-panel-header);
+  color: var(--color-foreground);
   font-weight: 600;
+}
+
+:deep(.vxe-table .vxe-body--column),
+:deep(.vxe-table .vxe-cell) {
+  color: var(--color-foreground);
 }
 
 :deep(.vxe-table .vxe-body--row) {

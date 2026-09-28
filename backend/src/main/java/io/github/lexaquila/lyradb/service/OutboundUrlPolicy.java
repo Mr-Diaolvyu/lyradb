@@ -25,6 +25,7 @@ public class OutboundUrlPolicy {
 
     private static final Set<String> BUILT_IN_AI_HOSTS = Set.of(
             "dashscope.aliyuncs.com",
+            "token-plan.cn-beijing.maas.aliyuncs.com",
             "open.bigmodel.cn",
             "ark.cn-beijing.volces.com",
             "api.deepseek.com",

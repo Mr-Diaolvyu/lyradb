@@ -2,11 +2,13 @@ package io.github.lexaquila.lyradb.controller;
 
 import io.github.lexaquila.lyradb.model.entity.User;
 import io.github.lexaquila.lyradb.service.AuditService;
+import io.github.lexaquila.lyradb.service.AdminUserLifecycleService;
 import io.github.lexaquila.lyradb.service.SecurityUtil;
 import io.github.lexaquila.lyradb.service.UserService;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -31,12 +33,15 @@ public class AdminUserController {
     private final UserService userService;
     private final SecurityUtil securityUtil;
     private final AuditService auditService;
+    private final AdminUserLifecycleService lifecycleService;
 
     public AdminUserController(UserService userService, SecurityUtil securityUtil,
-                               AuditService auditService) {
+                               AuditService auditService,
+                               AdminUserLifecycleService lifecycleService) {
         this.userService = userService;
         this.securityUtil = securityUtil;
         this.auditService = auditService;
+        this.lifecycleService = lifecycleService;
     }
 
     @GetMapping
@@ -98,6 +103,74 @@ public class AdminUserController {
         String workspaceId = securityUtil.requireCurrentWorkspace(session);
         userService.setPassword(username, body.get("newPassword"));
         auditService.recordCurrent(workspaceId, "USER_PASSWORD_RESET", null, username, true, null);
+        return Map.of("success", true);
+    }
+
+    @PutMapping("/{username}/roles")
+    @Transactional
+    public Map<String, Object> updateRoles(@PathVariable String username,
+                                            @RequestBody Map<String, Object> body,
+                                            HttpSession session) {
+        securityUtil.requireRole("PLATFORM_ADMIN");
+        String workspaceId = securityUtil.requireCurrentWorkspace(session);
+        @SuppressWarnings("unchecked")
+        List<String> roles = (List<String>) body.get("roles");
+        userService.updateRoles(username, workspaceId, roles, securityUtil.currentUserId());
+        auditService.recordCurrent(workspaceId, "USER_ROLES_UPDATE",
+                null, username, true, null);
+        return Map.of("success", true);
+    }
+
+    @PostMapping("/{userId}/freeze")
+    @Transactional
+    public Map<String, Object> freeze(@PathVariable String userId, HttpSession session) {
+        securityUtil.requireRole("PLATFORM_ADMIN");
+        String workspaceId = securityUtil.requireCurrentWorkspace(session);
+        lifecycleService.setFrozen(userId, securityUtil.currentUserId(), true);
+        auditService.recordCurrent(workspaceId, "USER_FREEZE", null, userId, true, null);
+        return Map.of("success", true);
+    }
+
+    @PostMapping("/{userId}/unfreeze")
+    @Transactional
+    public Map<String, Object> unfreeze(@PathVariable String userId, HttpSession session) {
+        securityUtil.requireRole("PLATFORM_ADMIN");
+        String workspaceId = securityUtil.requireCurrentWorkspace(session);
+        lifecycleService.setFrozen(userId, securityUtil.currentUserId(), false);
+        auditService.recordCurrent(workspaceId, "USER_UNFREEZE", null, userId, true, null);
+        return Map.of("success", true);
+    }
+
+    @GetMapping("/{userId}/scripts")
+    public List<Map<String, Object>> scripts(@PathVariable String userId,
+                                              HttpSession session) {
+        securityUtil.requireRole("PLATFORM_ADMIN");
+        return lifecycleService.scripts(
+                securityUtil.requireCurrentWorkspace(session), userId);
+    }
+
+    @PostMapping("/{userId}/scripts/transfer")
+    @Transactional
+    public Map<String, Object> transferScripts(@PathVariable String userId,
+                                                @RequestBody Map<String, String> body,
+                                                HttpSession session) {
+        securityUtil.requireRole("PLATFORM_ADMIN");
+        String workspaceId = securityUtil.requireCurrentWorkspace(session);
+        int count = lifecycleService.transferScripts(workspaceId, userId,
+                body == null ? null : body.get("targetUserId"));
+        auditService.recordCurrent(workspaceId, "USER_SCRIPTS_TRANSFER",
+                null, userId, true, null);
+        return Map.of("success", true, "count", count);
+    }
+
+    @DeleteMapping("/{userId}")
+    @Transactional
+    public Map<String, Object> delete(@PathVariable String userId, HttpSession session) {
+        securityUtil.requireRole("PLATFORM_ADMIN");
+        String workspaceId = securityUtil.requireCurrentWorkspace(session);
+        lifecycleService.softDelete(userId, securityUtil.currentUserId());
+        auditService.recordCurrent(workspaceId, "USER_SOFT_DELETE",
+                null, userId, true, null);
         return Map.of("success", true);
     }
 

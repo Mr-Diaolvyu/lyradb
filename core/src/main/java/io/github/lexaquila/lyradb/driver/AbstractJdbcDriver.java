@@ -1159,6 +1159,9 @@ public abstract class AbstractJdbcDriver implements DatabaseDriver {
                 url = url.replace(placeholder, value.toString());
             } else if (field.getDefaultValue() != null) {
                 url = url.replace(placeholder, field.getDefaultValue().toString());
+            } else if (!field.isRequired()) {
+                // 可选字段未填写时不能把 {database} 等占位符发送给 JDBC 驱动。
+                url = url.replace(placeholder, "");
             }
         }
 

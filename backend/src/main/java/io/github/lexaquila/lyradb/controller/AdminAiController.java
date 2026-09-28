@@ -2,6 +2,7 @@ package io.github.lexaquila.lyradb.controller;
 
 import io.github.lexaquila.lyradb.model.entity.AiProviderConfig;
 import io.github.lexaquila.lyradb.service.AiProviderService;
+import io.github.lexaquila.lyradb.service.AiProviderAuthenticationException;
 import io.github.lexaquila.lyradb.service.AuditService;
 import io.github.lexaquila.lyradb.service.SecurityUtil;
 import jakarta.servlet.http.HttpSession;
@@ -75,6 +76,27 @@ public class AdminAiController {
         auditService.recordCurrent(workspaceId, "AI_PROVIDER_SET_DEFAULT",
                 null, id, true, null);
         return Map.of("success", true);
+    }
+
+    @PostMapping("/{id}/test")
+    public Map<String, Object> test(@PathVariable String id, HttpSession session) {
+        securityUtil.requireRole("DS_ADMIN");
+        String workspaceId = securityUtil.requireCurrentWorkspace(session);
+        try {
+            long elapsedMs = aiProviderService.testConnection(id, workspaceId);
+            auditService.recordCurrent(workspaceId, "AI_PROVIDER_TEST",
+                    null, id, true, null);
+            return Map.of("success", true, "message", "模型调用成功",
+                    "elapsedMs", elapsedMs);
+        } catch (AiProviderAuthenticationException exception) {
+            auditService.recordCurrent(workspaceId, "AI_PROVIDER_TEST",
+                    null, id, false, "Provider 鉴权失败");
+            return Map.of("success", false, "message", "Provider 鉴权失败");
+        } catch (Exception exception) {
+            auditService.recordCurrent(workspaceId, "AI_PROVIDER_TEST",
+                    null, id, false, exception.getClass().getSimpleName());
+            return Map.of("success", false, "message", "测试失败：请核对服务地址、模型和网络配置");
+        }
     }
 
     @DeleteMapping("/{id}")

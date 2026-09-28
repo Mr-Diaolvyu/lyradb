@@ -1,206 +1,130 @@
 /**
- * SQL 格式化（自实现，无第三方依赖）
- *
- * <p>
- * 基础规则：关键字大写、在主要子句前换行、统一空白与缩进、保留字符串字面量不被改写。
- * 不追求完备（不处理嵌套子查询缩进、CTE 展开等），作为 MVP 可用即可（PRD F4）。
- * </p>
+ * 保守的 SQL 排版：只调整关键子句前的空白，不改写任何非空白字符。
+ * 因而字符串、注释、标识符、运算符及原有分号均保持原样。
  */
+type TokenKind = 'word' | 'quoted' | 'comment' | 'punctuation' | 'operator'
+interface Token { text: string; kind: TokenKind; gap: string }
 
-const CLAUSE_KEYWORDS = new Set([
-  'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'ORDER BY', 'GROUP BY',
-  'HAVING', 'LIMIT', 'OFFSET', 'INNER JOIN', 'LEFT JOIN', 'RIGHT JOIN',
-  'FULL JOIN', 'JOIN', 'ON', 'UNION', 'UNION ALL', 'INTERSECT', 'EXCEPT',
-  'INSERT INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE FROM', 'CREATE TABLE',
-  'ALTER TABLE', 'DROP TABLE', 'WITH',
+const CLAUSES = new Set([
+  'SELECT', 'FROM', 'WHERE', 'HAVING', 'LIMIT', 'OFFSET',
+  'JOIN', 'UNION', 'INTERSECT', 'EXCEPT', 'WITH',
+  'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP',
 ])
 
-const TOP_LEVEL = new Set([
-  'SELECT', 'FROM', 'WHERE', 'ORDER BY', 'GROUP BY', 'HAVING',
-  'LIMIT', 'OFFSET', 'INNER JOIN', 'LEFT JOIN', 'RIGHT JOIN',
-  'FULL JOIN', 'JOIN', 'UNION', 'UNION ALL', 'INTERSECT', 'EXCEPT',
-  'INSERT INTO', 'VALUES', 'UPDATE', 'DELETE FROM', 'CREATE TABLE',
-  'ALTER TABLE', 'DROP TABLE', 'WITH',
-])
+function tokenize(sql: string): Token[] {
+  const result: Token[] = []
+  let index = 0
+  let gap = ''
+  const push = (end: number, kind: TokenKind) => {
+    result.push({ text: sql.slice(index, end), kind, gap })
+    gap = ''
+    index = end
+  }
 
-function isQuote(ch: string): boolean {
-  return ch === "'" || ch === '"' || ch === '`'
-}
-
-/** 简易分词，保留字符串/引号标识符的整体性 */
-function tokenize(sql: string): string[] {
-  const tokens: string[] = []
-  let i = 0
-  while (i < sql.length) {
-    const ch = sql[i]
-    if (ch === '-' && sql[i + 1] === '-') {
-      // 行注释
-      let j = i
-      while (j < sql.length && sql[j] !== '\n') j++
-      tokens.push(sql.slice(i, j))
-      i = j
+  while (index < sql.length) {
+    const character = sql[index]
+    if (/\s/.test(character)) {
+      gap += character
+      index++
       continue
     }
-    if (ch === '/' && sql[i + 1] === '*') {
-      // 块注释
-      let j = i + 2
-      while (j < sql.length && !(sql[j] === '*' && sql[j + 1] === '/')) j++
-      tokens.push(sql.slice(i, Math.min(j + 2, sql.length)))
-      i = Math.min(j + 2, sql.length)
+    if (sql.startsWith('--', index) || character === '#') {
+      const end = sql.indexOf('\n', index)
+      push(end < 0 ? sql.length : end, 'comment')
       continue
     }
-    if (isQuote(ch)) {
-      let j = i + 1
-      while (j < sql.length) {
-        if (isQuote(sql[j])) {
-          // 处理双引号转义 ('')
-          if (sql[j] === ch && sql[j + 1] === ch) {
-            j += 2
-            continue
-          }
-          j++
+    if (sql.startsWith('/*', index)) {
+      const end = sql.indexOf('*/', index + 2)
+      push(end < 0 ? sql.length : end + 2, 'comment')
+      continue
+    }
+    const dollar = character === '$'
+      ? sql.slice(index).match(/^\$[A-Za-z_0-9]*\$/)?.[0] : undefined
+    if (dollar) {
+      const end = sql.indexOf(dollar, index + dollar.length)
+      push(end < 0 ? sql.length : end + dollar.length, 'quoted')
+      continue
+    }
+    if (character === "'" || character === '"' || character === '`' || character === '[') {
+      const closing = character === '[' ? ']' : character
+      let end = index + 1
+      while (end < sql.length) {
+        if (sql[end] === '\\' && (character === "'" || character === '"')) {
+          end += 2
+          continue
+        }
+        if (sql[end] === closing) {
+          if (sql[end + 1] === closing) { end += 2; continue }
+          end++
           break
         }
-        j++
+        end++
       }
-      tokens.push(sql.slice(i, j))
-      i = j
+      push(Math.min(end, sql.length), 'quoted')
       continue
     }
-    if (/\s/.test(ch)) {
-      let j = i
-      while (j < sql.length && /\s/.test(sql[j])) j++
-      tokens.push(' ')
-      i = j
+    if (/[A-Za-z_\u0080-\uffff]/.test(character)) {
+      let end = index + 1
+      while (end < sql.length && /[A-Za-z_0-9$\u0080-\uffff]/.test(sql[end])) end++
+      push(end, 'word')
       continue
     }
-    if (/[(),;]/.test(ch)) {
-      tokens.push(ch)
-      i++
+    if ('(),;.'.includes(character)) {
+      push(index + 1, 'punctuation')
       continue
     }
-    // 普通标识符/数字/运算符
-    let j = i
-    while (j < sql.length && !/[\s(),;'"`]/.test(sql[j])) j++
-    tokens.push(sql.slice(i, j))
-    i = j
+    // 保留运算符与数字的原样组合，避免把 ::、->、>= 等拆坏。
+    let end = index + 1
+    while (end < sql.length && !/[\sA-Za-z_\u0080-\uffff'"`[\](),;.]/.test(sql[end])
+      && !sql.startsWith('--', end) && !sql.startsWith('/*', end)) end++
+    push(end, 'operator')
   }
-  return tokens
+  return result
 }
 
-/** 把连续 token 合成多词关键字（如 ORDER BY）以便识别 */
-function composeKeywords(tokens: string[]): { text: string; isSpace: boolean; isPunct: boolean }[] {
-  const out: { text: string; isSpace: boolean; isPunct: boolean }[] = []
-  for (let k = 0; k < tokens.length; k++) {
-    const t = tokens[k]
-    if (t === ' ') {
-      out.push({ text: ' ', isSpace: true, isPunct: false })
-      continue
-    }
-    if (/^[(),;]$/.test(t)) {
-      out.push({ text: t, isSpace: false, isPunct: true })
-      continue
-    }
-    // 检查双词关键字
-    const next = tokens[k + 1]
-    const nextNext = tokens[k + 2]
-    const two = `${t} ${nextNext || ''}`.trim()
-    if (next === ' ' && nextNext && CLAUSE_KEYWORDS.has(`${t} ${nextNext}`.toUpperCase())) {
-      out.push({ text: `${t} ${nextNext}`.toUpperCase(), isSpace: false, isPunct: false })
-      k += 2
-      continue
-    }
-    out.push({ text: t, isSpace: false, isPunct: false })
+function startsClause(tokens: Token[], index: number): boolean {
+  const token = tokens[index]
+  if (token.kind !== 'word') return false
+  const keyword = token.text.toUpperCase()
+  if (keyword === 'GROUP' || keyword === 'ORDER') {
+    return tokens[index + 1]?.text.toUpperCase() === 'BY'
   }
-  return out
+  if (keyword === 'LEFT' || keyword === 'RIGHT' || keyword === 'INNER' || keyword === 'FULL') {
+    return tokens[index + 1]?.text.toUpperCase() === 'JOIN'
+  }
+  if (keyword === 'JOIN' && ['LEFT', 'RIGHT', 'INNER', 'FULL']
+    .includes(tokens[index - 1]?.text.toUpperCase() || '')) return false
+  return CLAUSES.has(keyword) || keyword === 'AND' || keyword === 'OR'
 }
 
 export function formatSql(input: string): string {
-  if (!input || !input.trim()) return input || ''
+  if (!input.trim()) return input
   const tokens = tokenize(input)
-  const parts = composeKeywords(tokens)
+  let output = ''
+  let depth = 0
+  let previous: Token | undefined
 
-  let out = ''
-  let indent = 0
-  let prevIsClause = false
-  let prevIsOpenParen = false
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]
+    if (token.text === ')') depth = Math.max(0, depth - 1)
+    const lineComment = previous?.kind === 'comment'
+      && (previous.text.startsWith('--') || previous.text.startsWith('#'))
+    const originalLineBreak = /[\r\n]/.test(token.gap)
+    const clause = startsClause(tokens, index)
+    const newLine = previous && (lineComment || (clause && previous.text !== '(')
+      || previous.text === ';' || originalLineBreak)
 
-  const newline = () => '\n' + '  '.repeat(indent)
-  const isStringToken = (s: string) => isQuote(s[0])
-
-  for (let k = 0; k < parts.length; k++) {
-    const p = parts[k]
-    if (p.isSpace) continue
-    const upper = p.text.toUpperCase()
-    const prev = k > 0 ? parts[k - 1] : null
-    const lastChar = out.length ? out[out.length - 1] : ''
-
-    if (p.isPunct) {
-      if (p.text === '(') {
-        out += '('
-        prevIsOpenParen = true
-      } else if (p.text === ')') {
-        out = out.replace(/\s*$/, '') + ')'
-      } else if (p.text === ',') {
-        out += ', '
-      } else if (p.text === ';') {
-        out = out.replace(/\s*$/, '') + ';'
-      }
-      prevIsClause = false
-      continue
+    if (newLine) {
+      output = output.replace(/[ \t]+$/, '')
+      output += '\n' + '  '.repeat(depth)
+    } else if (previous && token.gap) {
+      output += ' '
+    } else if (!previous) {
+      output += token.gap
     }
-
-    const isClause = TOP_LEVEL.has(upper) || CLAUSE_KEYWORDS.has(upper)
-
-    if (isClause && TOP_LEVEL.has(upper)) {
-      // 顶层子句：换行 + 重置缩进
-      out = out.replace(/\s*$/, '')
-      if (out) out += newline()
-      out += upper
-      indent = upper === 'SELECT' ? 1 : indent
-      prevIsClause = true
-      continue
-    }
-
-    if (upper === 'AND' || upper === 'OR') {
-      out = out.replace(/\s*$/, '')
-      out += newline() + upper + ' '
-      prevIsClause = true
-      continue
-    }
-
-    // 普通 token
-    const isStr = isStringToken(p.text)
-    const text = isStr ? p.text : (isKeyword(p.text) ? p.text.toUpperCase() : p.text)
-
-    if (out === '') {
-      out += text
-    } else if (lastChar === '(' || lastChar === '\n' || prevIsClause) {
-      out += text
-    } else if (prev?.isPunct && prev.text === '(') {
-      out += text
-    } else {
-      out += ' ' + text
-    }
-    prevIsClause = false
-    prevIsOpenParen = false
+    output += token.text
+    if (token.text === '(') depth++
+    previous = token
   }
-
-  return out.trim() + (out.endsWith(';') ? '' : ';')
-}
-
-const KEYWORD_SET = new Set([
-  'SELECT', 'DISTINCT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN',
-  'IS', 'NULL', 'AS', 'ORDER', 'BY', 'GROUP', 'HAVING', 'LIMIT', 'OFFSET',
-  'INSERT', 'INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE', 'CREATE', 'TABLE',
-  'ALTER', 'DROP', 'INDEX', 'VIEW', 'DATABASE', 'JOIN', 'INNER', 'LEFT',
-  'RIGHT', 'FULL', 'ON', 'UNION', 'ALL', 'CASE', 'WHEN', 'THEN',
-  'ELSE', 'END', 'IF', 'EXISTS', 'COUNT', 'SUM', 'AVG', 'MIN', 'MAX',
-  'SHOW', 'TABLES', 'COLUMNS', 'DESCRIBE', 'EXPLAIN', 'WITH', 'RECURSIVE',
-  'ASC', 'DESC', 'DEFAULT', 'PRIMARY', 'KEY', 'FOREIGN', 'REFERENCES', 'UNIQUE',
-  'CONSTRAINT', 'CHECK', 'CAST', 'CONVERT', 'OVER', 'PARTITION', 'WINDOW',
-])
-
-function isKeyword(s: string): boolean {
-  return KEYWORD_SET.has(s.toUpperCase())
+  return output.trimEnd() + input.slice(input.trimEnd().length)
 }

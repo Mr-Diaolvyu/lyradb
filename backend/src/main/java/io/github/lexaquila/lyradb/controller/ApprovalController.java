@@ -49,6 +49,9 @@ public class ApprovalController {
         User user = securityUtil.requireCurrentUser();
         String workspaceId = securityUtil.requireCurrentWorkspace(session);
         String grantedSourceName = stringValue(body.get("grantedSourceName"));
+        if ("TABLE_EDIT".equalsIgnoreCase(stringValue(body.get("operationType")))) {
+            throw new IllegalArgumentException("表格编辑审批只能通过表工作台提交");
+        }
         Grant grant = grantService.resolveForUser(
                 user.getId(), workspaceId, grantedSourceName);
         if (!workspaceId.equals(grant.getWorkspaceId())) {

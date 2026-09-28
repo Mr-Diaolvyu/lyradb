@@ -87,5 +87,11 @@ class SqlParseUtilTest {
                 "public.users", Set.of("users")));
         assertTrue(SqlParseUtil.matchAny(
                 "public.audit_2026", Set.of("public.audit_*")));
+        assertTrue(SqlParseUtil.matchAny(
+                "sales.orders", Set.of("*.*")));
+        assertTrue(SqlParseUtil.matchAny(
+                "prod.sales.orders", Set.of("*.*")));
+        assertFalse(SqlParseUtil.matchAny(
+                "orders", Set.of("*.*")));
     }
 }

@@ -23,11 +23,12 @@ class FlywayMigrationTest {
         String url = memoryDatabaseUrl("clean");
         Flyway flyway = flyway(url);
 
-        assertEquals(7, flyway.migrate().migrationsExecuted);
+        assertEquals(9, flyway.migrate().migrationsExecuted);
         assertEquals(0, flyway.migrate().migrationsExecuted);
 
         try (Connection connection = DriverManager.getConnection(url, "sa", "")) {
             assertColumnExists(connection, "SYS_USER", "CREDENTIAL_VERSION");
+            assertColumnExists(connection, "SYS_USER", "DELETED_AT");
             assertColumnExists(connection, "ENT_AUDIT_LOG", "DETAILS_JSON");
             assertColumnExists(connection, "SYS_WORKSPACE_MEMBERSHIP", "ROLES_CSV");
             assertColumnExists(connection, "ENT_MASKING_RULE", "WORKSPACE_ID");
@@ -43,6 +44,9 @@ class FlywayMigrationTest {
             assertColumnExists(connection, "AI_PROVIDER_CONFIG", "DEPLOYMENT_MODE");
             assertColumnExists(connection, "AI_MAXCOMPUTE_PREFLIGHT", "TOKEN_SHA256");
             assertColumnExists(connection, "AI_MAXCOMPUTE_PREFLIGHT", "EXPIRES_AT");
+            assertColumnExists(connection, "ENT_DATA_SOURCE", "LAST_TEST_STATUS");
+            assertColumnExists(connection, "ENT_SAVED_SQL", "ENCRYPTED_SQL");
+            assertColumnExists(connection, "ENT_QUERY_HISTORY", "ENCRYPTED_SQL");
         }
     }
 
@@ -99,18 +103,19 @@ class FlywayMigrationTest {
                     """);
         }
 
-        assertEquals(7, flyway(url).migrate().migrationsExecuted);
+        assertEquals(9, flyway(url).migrate().migrationsExecuted);
 
         try (Connection connection = DriverManager.getConnection(url, "sa", "");
              Statement statement = connection.createStatement()) {
             try (ResultSet user = statement.executeQuery("""
-                    SELECT username, credential_version
+                    SELECT username, credential_version, deleted_at
                       FROM sys_user
                      WHERE id = 'user-1'
                     """)) {
                 user.next();
                 assertEquals("legacy-user", user.getString("username"));
                 assertEquals(0L, user.getLong("credential_version"));
+                assertEquals(null, user.getTimestamp("deleted_at"));
             }
             try (ResultSet masking = statement.executeQuery("""
                     SELECT workspace_id

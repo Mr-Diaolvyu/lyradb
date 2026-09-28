@@ -19,6 +19,7 @@ import io.github.lexaquila.lyradb.model.entity.Grant;
 import io.github.lexaquila.lyradb.model.entity.User;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 import java.sql.Connection;
@@ -550,14 +551,14 @@ public class EnterpriseQueryService {
         }
         if (!authorized) {
             if (!schemaMatched) {
-                throw new RuntimeException(
+                throw new AccessDeniedException(
                         "Schema 不在授权范围内");
             }
             if (blacklistMatched) {
-                throw new RuntimeException(
+                throw new AccessDeniedException(
                         "表在黑名单中，禁止访问");
             }
-            throw new RuntimeException(
+            throw new AccessDeniedException(
                     "表不在授权白名单内");
         }
     }
@@ -619,12 +620,12 @@ public class EnterpriseQueryService {
         Grant grant = grantService.resolveForUser(
                 user.getId(), currentWorkspace, grantedSourceName);
         if (!currentWorkspace.equals(grant.getWorkspaceId())) {
-            throw new RuntimeException("逻辑数据源不属于当前工作空间");
+            throw new AccessDeniedException("逻辑数据源不属于当前工作空间");
         }
         DataSource dataSource =
                 dataSourceService.getEntity(grant.getDataSourceId());
         if (!currentWorkspace.equals(dataSource.getWorkspaceId())) {
-            throw new RuntimeException("授权与真实数据源工作空间不一致");
+            throw new AccessDeniedException("授权与真实数据源工作空间不一致");
         }
         return new AccessContext(user, grant, dataSource);
     }
@@ -635,7 +636,7 @@ public class EnterpriseQueryService {
         if (analysis.type() == SqlParseUtil.StatementType.DML
                 && !"DML_ALLOWED".equalsIgnoreCase(
                         grant.getSqlCapability())) {
-            throw new RuntimeException("当前授权为只读，不允许 DML");
+            throw new AccessDeniedException("当前授权为只读，不允许 DML");
         }
         authorizeResources(grant, analysis, defaultDatabase);
         return analysis;
@@ -653,37 +654,37 @@ public class EnterpriseQueryService {
 
         if (analysis.type() == SqlParseUtil.StatementType.READ
                 && analysis.tables().isEmpty()) {
-            throw new RuntimeException(
+            throw new AccessDeniedException(
                     "企业查询必须引用已授权物理表");
         }
         if (allowedTables.isEmpty()) {
-            throw new RuntimeException(
+            throw new AccessDeniedException(
                     "授权未配置表白名单，默认拒绝访问任何表");
         }
         if (allowedSchemas.isEmpty()) {
-            throw new RuntimeException(
+            throw new AccessDeniedException(
                     "企业物理表授权必须显式配置 Schema 白名单");
         }
         if (allowedTables.stream().anyMatch(table -> !table.contains("."))) {
-            throw new RuntimeException(
+            throw new AccessDeniedException(
                     "企业表白名单必须使用 Schema.Table 完整限定名");
         }
         for (String table : analysis.tables()) {
             if (SqlParseUtil.matchAny(table, blockedTables)) {
-                throw new RuntimeException(
+                throw new AccessDeniedException(
                         "表在黑名单中，禁止访问: " + table);
             }
             if (!SqlParseUtil.matchAny(table, allowedTables)) {
-                throw new RuntimeException(
+                throw new AccessDeniedException(
                         "表不在授权白名单内: " + table);
             }
             String schema = SqlParseUtil.schemaOf(table);
             if (schema == null) {
-                throw new RuntimeException(
+                throw new AccessDeniedException(
                         "企业 SQL 必须使用 Schema.Table 完整限定物理表");
             }
             if (!SqlParseUtil.matchAny(schema, allowedSchemas)) {
-                throw new RuntimeException(
+                throw new AccessDeniedException(
                         "Schema 不在授权范围内: " + schema);
             }
         }
@@ -692,7 +693,7 @@ public class EnterpriseQueryService {
             if (allowedSchemas.isEmpty()
                     || !SqlParseUtil.matchAny(
                             defaultDatabase, allowedSchemas)) {
-                throw new RuntimeException(
+                throw new AccessDeniedException(
                         "默认数据库/Schema 未被显式授权");
             }
         }

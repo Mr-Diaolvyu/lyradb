@@ -4,6 +4,7 @@ import io.github.lexaquila.lyradb.config.AppProperties;
 import io.github.lexaquila.lyradb.model.entity.DriverInfo;
 import io.github.lexaquila.lyradb.model.entity.MavenCoordinates;
 import jakarta.annotation.PreDestroy;
+import org.apache.maven.repository.internal.MavenRepositorySystemUtils;
 import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
@@ -203,7 +204,9 @@ public class MavenDriverManager implements AutoCloseable {
                 repositorySystem.resolveArtifact(session, artifactRequest);
 
         CollectRequest collectRequest = new CollectRequest();
-        collectRequest.setRoot(new Dependency(artifact, "runtime"));
+        // 驱动是应用的运行依赖；不能将驱动 POM 当作正在构建的根项目，
+        // 否则它自身的 test/provided/optional 分支会进入解析范围。
+        collectRequest.addDependency(new Dependency(artifact, "runtime"));
         for (RemoteRepository repository : remoteRepositories) {
             collectRequest.addRepository(repository);
         }
@@ -278,7 +281,7 @@ public class MavenDriverManager implements AutoCloseable {
 
     private RepositorySystemSession newSession() {
         DefaultRepositorySystemSession session =
-                new DefaultRepositorySystemSession();
+                MavenRepositorySystemUtils.newSession();
         LocalRepository localRepository =
                 new LocalRepository(getDriverCacheDir());
         session.setLocalRepositoryManager(

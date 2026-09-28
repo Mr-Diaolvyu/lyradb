@@ -23,6 +23,11 @@ import jakarta.annotation.PreDestroy;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -212,17 +217,20 @@ public class DataSourceService {
         disconnectAfterTransaction(id);
     }
 
-    /** 测试连接（不保存） */
+    /** 人工测试连接，并记录与当次配置指纹绑定的结果。 */
     public Map<String, Object> test(String id) {
         long startedAt = System.nanoTime();
+        LocalDateTime testedAt = LocalDateTime.now();
         DataSource ds = getEntity(id);
         Map<String, Object> result = new HashMap<>();
         DatabaseDriver driver = null;
         Object connection = null;
+        boolean driverReady = false;
         log.info("开始测试数据源连接: {} ({})", id, ds.getDbType());
         try {
             Map<String, Object> params = credentialService.decryptSensitiveFields(parseParams(ds.getConnectionParamsJson()));
             driver = driverFactory.createDriver(ds.getDbType());
+            driverReady = true;
             connection = driver.connect(params);
             if (connection == null) {
                 throw new IllegalStateException("驱动未返回有效连接");
@@ -234,6 +242,8 @@ public class DataSourceService {
                     e.getClass().getSimpleName());
             result.put("success", false);
             result.put("message", ConnectionFailureAdvisor.message(ds.getDbType(), e));
+            result.put("errorCode", e.getClass().getSimpleName().substring(0,
+                    Math.min(80, e.getClass().getSimpleName().length())));
         } finally {
             if (driver != null && connection != null) {
                 try {
@@ -247,6 +257,12 @@ public class DataSourceService {
         long elapsedMs = TimeUnit.NANOSECONDS.toMillis(
                 System.nanoTime() - startedAt);
         result.put("elapsedMs", elapsedMs);
+        String status = Boolean.TRUE.equals(result.get("success")) ? "CONNECTED"
+                : driverReady ? "FAILED" : "DRIVER_UNAVAILABLE";
+        repository.recordTest(id, status, testedAt, elapsedMs,
+                (String) result.get("errorCode"), sha256(ds.getConnectionParamsJson()));
+        result.put("status", status);
+        result.put("testedAt", testedAt);
         log.info("数据源连接测试完成: {} ({}) success={} elapsedMs={}",
                 id, ds.getDbType(), result.get("success"), elapsedMs);
         return result;
@@ -260,7 +276,10 @@ public class DataSourceService {
         String fingerprint = connectionFingerprint(ds);
         CachedActiveConnection cached = active.get(dataSourceId);
         if (cached != null && cached.fingerprint().equals(fingerprint)) {
-            return cached.connection();
+            if (cachedConnectionAlive(cached.connection())) {
+                return cached.connection();
+            }
+            log.info("企业数据源缓存连接已失效，准备重连: {}", dataSourceId);
         }
         if (cached != null) {
             disconnect(dataSourceId);
@@ -346,7 +365,48 @@ public class DataSourceService {
         view.put("params", credentialService.maskSensitiveFields(parseParams(ds.getConnectionParamsJson())));
         view.put("createdBy", ds.getCreatedBy());
         view.put("createdAt", ds.getCreatedAt());
+        String status = ds.getLastTestStatus() == null ? "NOT_TESTED" : ds.getLastTestStatus();
+        if (ds.getLastTestedAt() != null
+                && (!sha256(ds.getConnectionParamsJson()).equals(ds.getLastTestConfigHash())
+                    || Duration.between(ds.getLastTestedAt(), LocalDateTime.now()).toHours() >= 24)) {
+            status = "STALE";
+        }
+        view.put("lastTestStatus", status);
+        view.put("lastTestedAt", ds.getLastTestedAt());
+        view.put("lastTestElapsedMs", ds.getLastTestElapsedMs());
+        view.put("lastTestErrorCode", ds.getLastTestErrorCode());
         return view;
+    }
+
+    private static String sha256(String value) {
+        try {
+            byte[] bytes = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(bytes);
+        } catch (Exception exception) {
+            throw new IllegalStateException("无法计算连接配置指纹", exception);
+        }
+    }
+
+    /** 连接测试使用新连接；这里还需验证企业功能实际复用的连接。 */
+    private static boolean cachedConnectionAlive(ConnectionService.ActiveConnection active) {
+        if (!(active.connection instanceof Connection jdbc)) {
+            return true;
+        }
+        try (ConnectionService.ActiveConnection.Lease ignored = active.acquire()) {
+            try {
+                return jdbc.isValid(3);
+            } catch (SQLFeatureNotSupportedException exception) {
+                // 旧 JDBC 驱动不支持心跳时，至少检查本地关闭状态。
+                try {
+                    return !jdbc.isClosed();
+                } catch (SQLException ignoredException) {
+                    return false;
+                }
+            } catch (SQLException exception) {
+                return false;
+            }
+        }
     }
 
     private Map<String, Object> parseParams(String json) {

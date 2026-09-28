@@ -4,6 +4,7 @@ import io.github.lexaquila.lyradb.config.AppProperties;
 import io.github.lexaquila.lyradb.model.entity.Grant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.sql.Connection;
 
@@ -113,6 +114,19 @@ class EnterpriseQueryNamespaceSecurityTest {
                         grant, "select id from dw.orders", "dw/invalid"));
 
         verify(dataSourceService, never()).disconnect("source-1");
+    }
+
+    @Test
+    void tablelessReadAndUnlistedTableAreAccessDenied() {
+        Grant grant = new Grant();
+        grant.setAllowedSchemas("dw");
+        grant.setAllowedTables("dw.orders");
+
+        assertThrows(AccessDeniedException.class,
+                () -> service.authorizeReadOnly(grant, "SELECT 1", null));
+        assertThrows(AccessDeniedException.class,
+                () -> service.authorizeReadOnly(
+                        grant, "SELECT id FROM dw.secrets", null));
     }
 
     @Test

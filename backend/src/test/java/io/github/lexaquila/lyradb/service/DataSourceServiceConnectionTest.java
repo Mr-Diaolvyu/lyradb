@@ -9,18 +9,25 @@ import io.github.lexaquila.lyradb.repository.DataSourceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.Map;
 import java.util.Optional;
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 
 class DataSourceServiceConnectionTest {
 
@@ -53,6 +60,8 @@ class DataSourceServiceConnectionTest {
         when(credentialService.decryptSensitiveFields(anyMap()))
                 .thenReturn(Map.of("host", "127.0.0.1"));
         when(driverFactory.createDriver("MYSQL")).thenReturn(driver);
+        when(driverFactory.getOrCreateDriver("source-1", "MYSQL"))
+                .thenReturn(driver);
     }
 
     @Test
@@ -68,6 +77,9 @@ class DataSourceServiceConnectionTest {
         Number elapsed = assertInstanceOf(
                 Number.class, result.get("elapsedMs"));
         assertTrue(elapsed.longValue() >= 0L);
+        assertEquals("CONNECTED", result.get("status"));
+        verify(repository).recordTest(eq("source-1"), eq("CONNECTED"),
+                any(LocalDateTime.class), any(Long.class), eq(null), any(String.class));
         verify(driver).disconnect(connection);
     }
 
@@ -87,6 +99,26 @@ class DataSourceServiceConnectionTest {
     }
 
     @Test
+    void unavailableDriverIsDistinguishedFromFailedConnection() {
+        when(driverFactory.createDriver("MYSQL"))
+                .thenThrow(new IllegalStateException("driver unavailable"));
+
+        Map<String, Object> result = service.test("source-1");
+
+        assertEquals("DRIVER_UNAVAILABLE", result.get("status"));
+    }
+
+    @Test
+    void changedConfigurationInvalidatesPreviousConnectedMarker() {
+        DataSource source = repository.findById("source-1").orElseThrow();
+        source.setLastTestStatus("CONNECTED");
+        source.setLastTestedAt(LocalDateTime.now());
+        source.setLastTestConfigHash("old-config-hash");
+
+        assertEquals("STALE", service.getMasked("source-1").get("lastTestStatus"));
+    }
+
+    @Test
     void disconnectFailureDoesNotHideSuccessfulConnectivityResult()
             throws Exception {
         Object connection = new Object();
@@ -100,5 +132,49 @@ class DataSourceServiceConnectionTest {
         assertEquals("连接成功", result.get("message"));
         assertInstanceOf(Number.class, result.get("elapsedMs"));
         verify(driver).disconnect(connection);
+    }
+
+    @Test
+    void healthyCachedJdbcConnectionIsReused() throws Exception {
+        Connection connection = mock(Connection.class);
+        when(driver.connect(anyMap())).thenReturn(connection);
+        when(connection.isValid(3)).thenReturn(true);
+
+        var first = service.resolveActiveConnection("source-1");
+        var second = service.resolveActiveConnection("source-1");
+
+        assertSame(first, second);
+        verify(driver, times(1)).connect(anyMap());
+        verify(driver, never()).disconnect(connection);
+    }
+
+    @Test
+    void closedCachedJdbcConnectionIsReplaced() throws Exception {
+        Connection closed = mock(Connection.class);
+        Connection fresh = mock(Connection.class);
+        when(driver.connect(anyMap())).thenReturn(closed, fresh);
+        when(closed.isValid(3)).thenReturn(false);
+
+        var first = service.resolveActiveConnection("source-1");
+        var second = service.resolveActiveConnection("source-1");
+
+        assertSame(closed, first.connection);
+        assertSame(fresh, second.connection);
+        verify(driver).disconnect(closed);
+        verify(driver, times(2)).connect(anyMap());
+    }
+
+    @Test
+    void jdbcValidationFailureAlsoReplacesCachedConnection() throws Exception {
+        Connection closed = mock(Connection.class);
+        Connection fresh = mock(Connection.class);
+        when(driver.connect(anyMap())).thenReturn(closed, fresh);
+        when(closed.isValid(3)).thenThrow(new SQLException("connection closed"));
+
+        service.resolveActiveConnection("source-1");
+        var replacement = service.resolveActiveConnection("source-1");
+
+        assertSame(fresh, replacement.connection);
+        verify(driver).disconnect(closed);
     }
 }

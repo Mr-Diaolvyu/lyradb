@@ -87,6 +87,38 @@ class MavenDriverManagerTest {
         assertThatCode(manager::close).doesNotThrowAnyException();
     }
 
+    @Test
+    void shouldExcludeNonRuntimeBranchesAndHonorDeclaredExclusions() throws Exception {
+        Path remote = tempDirectory.resolve("scoped-remote");
+        publish(remote, "root", List.of());
+        publish(remote, "runtime", List.of("transitive", "excluded"));
+        publish(remote, "transitive", List.of());
+        // 若错误遍历这些分支，其编译依赖不存在会使驱动加载失败。
+        for (String artifact : List.of("test-tool", "provided-tool", "optional-tool")) {
+            publish(remote, artifact, List.of("missing-runtime"));
+        }
+        Path pom = remote.resolve("io/test/root/1.0/root-1.0.pom");
+        String declarations = """
+                <dependency><groupId>io.test</groupId><artifactId>runtime</artifactId><version>1.0</version>
+                  <exclusions><exclusion><groupId>io.test</groupId><artifactId>excluded</artifactId></exclusion></exclusions>
+                </dependency>
+                <dependency><groupId>io.test</groupId><artifactId>test-tool</artifactId><version>1.0</version><scope>test</scope></dependency>
+                <dependency><groupId>io.test</groupId><artifactId>provided-tool</artifactId><version>1.0</version><scope>provided</scope></dependency>
+                <dependency><groupId>io.test</groupId><artifactId>optional-tool</artifactId><version>1.0</version><optional>true</optional></dependency>
+                """;
+        Files.writeString(pom, Files.readString(pom).replace("</dependencies>", declarations + "</dependencies>"));
+        writeSha1(pom);
+        AppProperties properties = new AppProperties();
+        properties.setDriverCacheDir(tempDirectory.resolve("scoped-cache").toString());
+        RemoteRepository repository = new RemoteRepository.Builder("scoped-file", "default", remote.toUri().toASCIIString()).build();
+        try (MavenDriverManager manager = new MavenDriverManager(properties, List.of(repository))) {
+            MavenDriverManager.DriverClassLoader loader = (MavenDriverManager.DriverClassLoader)
+                    manager.getOrCreateClassLoader(driverInfo("root"));
+            assertThat(Arrays.stream(loader.getURLs()).map(url -> Path.of(URI.create(url.toString())).getFileName().toString()))
+                    .containsExactlyInAnyOrder("root-1.0.jar", "runtime-1.0.jar", "transitive-1.0.jar");
+        }
+    }
+
     private static DriverInfo driverInfo(String artifactId) {
         MavenCoordinates coordinates = new MavenCoordinates();
         coordinates.setGroupId("io.test");

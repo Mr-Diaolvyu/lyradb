@@ -44,7 +44,8 @@ public class UserService {
     }
 
     public List<User> listAll() {
-        return userRepository.findAll();
+        return userRepository.findAll().stream()
+                .filter(user -> user.getDeletedAt() == null).toList();
     }
 
     public User getByUsername(String username) {
@@ -85,6 +86,9 @@ public class UserService {
     @Transactional
     public void setPassword(String username, String newPassword) {
         User user = getByUsername(username);
+        if (user.getDeletedAt() != null) {
+            throw new IllegalArgumentException("已删除用户不能重置密码");
+        }
         validatePassword(user.getUsername(), newPassword);
         user.setPasswordHash(passwordEncoder.encode(newPassword));
         user.setCredentialVersion(user.getCredentialVersion() + 1);
@@ -132,6 +136,48 @@ public class UserService {
         membership.setWorkspaceId(workspaceId);
         membership.setRolesCsv(String.join(",", normalized));
         membershipRepository.save(membership);
+    }
+
+    /** 平台角色全局生效，其他角色仅更新指定工作空间；变更后旧会话失效。 */
+    @Transactional
+    public void updateRoles(String username, String workspaceId, List<String> roles,
+                            String actorId) {
+        if (roles == null || roles.isEmpty()) {
+            throw new IllegalArgumentException("请至少选择一个角色");
+        }
+        List<String> normalized = normalizeRoles(roles);
+        User target = getByUsername(username);
+        if (target.getDeletedAt() != null) {
+            throw new IllegalArgumentException("已删除用户不能修改角色");
+        }
+        if (target.getId().equals(actorId)) {
+            throw new IllegalArgumentException("不能修改当前登录账号的角色");
+        }
+        if (!membershipRepository.existsByUserIdAndWorkspaceId(target.getId(), workspaceId)) {
+            throw new IllegalArgumentException("用户未加入当前工作空间");
+        }
+        if (target.getRoles().contains("PLATFORM_ADMIN")
+                && !normalized.contains("PLATFORM_ADMIN")) {
+            long activeAdmins = userRepository.findAll().stream()
+                    .filter(user -> user.getDeletedAt() == null && user.isEnabled()
+                            && user.getRoles().contains("PLATFORM_ADMIN"))
+                    .count();
+            if (activeAdmins <= 1) {
+                throw new IllegalStateException("不能移除最后一个启用的平台管理员");
+            }
+        }
+        List<String> workspaceRoles = normalizeWorkspaceRoles(normalized);
+        // 旧 User.roles 的工作空间角色只用于兼容及新空间默认值，
+        // 本次编辑仅改变指定空间的 Membership，避免影响其他空间。
+        List<String> globalRoles = new ArrayList<>(target.getRoles());
+        globalRoles.remove("PLATFORM_ADMIN");
+        if (normalized.contains("PLATFORM_ADMIN")) {
+            globalRoles.add("PLATFORM_ADMIN");
+        }
+        target.setRoles(globalRoles);
+        target.setCredentialVersion(target.getCredentialVersion() + 1);
+        userRepository.save(target);
+        assignWorkspace(username, workspaceId, workspaceRoles);
     }
 
     public boolean belongsToWorkspace(String userId, String workspaceId) {

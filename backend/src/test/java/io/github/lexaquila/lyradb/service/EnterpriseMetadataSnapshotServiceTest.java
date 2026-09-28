@@ -137,14 +137,11 @@ class EnterpriseMetadataSnapshotServiceTest {
         when(driver.getTreeNodes(connection, null))
                 .thenReturn(List.of(database));
 
-        EnterpriseMetadataSnapshotService.CaptureResult result =
-                service.capture(
-                        "workspace-1", owner,
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> service.capture("workspace-1", owner,
                         new EnterpriseMetadataSnapshotService.CaptureRequest(
-                                "sales-source", "schema2",
-                                List.of(), List.of()));
-
-        assertEquals(0, result.tableCount());
+                                "sales-source", "schema2", List.of(), List.of())));
+        assertTrue(error.getMessage().contains("未采集到任何表"));
         verify(driver, never()).getTableColumns(
                 any(), any(), any());
         verify(driver, never())
@@ -283,6 +280,29 @@ class EnterpriseMetadataSnapshotServiceTest {
         assertTrue(exception.getMessage().contains("200"));
         verify(driver, times(200)).getTableColumns(
                 eq(connection), eq("analytics"), any());
+    }
+
+    @Test
+    void wildcardSchemaCollectsAuthorizedMysqlTables() throws Exception {
+        prepare("MYSQL", "db_b.*", "*");
+        when(driver.getTreeNodes(connection, null)).thenReturn(List.of(node("db_b", "DATABASE", "db_b")));
+        when(driver.getTreeNodes(connection, "db_b")).thenReturn(List.of(node("orders", "TABLE", "db_b/orders")));
+        when(driver.getTableColumns(connection, "db_b", "orders")).thenReturn(List.of(column("id")));
+        var result = service.capture("workspace-1", owner,
+                new EnterpriseMetadataSnapshotService.CaptureRequest("sales-source", null, List.of("*"), List.of()));
+        assertEquals(1, result.tableCount());
+        assertEquals(1, result.columnCount());
+    }
+
+    @Test
+    void mysqlDatabaseCanBeSelectedAsSchema() throws Exception {
+        prepare("MYSQL", "db_b.*", "db_b");
+        when(driver.getTreeNodes(connection, null)).thenReturn(List.of(node("db_b", "DATABASE", "db_b")));
+        when(driver.getTreeNodes(connection, "db_b")).thenReturn(List.of(node("orders", "TABLE", "db_b/orders")));
+        when(driver.getTableColumns(connection, "db_b", "orders")).thenReturn(List.of(column("id")));
+        var result = service.capture("workspace-1", owner,
+                new EnterpriseMetadataSnapshotService.CaptureRequest("sales-source", null, List.of("db_b"), List.of()));
+        assertEquals(1, result.tableCount());
     }
 
     private static Grant copyGrant(

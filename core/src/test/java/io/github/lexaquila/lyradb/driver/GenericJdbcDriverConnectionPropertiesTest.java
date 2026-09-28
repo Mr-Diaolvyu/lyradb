@@ -58,6 +58,10 @@ class GenericJdbcDriverConnectionPropertiesTest {
                 "port", 9002,
                 "database", "")))
                 .isEqualTo("jdbc:mysql://47.98.208.142:9002/");
+        assertThat(driver.buildConnectionUrl(Map.of(
+                "host", "127.0.0.1",
+                "port", 3306)))
+                .isEqualTo("jdbc:mysql://127.0.0.1:3306/");
         assertThat(mysql.getConnectionFormFields())
                 .filteredOn(field -> "allowPublicKeyRetrieval".equals(field.getName()))
                 .singleElement()

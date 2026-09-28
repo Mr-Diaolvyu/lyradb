@@ -3,7 +3,8 @@
     <header class="ask-hero data-card">
       <div>
         <div class="section-kicker">TRUSTED AI DATA INTELLIGENCE</div>
-        <h2>Ask Lyra</h2>
+        <h2>AI 高级工具</h2>
+        <el-button text @click="router.push({ name: 'ai' })">返回 AI 数据助手 · 查看后台任务</el-button>
         <p>从已授权元数据与已审核知识出发，给出可追溯建议；任何数据读取都先展示计划，再由你确认。</p>
       </div>
       <div class="capability-row" aria-label="AI 能力状态">
@@ -370,7 +371,7 @@ const metadataScopeValid = computed(() => hasMetadataScope({
 const selectedGrant = computed(() => grants.value.find(grant => grant.grantedSourceName === source.value))
 const tableOptions = computed(() => grantTokens(selectedGrant.value?.allowedTables).filter(value => !value.includes('*')))
 const schemaOptions = computed(() => {
-  const direct = grantTokens(selectedGrant.value?.allowedSchemas)
+  const direct = grantTokens(selectedGrant.value?.allowedSchemas).filter(value => !value.includes('*'))
   const fromTables = tableOptions.value.map(value => {
     const parts = value.split('.').filter(Boolean)
     return parts.length >= 2 ? parts[parts.length - 2] : ''

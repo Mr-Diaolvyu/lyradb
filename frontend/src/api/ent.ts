@@ -49,12 +49,114 @@ export interface AdminDataSource {
     params: Record<string, any>
     createdBy?: string
     createdAt?: string
+    lastTestStatus?: 'NOT_TESTED' | 'CONNECTED' | 'FAILED' | 'DRIVER_UNAVAILABLE' | 'STALE'
+    lastTestedAt?: string
+    lastTestElapsedMs?: number
+    lastTestErrorCode?: string
 }
 
 export interface AdminDataSourceTestResponse {
     success: boolean
     message: string
     elapsedMs?: number
+    status?: string
+    testedAt?: string
+}
+
+export interface DataSourceTestBatch {
+    id: string
+    state: 'RUNNING' | 'DONE'
+    items: Array<{
+        dataSourceId: string
+        displayName: string
+        state: 'PENDING' | 'RUNNING' | 'DONE' | 'ERROR'
+        result?: AdminDataSourceTestResponse
+    }>
+}
+
+export interface BatchGrantSource {
+    dataSourceId: string
+    grantedSourceName: string
+    allowedSchemas: string
+    allowedTables: string
+    blockedTables: string
+    sqlCapability: 'READ_ONLY' | 'DML_ALLOWED'
+    maxRowsPerQuery: number
+    expiresAt?: string
+}
+
+export interface BatchGrantRequest {
+    userIds: string[]
+    sources: BatchGrantSource[]
+}
+
+export interface BatchGrantPreview {
+    count: number
+    valid: boolean
+    items: Array<BatchGrantSource & { userId: string; valid: boolean; error?: string }>
+    errors: string[]
+}
+
+export interface AdminGrantScopeOptions {
+    namespaces: Array<{ value: string; label: string; tablePrefix: string }>
+    tables: string[]
+    truncated: boolean
+}
+
+export interface AdminUser {
+    id: string
+    username: string
+    displayName?: string
+    email?: string
+    enabled: boolean
+    roles: string[]
+    workspaceIds: string[]
+}
+
+export interface AdminUserScript {
+    id: string
+    title: string
+    grantedSourceName: string
+    updatedAt: string
+}
+
+export interface SavedSql {
+    id: string
+    title: string
+    grantedSourceName: string
+    sql: string
+    createdAt: string
+    updatedAt: string
+}
+
+export interface EnterpriseQueryHistory {
+    id: string
+    grantedSourceName: string
+    sql: string
+    succeeded: boolean
+    elapsedMs: number
+    createdAt: string
+}
+
+export interface TableEditChange {
+    action: 'INSERT' | 'UPDATE' | 'DELETE'
+    key?: Record<string, unknown>
+    token?: string
+    values?: Record<string, unknown>
+}
+
+export interface TableEditSnapshot {
+    editable: boolean
+    reason: string
+    columns: ColumnMetadata[]
+    primaryKeys: string[]
+    lockedColumns: string[]
+    rows: Array<{
+        key: Record<string, unknown>
+        token: string
+        values: Record<string, unknown>
+    }>
+    truncated?: boolean
 }
 
 export interface AdminDataSourceCredentialResponse {
@@ -72,6 +174,9 @@ export interface AdminDataSourceSaveRequest {
 export interface AdminGrant extends LogicalGrant {
     dataSourceId: string
     userId?: string
+    granteeUsername?: string
+    granteeDisplayName?: string
+    expiresAt?: string | null
 }
 
 export interface EnterpriseMetadataTable {
@@ -95,6 +200,27 @@ export interface EnterpriseMetadataCatalog {
     tables: EnterpriseMetadataTable[]
     truncated: boolean
     refreshedAt: number
+}
+
+export interface EnterpriseNavigationNode {
+    name: string
+    type: string
+    path: string
+    hasChildren: boolean
+    table?: EnterpriseMetadataTable
+}
+
+export interface EnterpriseNavigationPage {
+    nodes: EnterpriseNavigationNode[]
+    total: number
+    offset: number
+    limit: number
+    hasMore: boolean
+}
+
+export interface EnterpriseTableSearchPage {
+    tables: EnterpriseMetadataTable[]
+    hasMore: boolean
 }
 
 export type EnterprisePartitionPage = TablePartitionPage
@@ -159,6 +285,15 @@ export interface MaskingRule {
     remark?: string
     enabled: boolean
     createdAt?: string
+}
+
+export interface AiMaskingRuleDraft {
+    dataSourceId: string
+    tablePattern: string
+    columnPattern: string
+    maskType: 'FULL' | 'PARTIAL' | 'HASH'
+    remark: string
+    explanation: string
 }
 
 export type CredentialExportMode = 'OMIT' | 'PLAINTEXT' | 'PASSWORD_ENCRYPTED'
@@ -259,8 +394,49 @@ export const entApi = {
     },
 
     // 企业查询
-    query(grantedSourceName: string, sql: string, defaultDatabase?: string): Promise<QueryResult> {
-        return apiClient.post('/ent/query', { grantedSourceName, sql, defaultDatabase })
+    query(grantedSourceName: string, sql: string, defaultDatabase?: string, executionId?: string): Promise<QueryResult> {
+        return apiClient.post('/ent/query', { grantedSourceName, sql, defaultDatabase, executionId })
+    },
+    prepareQuery(grantedSourceName: string): Promise<{ executionId: string }> {
+        return apiClient.post('/ent/query/executions', { grantedSourceName })
+    },
+    cancelQuery(executionId: string): Promise<{ cancelRequested: boolean }> {
+        return apiClient.post(`/ent/query/executions/${encodeURIComponent(executionId)}/cancel`)
+    },
+    savedSqlScripts(): Promise<SavedSql[]> {
+        return apiClient.get('/ent/scripts')
+    },
+    saveSqlScript(body: { id?: string; title: string; grantedSourceName: string; sql: string }): Promise<SavedSql> {
+        return apiClient.post('/ent/scripts', body)
+    },
+    deleteSqlScript(id: string): Promise<{ success: boolean }> {
+        return apiClient.delete(`/ent/scripts/${encodeURIComponent(id)}`)
+    },
+    enterpriseQueryHistory(): Promise<EnterpriseQueryHistory[]> {
+        return apiClient.get('/ent/history')
+    },
+    tableEditSnapshot(grantedSourceName: string, schema: string, table: string): Promise<TableEditSnapshot> {
+        return apiClient.get('/ent/table-edits/snapshot', {
+            params: { grantedSourceName, schema, table },
+        })
+    },
+    metadataNavigation(grantedSourceName: string, parentPath?: string,
+        offset = 0, limit = 100, query?: string): Promise<EnterpriseNavigationPage> {
+        return apiClient.get('/ent/metadata/navigation', {
+            params: { grantedSourceName, parentPath, offset, limit, query },
+        })
+    },
+    metadataSearch(grantedSourceName: string, query: string): Promise<EnterpriseTableSearchPage> {
+        return apiClient.get('/ent/metadata/search', {
+            params: { grantedSourceName, query },
+        })
+    },
+    requestTableEdit(body: { grantedSourceName: string; schema: string; table: string;
+        changes: TableEditChange[]; reason?: string }): Promise<ApprovalRequest> {
+        return apiClient.post('/ent/table-edits/requests', body)
+    },
+    executeTableEdit(id: string): Promise<{ success: boolean; count: number }> {
+        return apiClient.post(`/ent/table-edits/${encodeURIComponent(id)}/execute`)
     },
 
     inspectTable(
@@ -325,6 +501,10 @@ export const entApi = {
         return apiClient.get('/ent/er', {
             params: { grantedSourceName, schema, tables: tables.join(',') },
         })
+    },
+    lineage(body: { grantedSourceName: string; schema: string; tables: string[];
+        column?: string; direction: string; maxDepth?: number; maxNodes?: number }): Promise<ErDiagram> {
+        return apiClient.post('/ent/lineage', body, { timeout: 180000 })
     },
 
     // 企业导出（需已批准 approvalRequestId，返回 blob）
@@ -435,6 +615,9 @@ export const entApi = {
     adminSetDefaultAiProvider(id: string): Promise<void> {
         return apiClient.post(`/admin/ai/providers/${id}/default`)
     },
+    adminTestAiProvider(id: string): Promise<{ success: boolean; message: string; elapsedMs?: number }> {
+        return apiClient.post(`/admin/ai/providers/${encodeURIComponent(id)}/test`)
+    },
     adminDeleteAiProvider(id: string): Promise<void> {
         return apiClient.delete(`/admin/ai/providers/${id}`)
     },
@@ -500,6 +683,12 @@ export const entApi = {
             { timeout: 120_000 },
         )
     },
+    adminStartDataSourceTestBatch(dataSourceIds: string[]): Promise<DataSourceTestBatch> {
+        return apiClient.post('/admin/datasources/test-batches', { dataSourceIds })
+    },
+    adminDataSourceTestBatch(id: string): Promise<DataSourceTestBatch> {
+        return apiClient.get(`/admin/datasources/test-batches/${encodeURIComponent(id)}`)
+    },
     adminRequestDataSourceExport(body: ConnectionExportRequest): Promise<ApprovalRequest> {
         return apiClient.post('/admin/datasources/export-requests', body)
     },
@@ -539,21 +728,54 @@ export const entApi = {
     adminCreateGrant(body: any): Promise<{ id: string; success: boolean }> {
         return apiClient.post('/admin/grants', body)
     },
+    adminGrantScope(dataSourceId: string): Promise<AdminGrantScopeOptions> {
+        return apiClient.get(`/admin/grants/scope/${encodeURIComponent(dataSourceId)}`)
+    },
+    adminEligibleGrantUsers(): Promise<Array<{ id: string; username: string; displayName: string }>> {
+        return apiClient.get('/admin/grants/eligible-users')
+    },
+    adminPreviewGrantBatch(body: BatchGrantRequest): Promise<BatchGrantPreview> {
+        return apiClient.post('/admin/grants/batch/preview', body)
+    },
+    adminCreateGrantBatch(body: BatchGrantRequest): Promise<{ success: boolean; count: number; ids: string[] }> {
+        return apiClient.post('/admin/grants/batch', body)
+    },
     adminDeleteGrant(id: string): Promise<void> {
         return apiClient.delete(`/admin/grants/${id}`)
     },
 
     // 管理员：用户
-    adminUsers(): Promise<any[]> {
+    adminUsers(): Promise<AdminUser[]> {
         return apiClient.get('/admin/users')
     },
     adminCreateUser(body: any): Promise<{ id: string; success: boolean }> {
         return apiClient.post('/admin/users', body)
     },
+    adminUpdateUserRoles(username: string, roles: string[]): Promise<{ success: boolean }> {
+        return apiClient.put(`/admin/users/${encodeURIComponent(username)}/roles`, { roles })
+    },
+    adminFreezeUser(userId: string, frozen: boolean): Promise<{ success: boolean }> {
+        return apiClient.post(`/admin/users/${encodeURIComponent(userId)}/${frozen ? 'freeze' : 'unfreeze'}`)
+    },
+    adminDeleteUser(userId: string): Promise<{ success: boolean }> {
+        return apiClient.delete(`/admin/users/${encodeURIComponent(userId)}`)
+    },
+    adminUserScripts(userId: string): Promise<AdminUserScript[]> {
+        return apiClient.get(`/admin/users/${encodeURIComponent(userId)}/scripts`)
+    },
+    adminTransferUserScripts(userId: string, targetUserId: string): Promise<{ success: boolean; count: number }> {
+        return apiClient.post(`/admin/users/${encodeURIComponent(userId)}/scripts/transfer`, { targetUserId })
+    },
+    adminResetUserPassword(username: string, newPassword: string): Promise<{ success: boolean }> {
+        return apiClient.post(`/admin/users/${encodeURIComponent(username)}/password`, { newPassword })
+    },
 
     // 管理员：脱敏规则
     adminMaskingRules(): Promise<MaskingRule[]> {
         return apiClient.get('/admin/masking')
+    },
+    adminGenerateMaskingRule(dataSourceId: string, instruction: string): Promise<AiMaskingRuleDraft> {
+        return apiClient.post('/admin/masking/generate', { dataSourceId, instruction })
     },
     adminSaveMaskingRule(body: Partial<MaskingRule>): Promise<MaskingRule> {
         return apiClient.post('/admin/masking', body)

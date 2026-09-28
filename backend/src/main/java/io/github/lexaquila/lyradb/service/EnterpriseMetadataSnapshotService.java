@@ -301,6 +301,10 @@ public class EnterpriseMetadataSnapshotService {
                         "请求的授权表不存在或无法读取: " + requested);
             }
         }
+        if (counts[0] == 0) {
+            throw new IllegalArgumentException(
+                    "未采集到任何表。请检查数据库或 Schema 名称、表授权及连接账号的元数据权限；未生成快照。");
+        }
         MetadataSnapshot snapshot = toSnapshot(
                 source, grant, grouped);
         return new SnapshotBuild(snapshot, counts[0], counts[1]);
@@ -515,9 +519,9 @@ public class EnterpriseMetadataSnapshotService {
                 && !scope.database().equalsIgnoreCase(database)) {
             return false;
         }
-        if (!scope.schemas().isEmpty()
-                && scope.schemas().stream().noneMatch(
-                value -> value.equalsIgnoreCase(schema))) {
+        // MySQL 的数据库即 Schema；驱动树中数据库下直接是表。
+        String namespace = schema == null || schema.isBlank() ? database : schema;
+        if (!schemaSelected(scope, namespace)) {
             return false;
         }
         return scope.tables().isEmpty()
@@ -530,7 +534,7 @@ public class EnterpriseMetadataSnapshotService {
             String schema) {
         return scope.schemas().isEmpty()
                 || scope.schemas().stream().anyMatch(
-                value -> value.equalsIgnoreCase(schema));
+                value -> "*".equals(value) || value.equalsIgnoreCase(schema));
     }
 
     private static String containerPath(TreeNode node) {

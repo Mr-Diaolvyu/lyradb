@@ -18,7 +18,7 @@
     <description>LyraDB · 天琴智库 - 个人原生智库工作台</description>
 
     <properties>
-        <revision>3.1.2</revision>
+        <revision>3.2.0</revision>
         <java.version>17</java.version>
         <main.class>io.github.lexaquila.lyradb.desktop.NativeDesktopApplication</main.class>
         <flatlaf.version>3.7</flatlaf.version>
@@ -39,11 +39,6 @@
         <dependency>
             <groupId>com.fasterxml.jackson.datatype</groupId>
             <artifactId>jackson-datatype-jsr310</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.aliyun</groupId>
-            <artifactId>dataworks_public20240518</artifactId>
-            <version>8.8.5</version>
         </dependency>
         <dependency>
             <groupId>ch.qos.logback</groupId>

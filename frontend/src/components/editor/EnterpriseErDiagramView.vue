@@ -53,8 +53,8 @@
           />
         </el-select>
       </label>
-      <label class="toolbar-field table-field">
-        <span>关系图表（最多 24 张）</span>
+      <label v-if="isMaxCompute" class="toolbar-field table-field">
+        <span>血缘根表（字段模式限 1 张）</span>
         <el-select
           v-model="selectedTableNames"
           multiple
@@ -62,7 +62,7 @@
           collapse-tags
           collapse-tags-tooltip
           :max-collapse-tags="2"
-          :multiple-limit="24"
+          :multiple-limit="lineageKind === 'COLUMN' ? 1 : 20"
           :disabled="!schema"
           placeholder="搜索并选择要绘制的表"
           @change="onTableSelectionChange"
@@ -97,10 +97,10 @@
           type="primary"
           :icon="Share"
           :loading="diagramLoading"
-          :disabled="!selectedTableNames.length"
+          :disabled="!schema || (isMaxCompute && (!selectedTableNames.length || (lineageKind === 'COLUMN' && !lineageColumn)))"
           @click="loadDiagram"
         >
-          加载关系图
+          {{ isMaxCompute ? '探查真实血缘' : '加载全范围 ER' }}
         </el-button>
         <el-button :icon="Aim" :disabled="!nodes.length" @click="fitView">
           适应画布
@@ -108,10 +108,11 @@
         <el-button
           :icon="Download"
           :disabled="!visibleTables.length"
-          @click="exportSvg"
+          @click="exportDiagram('svg')"
         >
           导出 SVG
         </el-button>
+        <el-button :icon="Download" :disabled="!visibleTables.length" @click="exportDiagram('png')">导出 PNG</el-button>
         <el-button
           :icon="Refresh"
           :loading="catalogLoading || diagramLoading"
@@ -121,6 +122,31 @@
           刷新
         </el-button>
       </div>
+    </div>
+
+    <div v-if="isMaxCompute" class="er-toolbar lineage-toolbar">
+      <label class="toolbar-field mode-field"><span>血缘类型</span>
+        <el-select v-model="lineageKind" @change="onLineageKindChange">
+          <el-option label="表血缘" value="TABLE" /><el-option label="字段血缘" value="COLUMN" />
+        </el-select>
+      </label>
+      <label v-if="lineageKind === 'COLUMN'" class="toolbar-field schema-field"><span>根字段</span>
+        <el-select v-model="lineageColumn" filterable :loading="columnsLoading" @change="onLineageOptionsChange">
+          <el-option v-for="column in lineageColumns" :key="column" :label="column" :value="column" />
+        </el-select>
+      </label>
+      <label class="toolbar-field mode-field"><span>探查方向</span>
+        <el-select v-model="lineageDirection" @change="onLineageOptionsChange">
+          <el-option label="上下游" value="BOTH" /><el-option label="仅上游" value="UPSTREAM" /><el-option label="仅下游" value="DOWNSTREAM" />
+        </el-select>
+      </label>
+      <label class="toolbar-field schema-field"><span>探查时机（仅窗口打开时）</span>
+        <el-select v-model="probePolicy">
+          <el-option label="仅手动" value="MANUAL" /><el-option label="选择根表后" value="ON_SELECTION" />
+          <el-option label="每 30 分钟" value="EVERY_30_MINUTES" /><el-option label="每 6 小时" value="EVERY_6_HOURS" />
+        </el-select>
+      </label>
+      <span class="scope-hint">默认深度 2 · 最多 120 个实体 · 仅展示授权范围</span>
     </div>
 
     <el-alert
@@ -141,14 +167,16 @@
       v-if="isMaxCompute && source"
       type="info"
       :closable="false"
-      title="MaxCompute 结构地图只展示已选表的元数据；当前未接入 DataWorks 作业血缘，因此不推测上下游关系"
+      title="血缘来自 DataWorks ListLineages；未授权对象和关系不展示。空关系不代表没有上下游依赖。"
       class="er-alert"
     />
+    <el-alert v-if="diagram?.truncated" type="warning" :closable="false"
+      title="图谱达到安全上限或目录被截断，请缩小范围后查看；当前结果不代表完整图谱。" class="er-alert" />
 
     <div class="scope-strip">
       <span><b>{{ source || '未选择' }}</b> 逻辑数据源</span>
       <span><b>{{ schema || '未选择' }}</b> {{ scopeLabel }}</span>
-      <span><b>{{ selectedTableNames.length }}</b> 张已选表</span>
+      <span><b>{{ isMaxCompute ? selectedTableNames.length : availableTables.length }}</b> 张{{ isMaxCompute ? '根表' : '授权表' }}</span>
       <span><b>{{ visibleTables.length }}</b> 张可见表</span>
       <span><b>{{ visibleEdges.length }}</b> 条真实关系</span>
       <span class="scope-hint">滚轮缩放 · 拖动画布 · 拖动表节点</span>
@@ -214,7 +242,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, shallowRef, watch } from 'vue'
 import {
   Handle,
   MarkerType,
@@ -259,6 +287,13 @@ const visibleRef = ref(props.visible)
 const source = ref('')
 const schema = ref('')
 const selectedTableNames = ref<string[]>([])
+const lineageKind = ref('TABLE')
+const lineageColumn = ref('')
+const lineageColumns = ref<string[]>([])
+const columnsLoading = ref(false)
+const lineageDirection = ref('BOTH')
+const probePolicy = ref('MANUAL')
+let probeTimer: ReturnType<typeof setInterval> | undefined
 const filterText = ref('')
 const fieldMode = ref<FieldDisplayMode>('physical')
 const catalog = shallowRef<EnterpriseMetadataCatalog | null>(null)
@@ -279,10 +314,10 @@ const isMaxCompute = computed(() =>
     .toLocaleUpperCase() === 'MAXCOMPUTE',
 )
 const headingKicker = computed(() =>
-  isMaxCompute.value ? 'MAXCOMPUTE METADATA MAP' : 'AUTHORIZED ER WORKSPACE',
+  isMaxCompute.value ? 'MAXCOMPUTE DATAWORKS LINEAGE' : 'AUTHORIZED ER WORKSPACE',
 )
 const headingTitle = computed(() =>
-  isMaxCompute.value ? 'MaxCompute 结构地图' : '企业 ER 图',
+  isMaxCompute.value ? 'MaxCompute 真实血缘' : '企业全范围 ER 图',
 )
 const scopeLabel = computed(() =>
   isMaxCompute.value ? 'Project' : 'Schema',
@@ -296,10 +331,10 @@ const availableTables = computed(() =>
 const emptyDescription = computed(() => {
   if (!source.value) return '请先选择逻辑数据源'
   if (!schema.value) return `请选择 ${scopeLabel.value}`
-  if (!selectedTableNames.value.length) {
-    return `请搜索并选择 1–24 张表，再加载${isMaxCompute.value ? '结构地图' : '关系图'}`
+  if (isMaxCompute.value && !selectedTableNames.value.length) {
+    return '请先选择血缘根表，再探查真实上下游关系'
   }
-  if (!diagram.value) return '点击“加载关系图”读取所选表元数据'
+  if (!diagram.value) return isMaxCompute.value ? '点击“探查真实血缘”开始' : '正在加载授权范围内的完整 ER 图'
   if (!filterText.value.trim()) return '所选表未返回可展示的元数据'
   return '没有符合当前画布过滤条件的表'
 })
@@ -428,6 +463,7 @@ async function loadCatalog(refresh = false) {
       .map(table => table.name))
     selectedTableNames.value = selectionSnapshot
       .filter(tableName => candidateNames.has(tableName))
+    if (!isMaxCompute.value) await loadDiagram()
   } catch (exception: any) {
     if (version !== catalogVersion) return
     catalog.value = null
@@ -443,7 +479,8 @@ async function loadDiagram() {
   const sourceSnapshot = source.value
   const schemaSnapshot = schema.value
   const tablesSnapshot = [...selectedTableNames.value]
-  if (!sourceSnapshot || !schemaSnapshot || !tablesSnapshot.length) {
+  if (!sourceSnapshot || !schemaSnapshot || (isMaxCompute.value
+    && (!tablesSnapshot.length || (lineageKind.value === 'COLUMN' && !lineageColumn.value)))) {
     diagram.value = null
     return
   }
@@ -451,9 +488,11 @@ async function loadDiagram() {
   diagramLoading.value = true
   error.value = ''
   try {
-    const next = await entApi.erDiagram(
-      sourceSnapshot, schemaSnapshot, tablesSnapshot,
-    )
+    const next = isMaxCompute.value
+      ? await entApi.lineage({ grantedSourceName: sourceSnapshot, schema: schemaSnapshot,
+        tables: tablesSnapshot, column: lineageKind.value === 'COLUMN' ? lineageColumn.value : undefined,
+        direction: lineageDirection.value, maxDepth: 2, maxNodes: 120 })
+      : await entApi.erDiagram(sourceSnapshot, schemaSnapshot, [])
     if (version !== diagramVersion
       || sourceSnapshot !== source.value
       || schemaSnapshot !== schema.value
@@ -478,6 +517,9 @@ function onSourceChange() {
   diagram.value = null
   schema.value = ''
   selectedTableNames.value = []
+  probePolicy.value = 'MANUAL'
+  lineageColumn.value = ''
+  lineageColumns.value = []
   filterText.value = ''
   void loadCatalog(false)
 }
@@ -488,17 +530,46 @@ function onSchemaChange() {
   selectedTableNames.value = []
   filterText.value = ''
   error.value = ''
+  lineageColumn.value = ''
+  lineageColumns.value = []
+  if (!isMaxCompute.value) void loadDiagram()
 }
 
-function onTableSelectionChange() {
+async function onTableSelectionChange() {
   ++diagramVersion
   diagram.value = null
   error.value = ''
+  lineageColumn.value = ''
+  lineageColumns.value = []
+  const version = diagramVersion
+  if (lineageKind.value === 'COLUMN' && selectedTableNames.value.length === 1) {
+    columnsLoading.value = true
+    try {
+      const columns = await entApi.metadataColumns(source.value, schema.value, selectedTableNames.value[0]!)
+      if (version !== diagramVersion) return
+      lineageColumns.value = columns.map(column => column.name)
+    } catch (exception: any) {
+      if (version === diagramVersion) error.value = exception.message || '字段加载失败'
+    } finally { if (version === diagramVersion) columnsLoading.value = false }
+  }
+  onLineageOptionsChange()
+}
+
+function onLineageKindChange() {
+  if (lineageKind.value === 'COLUMN') selectedTableNames.value = selectedTableNames.value.slice(0, 1)
+  void onTableSelectionChange()
+}
+
+function onLineageOptionsChange() {
+  ++diagramVersion
+  diagram.value = null
+  diagramLoading.value = false
+  if (probePolicy.value === 'ON_SELECTION') void loadDiagram()
 }
 
 async function refreshAll() {
   await loadCatalog(true)
-  if (selectedTableNames.value.length) await loadDiagram()
+  if (isMaxCompute.value && selectedTableNames.value.length) await loadDiagram()
 }
 
 function onPaneReady(instance: any) {
@@ -520,7 +591,7 @@ function escapeXml(value: string): string {
     .replace(/"/g, '&quot;')
 }
 
-async function exportSvg() {
+async function exportDiagram(format: 'svg' | 'png') {
   const tables = visibleTables.value
   if (!tables.length) return
   const width = 920
@@ -543,6 +614,16 @@ async function exportSvg() {
     '<rect width="100%" height="100%" fill="#0c101b"/>',
     `<text x="28" y="30" fill="#f2f4ff" font-size="15" font-weight="700">${escapeXml(source.value)} · ${escapeXml(schema.value)}</text>`,
   ]
+  parts.push('<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#819bd3"/></marker></defs>')
+  const positions = new Map(tables.map((table, index) => [table.name, {
+    x: 28 + index % columns * (cardWidth + cardGap), y: rowOffsets[Math.floor(index / columns)]! + 28,
+  }]))
+  visibleEdges.value.forEach(edge => {
+    const from = positions.get(edge.source)
+    const to = positions.get(edge.target)
+    if (!from || !to) return
+    parts.push(`<path d="M ${from.x + cardWidth} ${from.y} L ${to.x} ${to.y}" fill="none" stroke="#819bd3" marker-end="url(#arrow)"><title>${escapeXml(edge.sourceColumn)} → ${escapeXml(edge.targetColumn)}</title></path>`)
+  })
   tables.forEach((table, index) => {
     const row = Math.floor(index / columns)
     const column = index % columns
@@ -557,14 +638,36 @@ async function exportSvg() {
     })
   })
   parts.push('</svg>')
-  const name = `er_${source.value}_${schema.value}_${Date.now()}.svg`
-  await saveBlob(
-    new Blob([parts.join('')], {
-      type: 'image/svg+xml;charset=utf-8',
-    }),
-    name,
-  )
-  ElMessage.success('ER 图 SVG 已导出')
+  const name = `er_${source.value}_${schema.value}_${Date.now()}.${format}`
+  const svg = new Blob([parts.join('')], { type: 'image/svg+xml;charset=utf-8' })
+  if (format === 'svg') {
+    await saveBlob(svg, name)
+  } else {
+    const url = URL.createObjectURL(svg)
+    try {
+      const image = new Image()
+      const loaded = new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve()
+        image.onerror = () => reject(new Error('图谱图像生成失败'))
+      })
+      image.src = url
+      await loaded
+      const scale = Math.min(1, 8192 / height, Math.sqrt(24_000_000 / (width * height)))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.floor(width * scale))
+      canvas.height = Math.max(1, Math.floor(height * scale))
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('浏览器不支持 PNG 导出')
+      context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      const png = await new Promise<Blob>((resolve, reject) => canvas.toBlob(blob =>
+        blob ? resolve(blob) : reject(new Error('PNG 导出失败，请改用 SVG')), 'image/png'))
+      await saveBlob(png, name)
+    } catch (exception: any) {
+      ElMessage.error(exception.message || 'PNG 导出失败')
+      return
+    } finally { URL.revokeObjectURL(url) }
+  }
+  ElMessage.success(`图谱 ${format.toUpperCase()} 已导出`)
 }
 
 watch(() => props.visible, value => {
@@ -597,6 +700,18 @@ watch(() => props.visible, value => {
   if (source.value) void loadCatalog(false)
 })
 watch(visibleRef, value => emit('update:visible', value))
+watch([visibleRef, probePolicy, isMaxCompute], () => {
+  clearInterval(probeTimer)
+  probeTimer = undefined
+  if (!visibleRef.value) { ++diagramVersion; ++catalogVersion; return }
+  if (!isMaxCompute.value) return
+  const interval = probePolicy.value === 'EVERY_30_MINUTES' ? 30 * 60_000
+    : probePolicy.value === 'EVERY_6_HOURS' ? 6 * 60 * 60_000 : 0
+  if (interval) probeTimer = setInterval(() => {
+    if (!diagramLoading.value && !catalogLoading.value) void loadDiagram()
+  }, interval)
+})
+onUnmounted(() => { clearInterval(probeTimer); ++diagramVersion; ++catalogVersion })
 watch(filterText, () => {
   nextTick(() => requestAnimationFrame(fitView))
 })
@@ -625,6 +740,7 @@ watch(filterText, () => {
 
 .er-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 8px;
   padding: 9px;

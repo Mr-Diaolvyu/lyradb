@@ -4,6 +4,8 @@ import java.sql.Statement;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 执行中语句登记表（查询取消支持）。
@@ -16,6 +18,27 @@ public final class StatementRegistry {
     private static final Map<String, RunningStatement> RUNNING = new ConcurrentHashMap<>();
     private static final Map<Object, String> CONNECTION_EXECUTION = new ConcurrentHashMap<>();
     private static final ThreadLocal<String> CURRENT_EXECUTION = new ThreadLocal<>();
+    private static final Map<String, AtomicBoolean> CANCELLATIONS = new ConcurrentHashMap<>();
+
+    /** 两阶段执行先登记取消意图，覆盖排队和 Statement 尚未创建的窗口。 */
+    public static void prepare(String executionId) {
+        if (executionId == null || executionId.isBlank()
+                || CANCELLATIONS.putIfAbsent(executionId, new AtomicBoolean()) != null) {
+            throw new IllegalArgumentException("执行标识为空或已存在");
+        }
+    }
+
+    public static boolean requestCancellation(String executionId) {
+        AtomicBoolean requested = CANCELLATIONS.get(executionId);
+        if (requested == null) return false;
+        requested.set(true);
+        cancelExecution(executionId);
+        return true;
+    }
+
+    public static void release(String executionId) {
+        CANCELLATIONS.remove(executionId);
+    }
 
     private StatementRegistry() {
     }
@@ -46,6 +69,10 @@ public final class StatementRegistry {
         RunningStatement running = new RunningStatement(connection, stmt);
         RUNNING.put(executionId, running);
         CONNECTION_EXECUTION.put(connection, executionId);
+        AtomicBoolean requested = CANCELLATIONS.get(executionId);
+        if (requested != null && requested.get()) {
+            throw new CancellationException("查询已取消，未发送数据库语句");
+        }
     }
 
     /** 注销当前线程对应的语句。 */

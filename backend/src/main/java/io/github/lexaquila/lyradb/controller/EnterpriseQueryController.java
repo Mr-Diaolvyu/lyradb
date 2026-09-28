@@ -8,6 +8,10 @@ import io.github.lexaquila.lyradb.model.dto.QueryResult;
 import io.github.lexaquila.lyradb.model.dto.TableInspection;
 import io.github.lexaquila.lyradb.service.EnterpriseMetadataCatalogService;
 import io.github.lexaquila.lyradb.service.EnterpriseQueryService;
+import io.github.lexaquila.lyradb.service.EnterpriseQueryExecutionService;
+import io.github.lexaquila.lyradb.service.EnterpriseSqlWorkspaceService;
+import io.github.lexaquila.lyradb.service.SecurityUtil;
+import jakarta.servlet.http.HttpSession;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -24,23 +28,61 @@ public class EnterpriseQueryController {
 
     private final EnterpriseQueryService queryService;
     private final EnterpriseMetadataCatalogService metadataService;
+    private final EnterpriseSqlWorkspaceService sqlWorkspaceService;
+    private final SecurityUtil securityUtil;
+    private final EnterpriseQueryExecutionService executions;
 
     public EnterpriseQueryController(
             EnterpriseQueryService queryService,
-            EnterpriseMetadataCatalogService metadataService) {
+            EnterpriseMetadataCatalogService metadataService,
+            EnterpriseSqlWorkspaceService sqlWorkspaceService,
+            SecurityUtil securityUtil,
+            EnterpriseQueryExecutionService executions) {
         this.queryService = queryService;
         this.metadataService = metadataService;
+        this.sqlWorkspaceService = sqlWorkspaceService;
+        this.securityUtil = securityUtil;
+        this.executions = executions;
+    }
+
+    @PostMapping("/query/executions")
+    public Map<String, String> prepare(@RequestBody Map<String, String> body) {
+        return Map.of("executionId", executions.prepare(body.get("grantedSourceName")));
+    }
+
+    @PostMapping("/query/executions/{id}/cancel")
+    public Map<String, Boolean> cancel(@PathVariable String id) {
+        return Map.of("cancelRequested", executions.cancel(id));
     }
 
     @PostMapping("/query")
-    public QueryResult execute(@RequestBody Map<String, String> body) throws Exception {
+    public QueryResult execute(@RequestBody Map<String, String> body,
+                               HttpSession session) throws Exception {
         String grantedSourceName = body.get("grantedSourceName");
         String sql = body.get("sql");
         String defaultDatabase = body.get("defaultDatabase");
         if (grantedSourceName == null || sql == null || sql.isBlank()) {
             throw new RuntimeException("grantedSourceName 和 sql 必填");
         }
-        return queryService.executeQuery(grantedSourceName, sql, defaultDatabase);
+        long started = System.currentTimeMillis();
+        boolean succeeded = false;
+        try {
+            String executionId = body.get("executionId");
+            QueryResult result = executionId == null
+                    ? queryService.executeQuery(grantedSourceName, sql, defaultDatabase)
+                    : executions.execute(executionId, grantedSourceName, sql, defaultDatabase);
+            succeeded = true;
+            return result;
+        } finally {
+            try {
+                sqlWorkspaceService.recordHistory(
+                        securityUtil.requireCurrentWorkspace(session),
+                        securityUtil.requireCurrentUser().getId(), grantedSourceName,
+                        sql, succeeded, System.currentTimeMillis() - started);
+            } catch (RuntimeException ignoredHistoryFailure) {
+                // 查询服务已有独立审计；历史写入失败不能遮盖 SQL 或审批的原始结果。
+            }
+        }
     }
 
     @PostMapping("/table-inspection")
@@ -96,6 +138,22 @@ public class EnterpriseQueryController {
                 grantedSourceName, refresh);
     }
 
+    @GetMapping("/metadata/navigation")
+    public Map<String, Object> navigation(@RequestParam String grantedSourceName,
+                                          @RequestParam(required = false) String parentPath,
+                                          @RequestParam(required = false) String query,
+                                          @RequestParam(defaultValue = "0") int offset,
+                                          @RequestParam(defaultValue = "100") int limit)
+            throws Exception {
+        return metadataService.navigation(grantedSourceName, parentPath, query, offset, limit);
+    }
+
+    @GetMapping("/metadata/search")
+    public Map<String, Object> searchTables(@RequestParam String grantedSourceName,
+                                            @RequestParam String query) throws Exception {
+        return metadataService.searchTables(grantedSourceName, query);
+    }
+
     @GetMapping("/metadata/columns")
     public List<ColumnMetadata> columns(
             @RequestParam String grantedSourceName,
@@ -109,7 +167,7 @@ public class EnterpriseQueryController {
     public ErDiagram erDiagram(
             @RequestParam String grantedSourceName,
             @RequestParam String schema,
-            @RequestParam String tables) throws Exception {
+            @RequestParam(defaultValue = "") String tables) throws Exception {
         List<String> selectedTables = java.util.Arrays.stream(
                         (tables == null ? "" : tables).split(","))
                 .map(String::trim)

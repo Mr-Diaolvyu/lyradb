@@ -9,5 +9,6 @@ import java.util.Optional;
 public interface WorkspaceMembershipRepository extends JpaRepository<WorkspaceMembership, String> {
     Optional<WorkspaceMembership> findByUserIdAndWorkspaceId(String userId, String workspaceId);
     List<WorkspaceMembership> findByUserId(String userId);
+    List<WorkspaceMembership> findByWorkspaceId(String workspaceId);
     boolean existsByUserIdAndWorkspaceId(String userId, String workspaceId);
 }

@@ -31,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class EnterpriseMetadataCatalogService {
 
     static final int MAX_TABLES = 2_500;
-    static final int MAX_ER_TABLES = 24;
+    static final int MAX_ER_TABLES = 2_000;
     private static final long CACHE_TTL_MS = 5 * 60_000L;
     private static final Set<String> TABLE_TYPES =
             Set.of("TABLE", "VIEW", "COLLECTION");
@@ -79,6 +79,141 @@ public class EnterpriseMetadataCatalogService {
         return catalog;
     }
 
+    /** 按导航节点读取一层对象，服务端逐项过滤授权并限制返回数量。 */
+    public Map<String, Object> navigation(String grantedSourceName, String parentPath,
+                                          String query, int offset, int limit) throws Exception {
+        if (offset < 0 || limit < 1 || limit > 200) {
+            throw new IllegalArgumentException("导航分页范围无效");
+        }
+        AccessContext access = requireAccess(grantedSourceName);
+        String fingerprint = securityContextService.fingerprint(access.grant());
+        ConnectionService.ActiveConnection active = dataSourceService.resolveActiveConnection(
+                access.grant().getDataSourceId());
+        List<Map<String, Object>> visible = new ArrayList<>();
+        try (ConnectionService.ActiveConnection.Lease ignored = active.acquire()) {
+            TreeNode parent = authorizedNavigationParent(active, access, parentPath);
+            String safePath = parent == null ? null : containerPath(parent);
+            for (TreeNode node : safeNodes(active.driver.getTreeNodes(active.connection, safePath))) {
+                Map<String, Object> row = navigationNode(access, parent, node);
+                if (row != null && (query == null || query.isBlank()
+                        || node.getName().toLowerCase(Locale.ROOT)
+                        .contains(query.trim().toLowerCase(Locale.ROOT)))) {
+                    visible.add(row);
+                }
+            }
+        }
+        Grant fresh = grantService.getByIdForUser(access.grant().getId(),
+                access.user().getId(), access.grant().getWorkspaceId());
+        if (!fingerprint.equals(securityContextService.fingerprint(fresh))) {
+            throw new AccessDeniedException("目录读取期间授权已变化，请重试");
+        }
+        int from = Math.min(offset, visible.size());
+        int to = Math.min(visible.size(), from + limit);
+        return Map.of("nodes", visible.subList(from, to), "total", visible.size(),
+                "offset", offset, "limit", limit, "hasMore", to < visible.size());
+    }
+
+    /** 搜索当前逻辑数据源的全部授权表，不受轻量目录 2500 张表的展示上限影响。 */
+    public Map<String, Object> searchTables(String grantedSourceName, String query)
+            throws Exception {
+        String keyword = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        if (keyword.length() < 2 || keyword.length() > 100) {
+            throw new IllegalArgumentException("搜索词须为 2-100 个字符");
+        }
+        AccessContext access = requireAccess(grantedSourceName);
+        String fingerprint = securityContextService.fingerprint(access.grant());
+        ConnectionService.ActiveConnection active = dataSourceService.resolveActiveConnection(
+                access.grant().getDataSourceId());
+        Map<String, EnterpriseMetadataCatalog.Table> matches = new LinkedHashMap<>();
+        try (ConnectionService.ActiveConnection.Lease ignored = active.acquire()) {
+            for (TreeNode root : safeNodes(active.driver.getTreeNodes(active.connection, null))) {
+                if (collectSearchMatches(active, access, null, root, keyword, 0, matches)) break;
+            }
+        }
+        Grant fresh = grantService.getByIdForUser(access.grant().getId(),
+                access.user().getId(), access.grant().getWorkspaceId());
+        if (!fingerprint.equals(securityContextService.fingerprint(fresh))) {
+            throw new AccessDeniedException("目录搜索期间授权已变化，请重试");
+        }
+        return Map.of("tables", matches.values().stream().limit(100).toList(),
+                "hasMore", matches.size() > 100);
+    }
+
+    private boolean collectSearchMatches(ConnectionService.ActiveConnection active,
+                                         AccessContext access, TreeNode parent, TreeNode node,
+                                         String keyword, int depth,
+                                         Map<String, EnterpriseMetadataCatalog.Table> matches)
+            throws Exception {
+        Map<String, Object> visible = navigationNode(access, parent, node);
+        if (visible == null) return false;
+        Object value = visible.get("table");
+        if (value instanceof EnterpriseMetadataCatalog.Table table) {
+            String searchable = (table.getQualifiedName() + " "
+                    + (table.getRemarks() == null ? "" : table.getRemarks()))
+                    .toLowerCase(Locale.ROOT);
+            if (searchable.contains(keyword)) {
+                matches.putIfAbsent(table.getQualifiedName().toLowerCase(Locale.ROOT), table);
+            }
+            return matches.size() > 100;
+        }
+        if (depth >= 2) return false;
+        for (TreeNode child : safeNodes(active.driver.getTreeNodes(
+                active.connection, containerPath(node)))) {
+            if (collectSearchMatches(active, access, node, child,
+                    keyword, depth + 1, matches)) return true;
+        }
+        return false;
+    }
+
+    private TreeNode authorizedNavigationParent(ConnectionService.ActiveConnection active,
+                                                AccessContext access, String path) throws Exception {
+        if (path == null || path.isBlank()) return null;
+        for (TreeNode root : safeNodes(active.driver.getTreeNodes(active.connection, null))) {
+            if (!isContainer(root) || !path.equals(containerPath(root))
+                    && !path.startsWith(containerPath(root) + "/")) continue;
+            if (!mayTraverseRoot(access.dataSource().getDbType(), access.grant(), root)) {
+                continue;
+            }
+            if (path.equals(containerPath(root))) return root;
+            for (TreeNode child : safeNodes(active.driver.getTreeNodes(
+                    active.connection, containerPath(root)))) {
+                if (isContainer(child) && path.equals(containerPath(child))
+                        && schemaAuthorized(access.grant(),
+                        "DATABASE".equals(upper(root.getType())) ? root.getName() : "",
+                        child.getName())) return child;
+            }
+        }
+        throw new AccessDeniedException("导航节点不存在或不在授权范围内");
+    }
+
+    private Map<String, Object> navigationNode(AccessContext access,
+                                                TreeNode parent, TreeNode node) {
+        if (node == null || node.getName() == null || node.getName().isBlank()) return null;
+        if (isContainer(node)) {
+            boolean allowed = parent == null
+                    ? mayTraverseRoot(access.dataSource().getDbType(), access.grant(), node)
+                    : schemaAuthorized(access.grant(),
+                    "DATABASE".equals(upper(parent.getType())) ? parent.getName() : "",
+                    node.getName());
+            if (!allowed) return null;
+            return Map.of("name", node.getName(), "type", upper(node.getType()),
+                    "path", containerPath(node), "hasChildren", true);
+        }
+        if (!isTable(node)) return null;
+        Map<String, EnterpriseMetadataCatalog.Table> one = new LinkedHashMap<>();
+        if (parent == null) {
+            addRootTable(access.grant(), node, one);
+        } else {
+            String owner = normalizeNamespace(containerPath(parent));
+            addTable(access.grant(), owner, containerPath(parent), node, one);
+        }
+        if (one.isEmpty()) return null;
+        EnterpriseMetadataCatalog.Table table = one.values().iterator().next();
+        return Map.of("name", table.getName(), "type", table.getType(),
+                "path", node.getPath() == null ? table.getQualifiedName() : node.getPath(),
+                "hasChildren", false, "table", table);
+    }
+
     /**
      * 懒加载单表字段，用于补全和字段注释显示，不执行数据预览。
      */
@@ -101,7 +236,7 @@ public class EnterpriseMetadataCatalogService {
         }
     }
 
-    /** 只读取用户明确选择的授权表，避免对整个 Schema 做 N+1 元数据扫描。 */
+    /** 构建所选 Schema 的授权 ER；未指定表时覆盖授权范围并应用规模上限。 */
     public ErDiagram erDiagram(
             String grantedSourceName,
             String schema,
@@ -112,6 +247,7 @@ public class EnterpriseMetadataCatalogService {
         }
         List<String> requested = requestedErTables(tableNames);
         AccessContext access = requireAccess(grantedSourceName);
+        String expectedFingerprint = securityContextService.fingerprint(access.grant());
         EnterpriseMetadataCatalog catalog =
                 catalog(grantedSourceName, false);
         Map<String, EnterpriseMetadataCatalog.Table> authorizedByName =
@@ -122,7 +258,8 @@ public class EnterpriseMetadataCatalogService {
                         table.getName().toLowerCase(Locale.ROOT), table));
 
         List<EnterpriseMetadataCatalog.Table> selected = new ArrayList<>();
-        for (String tableName : requested) {
+        for (String tableName : requested.isEmpty()
+                ? authorizedByName.keySet().stream().limit(MAX_ER_TABLES).toList() : requested) {
             EnterpriseMetadataCatalog.Table table = authorizedByName.get(
                     tableName.toLowerCase(Locale.ROOT));
             if (table == null) {
@@ -136,7 +273,8 @@ public class EnterpriseMetadataCatalogService {
         diagram.setSourceName(grantedSourceName);
         diagram.setDbType(access.dataSource().getDbType());
         diagram.setSchema(schema);
-        diagram.setTruncated(false);
+        diagram.setTruncated(catalog.isTruncated()
+                || (requested.isEmpty() && authorizedByName.size() > MAX_ER_TABLES));
         Map<String, ErDiagram.Table> byName = new LinkedHashMap<>();
         ConnectionService.ActiveConnection active =
                 dataSourceService.resolveActiveConnection(
@@ -165,7 +303,8 @@ public class EnterpriseMetadataCatalogService {
 
             if ("MAXCOMPUTE".equalsIgnoreCase(
                     access.dataSource().getDbType())) {
-                // 未接入作业血缘，不推测关系，也不逐表额外读取 DDL。
+                // 兼容旧结构地图 API；真实血缘经独立的授权血缘端点读取。
+                recheckErAccess(grantedSourceName, expectedFingerprint);
                 return diagram;
             }
             for (EnterpriseMetadataCatalog.Table table : selected) {
@@ -185,7 +324,13 @@ public class EnterpriseMetadataCatalogService {
                             || constraint.getReferencedTable() == null) {
                         continue;
                     }
-                    String target = leafName(constraint.getReferencedTable());
+                    String reference = constraint.getReferencedTable();
+                    int separator = reference.lastIndexOf('.');
+                    if (separator >= 0 && !reference.substring(0, separator).equalsIgnoreCase(schema)
+                            && !reference.substring(0, separator).equalsIgnoreCase(table.getNamespace())) {
+                        continue;
+                    }
+                    String target = leafName(reference);
                     if (!byName.containsKey(target.toLowerCase(Locale.ROOT))) {
                         continue;
                     }
@@ -201,13 +346,20 @@ public class EnterpriseMetadataCatalogService {
                 }
             }
         }
+        recheckErAccess(grantedSourceName, expectedFingerprint);
         return diagram;
+    }
+
+    private void recheckErAccess(String source, String expectedFingerprint) {
+        if (!java.util.Objects.equals(expectedFingerprint,
+                securityContextService.fingerprint(requireAccess(source).grant()))) {
+            throw new AccessDeniedException("授权已变化，请重新加载 ER 图");
+        }
     }
 
     private static List<String> requestedErTables(List<String> tableNames) {
         if (tableNames == null || tableNames.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "请至少选择 1 张表后再构建关系图");
+            return List.of();
         }
         Map<String, String> deduplicated = new LinkedHashMap<>();
         for (String tableName : tableNames) {

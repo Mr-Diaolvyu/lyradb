@@ -7,13 +7,14 @@
       <span class="format-shortcut">Ctrl+Shift+F</span>
       <span class="completion-hint">Ctrl+Space 补全</span>
     </div>
-    <div ref="editorContainer" class="sql-editor-container"></div>
+    <div ref="editorContainer" class="sql-editor-container" @dragover.prevent @drop="onDrop"></div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, shallowRef } from 'vue'
 import * as monaco from 'monaco-editor'
+import { statementAtCursor } from '@/utils/sqlStatements'
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import { Operation } from '@element-plus/icons-vue'
 import { useThemeStore } from '@/stores/theme'
@@ -49,7 +50,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
-  execute: []
+  execute: [statement?: string]
+  executeScript: []
   explain: []
 }>()
 
@@ -115,8 +117,19 @@ onMounted(() => {
   editor.value.addCommand(
     monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
     () => {
-      emit('execute')
+      const selection = editor.value?.getSelection()
+      const selected = selection
+        ? editor.value?.getModel()?.getValueInRange(selection) || '' : ''
+      const current = editor.value?.getValue() || ''
+      const offset = editor.value?.getPosition()
+        ? editor.value.getModel()!.getOffsetAt(editor.value.getPosition()!) : current.length
+      emit('execute', selected.trim() || statementAtCursor(current, offset))
     }
+  )
+
+  editor.value.addCommand(
+    monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter,
+    () => emit('executeScript'),
   )
 
   // Ctrl+Shift+F 格式化 SQL
@@ -167,12 +180,46 @@ function formatCurrent() {
   const raw = editor.value.getValue()
   if (!raw || !raw.trim()) return
   const formatted = formatSql(raw)
-  const position = editor.value.getPosition()
-  editor.value.setValue(formatted)
-  if (position) editor.value.setPosition(position)
+  if (formatted === raw) return
+  const model = editor.value.getModel()
+  if (!model) return
+  const offset = editor.value.getPosition()
+    ? model.getOffsetAt(editor.value.getPosition()!) : formatted.length
+  editor.value.pushUndoStop()
+  editor.value.executeEdits('sql-formatter', [{
+    range: model.getFullModelRange(), text: formatted, forceMoveMarkers: true,
+  }])
+  editor.value.pushUndoStop()
+  editor.value.setPosition(model.getPositionAt(Math.min(offset, formatted.length)))
+  editor.value.focus()
 }
 
-defineExpose({ format: formatCurrent })
+function insertText(value: string) {
+  if (!editor.value || !value) return
+  const selection = editor.value.getSelection()
+  if (!selection) return
+  editor.value.executeEdits('navigator', [{ range: selection, text: value }])
+  editor.value.focus()
+}
+
+function currentStatement(): string {
+  if (!editor.value) return ''
+  const selection = editor.value.getSelection()
+  const selected = selection
+    ? editor.value.getModel()?.getValueInRange(selection) || '' : ''
+  const position = editor.value.getPosition()
+  const offset = position ? editor.value.getModel()!.getOffsetAt(position) : editor.value.getValue().length
+  return selected.trim() || statementAtCursor(editor.value.getValue(), offset)
+}
+
+function onDrop(event: DragEvent) {
+  const value = event.dataTransfer?.getData('text/plain') || ''
+  if (!value) return
+  event.preventDefault()
+  insertText(value)
+}
+
+defineExpose({ format: formatCurrent, insertText, currentStatement })
 
 // === SQL 关键字 ===
 const SQL_KEYWORDS = [

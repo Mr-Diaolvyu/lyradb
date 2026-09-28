@@ -1,6 +1,7 @@
 package io.github.lexaquila.lyradb.controller;
 
 import io.github.lexaquila.lyradb.model.entity.Grant;
+import io.github.lexaquila.lyradb.model.dto.BatchGrantRequest;
 import io.github.lexaquila.lyradb.service.AuditService;
 import io.github.lexaquila.lyradb.service.GrantService;
 import io.github.lexaquila.lyradb.service.SecurityUtil;
@@ -43,6 +44,34 @@ public class AdminGrantController {
             HttpSession session) {
         securityUtil.requireRole("DS_ADMIN");
         return grantService.listByWorkspace(securityUtil.requireCurrentWorkspace(session));
+    }
+
+    @GetMapping("/eligible-users")
+    public List<Map<String, Object>> eligibleUsers(HttpSession session) {
+        securityUtil.requireRole("DS_ADMIN");
+        return grantService.eligibleUsers(securityUtil.requireCurrentWorkspace(session));
+    }
+
+    @PostMapping("/batch/preview")
+    public Map<String, Object> previewBatch(@RequestBody BatchGrantRequest request,
+                                            HttpSession session) {
+        securityUtil.requireRole("DS_ADMIN");
+        return grantService.previewBatch(securityUtil.requireCurrentWorkspace(session), request);
+    }
+
+    @PostMapping("/batch")
+    @Transactional
+    public Map<String, Object> createBatch(@RequestBody BatchGrantRequest request,
+                                           HttpSession session) {
+        securityUtil.requireRole("DS_ADMIN");
+        String workspaceId = securityUtil.requireCurrentWorkspace(session);
+        List<Grant> created = grantService.createBatch(workspaceId, request);
+        for (Grant grant : created) {
+            auditService.recordCurrent(workspaceId, "GRANT_CREATE",
+                    grant.getDataSourceId(), grant.getGrantedSourceName(), true, null);
+        }
+        return Map.of("success", true, "count", created.size(),
+                "ids", created.stream().map(Grant::getId).toList());
     }
 
     @PostMapping

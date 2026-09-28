@@ -3,6 +3,7 @@ package io.github.lexaquila.lyradb.controller;
 import io.github.lexaquila.lyradb.model.entity.DataSource;
 import io.github.lexaquila.lyradb.service.AuditService;
 import io.github.lexaquila.lyradb.service.DataSourceService;
+import io.github.lexaquila.lyradb.service.DataSourceBatchTestService;
 import io.github.lexaquila.lyradb.service.SecurityUtil;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.http.CacheControl;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashSet;
 
 /**
  * 当前工作空间内的真实数据源管理。
@@ -31,12 +33,15 @@ public class AdminDataSourceController {
     private final DataSourceService dataSourceService;
     private final SecurityUtil securityUtil;
     private final AuditService auditService;
+    private final DataSourceBatchTestService batchTestService;
 
     public AdminDataSourceController(DataSourceService dataSourceService, SecurityUtil securityUtil,
-                                     AuditService auditService) {
+                                     AuditService auditService,
+                                     DataSourceBatchTestService batchTestService) {
         this.dataSourceService = dataSourceService;
         this.securityUtil = securityUtil;
         this.auditService = auditService;
+        this.batchTestService = batchTestService;
     }
 
     @GetMapping
@@ -137,6 +142,31 @@ public class AdminDataSourceController {
                 id, dataSource.getDisplayName(), success,
                 success ? null : String.valueOf(result.get("message")));
         return result;
+    }
+
+    @PostMapping("/test-batches")
+    public Map<String, Object> startBatchTest(@RequestBody Map<String, List<String>> body,
+                                               HttpSession session) {
+        securityUtil.requireRole("DS_ADMIN");
+        String workspaceId = securityUtil.requireCurrentWorkspace(session);
+        List<String> ids = body == null ? null : body.get("dataSourceIds");
+        if (ids == null || ids.isEmpty() || ids.size() > 100
+                || ids.stream().anyMatch(id -> id == null || id.isBlank())
+                || new LinkedHashSet<>(ids).size() != ids.size()) {
+            throw new IllegalArgumentException("请选择 1-100 个不重复的数据源");
+        }
+        List<DataSource> sources = ids.stream()
+                .map(id -> requireResource(id, session)).toList();
+        var user = securityUtil.requireCurrentUser();
+        return batchTestService.start(workspaceId, user.getId(), user.getUsername(), sources);
+    }
+
+    @GetMapping("/test-batches/{jobId}")
+    public Map<String, Object> batchTestStatus(@PathVariable String jobId,
+                                                HttpSession session) {
+        securityUtil.requireRole("DS_ADMIN");
+        return batchTestService.get(jobId, securityUtil.requireCurrentWorkspace(session),
+                securityUtil.requireCurrentUser().getId());
     }
 
     private DataSource requireResource(String id, HttpSession session) {

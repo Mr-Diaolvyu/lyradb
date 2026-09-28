@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.sql.Statement;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
 
 class StatementRegistryTest {
@@ -18,6 +19,20 @@ class StatementRegistryTest {
         StatementRegistry.unregister(firstConnection);
         StatementRegistry.unregister(secondConnection);
         StatementRegistry.end();
+    }
+
+    @Test
+    void remembersCancellationWhileWaitingForStatement() throws Exception {
+        String id = "queued";
+        Statement statement = mock(Statement.class);
+        StatementRegistry.prepare(id);
+        try {
+            assertTrue(StatementRegistry.requestCancellation(id));
+            StatementRegistry.begin(id);
+            assertThrows(java.util.concurrent.CancellationException.class,
+                    () -> StatementRegistry.register(firstConnection, statement));
+            verify(statement, never()).execute(anyString());
+        } finally { StatementRegistry.release(id); }
     }
 
     @Test

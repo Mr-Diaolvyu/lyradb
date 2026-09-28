@@ -2,6 +2,7 @@ package io.github.lexaquila.lyradb.controller;
 
 import io.github.lexaquila.lyradb.model.entity.MaskingRule;
 import io.github.lexaquila.lyradb.service.AuditService;
+import io.github.lexaquila.lyradb.service.AiMaskingRuleDraftService;
 import io.github.lexaquila.lyradb.service.MaskingService;
 import io.github.lexaquila.lyradb.service.SecurityUtil;
 import jakarta.servlet.http.HttpSession;
@@ -27,18 +28,34 @@ public class AdminMaskingController {
     private final MaskingService maskingService;
     private final SecurityUtil securityUtil;
     private final AuditService auditService;
+    private final AiMaskingRuleDraftService aiDrafts;
 
     public AdminMaskingController(MaskingService maskingService, SecurityUtil securityUtil,
-                                  AuditService auditService) {
+                                  AuditService auditService,
+                                  AiMaskingRuleDraftService aiDrafts) {
         this.maskingService = maskingService;
         this.securityUtil = securityUtil;
         this.auditService = auditService;
+        this.aiDrafts = aiDrafts;
     }
 
     @GetMapping
     public List<MaskingRule> list(HttpSession session) {
         securityUtil.requireRole("DS_ADMIN");
         return maskingService.listAll(securityUtil.requireCurrentWorkspace(session));
+    }
+
+    @PostMapping("/generate")
+    public AiMaskingRuleDraftService.Draft generate(
+            @RequestBody Map<String, String> body, HttpSession session) throws Exception {
+        securityUtil.requireRole("DS_ADMIN");
+        String workspaceId = securityUtil.requireCurrentWorkspace(session);
+        AiMaskingRuleDraftService.Draft draft = aiDrafts.generate(workspaceId,
+                body == null ? null : body.get("dataSourceId"),
+                body == null ? null : body.get("instruction"));
+        auditService.recordCurrent(workspaceId, "MASKING_RULE_AI_DRAFT",
+                draft.dataSourceId(), null, true, null);
+        return draft;
     }
 
     @PostMapping

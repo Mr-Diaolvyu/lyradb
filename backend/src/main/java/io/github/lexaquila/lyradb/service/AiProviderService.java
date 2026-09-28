@@ -44,6 +44,9 @@ public class AiProviderService {
     private static final Map<String, Map<String, String>> PRESETS = new LinkedHashMap<>() {{
         put("bailian", Map.of("displayName", "阿里云百炼",
                 "baseUrl", "https://dashscope.aliyuncs.com/compatible-mode/v1", "model", "qwen-plus"));
+        put("bailian_token", Map.of("displayName", "阿里云百炼 Token Plan",
+                "baseUrl", "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+                "model", "qwen3.7-plus"));
         put("glm", Map.of("displayName", "智谱GLM",
                 "baseUrl", "https://open.bigmodel.cn/api/paas/v4", "model", "glm-4-flash"));
         put("doubao", Map.of("displayName", "火山豆包",
@@ -153,6 +156,29 @@ public class AiProviderService {
         repository.save(target);
     }
 
+    /** 以少量输出 Token 做真实模型调用，验证地址、凭据和模型是否可用。 */
+    public long testConnection(String id, String workspaceId) {
+        requireWorkspaceId(workspaceId);
+        AiProviderConfig stored = repository.findByIdAndWorkspaceId(id, workspaceId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Provider 不存在或不属于当前工作空间"));
+        AiProviderConfig probe = new AiProviderConfig();
+        probe.setId(stored.getId());
+        probe.setBaseUrl(stored.getBaseUrl());
+        probe.setDeploymentMode(stored.getDeploymentMode());
+        probe.setApiKey(stored.getApiKey());
+        probe.setModel(stored.getModel());
+        probe.setTemperature(0.0);
+        probe.setMaxTokens(64);
+        long started = System.currentTimeMillis();
+        AiProviderChatResult response = chatWithUsage(probe,
+                List.of(Map.of("role", "user", "content", "请仅回复 OK。")));
+        if (response.content() == null || response.content().isBlank()) {
+            throw new IllegalStateException("模型未返回可读内容");
+        }
+        return System.currentTimeMillis() - started;
+    }
+
     public AiProviderConfig resolveDefault(String workspaceId) {
         requireWorkspaceId(workspaceId);
         AiProviderConfig config = repository
@@ -188,6 +214,10 @@ public class AiProviderService {
                         int status = clientResponse.getStatusCode().value();
                         try (InputStream input = new BoundedInputStream(
                                 clientResponse.getBody(), MAX_RESPONSE_BYTES)) {
+                            if (status == 401 || status == 403) {
+                                input.transferTo(java.io.OutputStream.nullOutputStream());
+                                throw new AiProviderAuthenticationException();
+                            }
                             if (status < 200 || status >= 300) {
                                 input.transferTo(java.io.OutputStream.nullOutputStream());
                                 throw new IllegalStateException("AI 服务返回非成功状态");
@@ -198,6 +228,9 @@ public class AiProviderService {
                     });
             success = true;
             return extractChatResult(response);
+        } catch (AiProviderAuthenticationException e) {
+            log.warn("AI Provider 鉴权失败: provider={}", config.getId());
+            throw e;
         } catch (Exception e) {
             log.error("AI 调用失败: provider={}, type={}",
                     config.getId(), e.getClass().getSimpleName(), e);

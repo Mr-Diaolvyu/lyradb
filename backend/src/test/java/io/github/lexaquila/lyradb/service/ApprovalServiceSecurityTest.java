@@ -88,6 +88,25 @@ class ApprovalServiceSecurityTest {
     }
 
     @Test
+    void tableEditApprovalEncryptsChangesAndShowsOnlySummary() {
+        Grant grant = grant("user-1", "workspace-1", "source-1", "sales");
+        User applicant = user("user-1", "alice");
+        String payload = """
+                {"schema":"public","table":"orders","changes":[{"action":"UPDATE",\
+                "key":{"id":1},"token":"snapshot","values":{"private_note":"sensitive-value"}}]}
+                """;
+        when(credentialService.encryptValue(any())).thenReturn("ENC");
+        when(credentialService.decryptValue("ENC")).thenReturn(payload);
+
+        ApprovalRequest saved = service.createTableEdit(grant, applicant, payload, null);
+        assertEquals("TABLE_EDIT", saved.getOperationType());
+        assertEquals("ENC", saved.getPayloadJson());
+        String visible = String.valueOf(service.toView(saved, true).get("payloadJson"));
+        assertTrue(visible.contains("private_note"));
+        assertTrue(!visible.contains("sensitive-value"));
+    }
+
+    @Test
     void createRejectsApplicantWithoutTheGrant() {
         Grant grant = grant("user-1", "workspace-1", "source-1", "sales");
 

@@ -1,6 +1,7 @@
 package io.github.lexaquila.lyradb.config;
 
 import io.github.lexaquila.lyradb.service.AiGatewayRateLimitException;
+import io.github.lexaquila.lyradb.service.AiProviderAuthenticationException;
 import io.github.lexaquila.lyradb.service.ApprovalRequiredException;
 import io.github.lexaquila.lyradb.service.QueryService;
 import org.slf4j.Logger;
@@ -75,10 +76,24 @@ public class GlobalExceptionHandler {
                         exception.getRetryAfterSeconds())).body(body);
     }
 
+    @ExceptionHandler(AiProviderAuthenticationException.class)
+    public ResponseEntity<Map<String, Object>> handleAiProviderAuthentication(
+            AiProviderAuthenticationException exception) {
+        return buildLogged(HttpStatus.BAD_GATEWAY, "AI_PROVIDER_AUTH_FAILED",
+                "AI 服务鉴权失败，请管理员检查默认 Provider 的密钥、接入区域和模型权限",
+                exception, false);
+    }
+
     @ExceptionHandler(SQLTimeoutException.class)
     public ResponseEntity<Map<String, Object>> handleSqlTimeout(SQLTimeoutException e) {
         return buildLogged(HttpStatus.REQUEST_TIMEOUT, "QUERY_TIMEOUT",
                 "SQL 执行超时，请优化查询或缩小结果范围", e, false);
+    }
+
+    @ExceptionHandler(java.util.concurrent.CancellationException.class)
+    public ResponseEntity<Map<String, Object>> handleCancellation(java.util.concurrent.CancellationException exception) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(baseBody(HttpStatus.CONFLICT, "QUERY_CANCELLED", "查询已取消，未发送数据库语句"));
     }
 
     @ExceptionHandler(SQLException.class)

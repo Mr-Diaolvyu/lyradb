@@ -44,6 +44,7 @@
         >
           <el-option v-for="w in auth.user?.workspaces" :key="w.id" :label="w.name" :value="w.id" />
         </el-select>
+        <p class="ws-hint">企业空间隔离成员、数据源授权、脚本和查询历史；切换后只显示当前空间的内容。</p>
         <div class="security-note">
           <span class="security-dot"></span>
           连接凭据由平台安全托管
@@ -62,6 +63,9 @@
         </div>
 
         <div class="header-actions">
+          <router-link to="/ai" class="ai-task-link" aria-label="查看 AI 后台任务">
+            AI 任务<span v-if="aiTasks.running"> · {{ aiTasks.running }} 进行中</span>
+          </router-link>
           <el-tooltip :content="themeStore.isDark ? '切换为浅色模式' : '切换为深色模式'" placement="bottom">
             <el-button
               class="round-action"
@@ -91,7 +95,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   Coin, DocumentCopy, Bell, List, Setting, SwitchButton, ChatLineRound, Collection, Menu, Moon, Sunny,
@@ -99,8 +103,12 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { entApi } from '@/api/ent'
+import { useAiTasksStore } from '@/stores/aiTasks'
 
 const auth = useAuthStore()
+const aiTasks = useAiTasksStore()
+onMounted(aiTasks.start)
+onUnmounted(aiTasks.stop)
 const themeStore = useThemeStore()
 const route = useRoute()
 const sideOpen = ref(false)
@@ -124,7 +132,7 @@ const menus = computed(() => {
   const arr = [
     { name: 'my-sources', to: '/my-sources', label: '我的数据源', icon: Coin },
     { name: 'query', to: '/query', label: '受控查询', icon: DocumentCopy },
-    { name: 'ai', to: '/ai', label: 'Ask Lyra', icon: ChatLineRound },
+    { name: 'ai', to: '/ai', label: 'AI 数据助手', icon: ChatLineRound },
     { name: 'knowledge', to: '/knowledge', label: '智库运营', icon: Collection },
     { name: 'approvals', to: '/approvals', label: '审批中心', icon: Bell, badge: pendingCount.value || undefined },
   ]
@@ -134,6 +142,7 @@ const menus = computed(() => {
 })
 
 const currentPageName = computed(() => {
+  if (route.name === 'ai-advanced') return 'AI 高级工具'
   const current = menus.value.find(item => item.name === route.name)
   return current?.label || '团队智库控制台'
 })
@@ -169,6 +178,7 @@ function roleLabel(role: string) {
 </script>
 
 <style scoped>
+.ai-task-link { color: var(--color-primary); font-size: 12px; text-decoration: none; }
 .ent-layout {
   display: flex;
   height: 100vh;
@@ -311,6 +321,13 @@ function roleLabel(role: string) {
   color: var(--color-text-muted);
   font-size: 10px;
   font-weight: 650;
+}
+
+.ws-hint {
+  margin-top: 9px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 .security-note {

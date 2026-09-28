@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.security.access.AccessDeniedException;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -112,6 +113,52 @@ class EnterpriseMetadataCatalogServiceTest {
                 .extracting(
                         EnterpriseMetadataCatalog.Table::getQualifiedName)
                 .containsExactly("public.orders");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void navigationPagesOnlyAuthorizedNodesAndRejectsForgedParent() throws Exception {
+        TreeNode schema = TreeNode.of("public", "public", "SCHEMA", "public");
+        TreeNode privateSchema = TreeNode.of("private", "private", "SCHEMA", "private");
+        TreeNode orders = TreeNode.of("public/orders", "orders", "TABLE", "public/orders");
+        TreeNode secret = TreeNode.of("public/secret", "secret", "TABLE", "public/secret");
+        when(driver.getTreeNodes(connection, null))
+                .thenReturn(List.of(schema, privateSchema));
+        when(driver.getTreeNodes(connection, "public"))
+                .thenReturn(List.of(orders, secret));
+
+        Map<String, Object> roots = service.navigation("sales", null, null, 0, 100);
+        assertThat((List<Map<String, Object>>) roots.get("nodes"))
+                .extracting(node -> node.get("name")).containsExactly("public");
+        Map<String, Object> tables = service.navigation("sales", "public", null, 0, 100);
+        assertThat((List<Map<String, Object>>) tables.get("nodes"))
+                .extracting(node -> node.get("name")).containsExactly("orders");
+        assertThatThrownBy(() -> service.navigation("sales", "private", null, 0, 100))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void searchScansAuthorizedTablesBeyondCatalogLimitAndExcludesBlockedTables()
+            throws Exception {
+        grant.setAllowedTables("public.*");
+        TreeNode schema = TreeNode.of("public", "public", "SCHEMA", "public");
+        List<TreeNode> tables = new java.util.ArrayList<>();
+        for (int index = 0; index < 2501; index++) {
+            tables.add(TreeNode.of("public/table_" + index,
+                    "table_" + index, "TABLE", "public/table_" + index));
+        }
+        tables.add(TreeNode.of("public/secret", "secret", "TABLE", "public/secret"));
+        when(driver.getTreeNodes(connection, null)).thenReturn(List.of(schema));
+        when(driver.getTreeNodes(connection, "public")).thenReturn(tables);
+
+        Map<String, Object> result = service.searchTables("sales", "table_2500");
+        List<EnterpriseMetadataCatalog.Table> found =
+                (List<EnterpriseMetadataCatalog.Table>) result.get("tables");
+        assertThat(found).extracting(EnterpriseMetadataCatalog.Table::getQualifiedName)
+                .containsExactly("public.table_2500");
+        Map<String, Object> blocked = service.searchTables("sales", "secret");
+        assertThat((List<?>) blocked.get("tables")).isEmpty();
     }
 
     @Test
@@ -216,21 +263,45 @@ class EnterpriseMetadataCatalogServiceTest {
                 connection, "public", "inventory");
         verify(driver, never()).getTableConstraints(
                 connection, "public", "inventory");
+        foreignKey.setReferencedTable("other_schema.customers");
+        assertThat(service.erDiagram("sales", "public", List.of("orders", "customers")).getEdges()).isEmpty();
     }
 
     @Test
-    void erDiagramRejectsMoreThanTwentyFourTablesBeforeConnecting() {
+    void erDiagramRejectsMoreThanTwoThousandTablesBeforeConnecting() {
         List<String> selected = java.util.stream.IntStream
-                .rangeClosed(1, 25)
+                .rangeClosed(1, 2001)
                 .mapToObj(index -> "table_" + index)
                 .toList();
 
         assertThatThrownBy(() -> service.erDiagram(
                 "sales", "public", selected))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("最多选择 24 张表");
+                .hasMessageContaining("最多选择 2000 张表");
         verify(dataSourceService, never())
                 .resolveActiveConnection("source-1");
+    }
+
+    @Test
+    void emptySelectionLoadsFullAuthorizedScopeBeyondOldTwentyFourLimit() throws Exception {
+        grant.setAllowedTables("public.*");
+        grant.setBlockedTables("public.secret");
+        TreeNode schema = TreeNode.of("public", "public", "SCHEMA", "public");
+        var tables = new java.util.ArrayList<TreeNode>();
+        for (int i = 0; i < 30; i++) tables.add(TreeNode.of("public/t" + i, "t" + i, "TABLE", "public/t" + i));
+        tables.add(TreeNode.of("public/secret", "secret", "TABLE", "public/secret"));
+        when(driver.getTreeNodes(connection, null)).thenReturn(List.of(schema));
+        when(driver.getTreeNodes(connection, "public")).thenReturn(tables);
+        var diagram = service.erDiagram("sales", "public", List.of());
+        assertThat(diagram.getTables()).hasSize(30);
+        assertThat(diagram.isTruncated()).isFalse();
+        verify(driver, never()).getTableColumns(connection, "public", "secret");
+        when(driver.getTableColumns(connection, "public", "t0")).thenAnswer(invocation -> {
+            when(securityContextService.fingerprint(grant)).thenReturn("revoked-policy");
+            return List.of();
+        });
+        assertThatThrownBy(() -> service.erDiagram("sales", "public", List.of()))
+                .isInstanceOf(AccessDeniedException.class);
     }
 
     @Test

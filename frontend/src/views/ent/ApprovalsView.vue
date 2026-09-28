@@ -45,6 +45,11 @@
           <el-table-column label="操作" width="150" fixed="right">
             <template #default="{ row }">
               <el-button
+                v-if="row.operationType === 'TABLE_EDIT' && row.status === 'APPROVED'"
+                size="small" type="primary" :loading="downloadingId === row.id"
+                @click="executeTableEdit(row)"
+              >执行变更</el-button>
+              <el-button
                 v-if="(row.operationType === 'EXPORT' || row.operationType === 'DATASOURCE_EXPORT') && row.status === 'APPROVED'"
                 size="small"
                 type="primary"
@@ -137,6 +142,12 @@ function parseExportPayload(row: ApprovalRequest): ExportPayload | null {
 }
 
 function payloadSummary(row: ApprovalRequest): string {
+  if (row.operationType === 'TABLE_EDIT' && row.payloadJson) {
+    try {
+      const summary = JSON.parse(row.payloadJson)
+      return `${summary.schema}.${summary.table} · ${Object.entries(summary.counts || {}).map(([action, count]) => `${action} ${count}`).join('、')} · 字段 ${summary.columns?.join('、') || '—'}`
+    } catch { return '表格增改删' }
+  }
   const dataSourcePayload = parseDataSourceExportPayload(row)
   if (dataSourcePayload) {
     const mode = credentialModeLabel(dataSourcePayload.credentialMode)
@@ -159,6 +170,7 @@ function operationLabel(operation: string): string {
   if (operation === 'DATASOURCE_EXPORT') return '连接配置导出'
   if (operation === 'EXPORT') return '查询结果导出'
   if (operation === 'DANGEROUS_SQL') return '高风险 SQL'
+  if (operation === 'TABLE_EDIT') return '表格增改删'
   return operation
 }
 
@@ -306,6 +318,21 @@ async function downloadApproved(row: ApprovalRequest) {
   } finally {
     downloadingId.value = null
   }
+}
+
+async function executeTableEdit(row: ApprovalRequest) {
+  try {
+    await ElMessageBox.confirm('审批已通过。执行会向目标数据库提交审批中的整批增改删，且只能执行一次。确认继续？', '执行表格变更', { type: 'warning' })
+  } catch { return }
+  downloadingId.value = row.id
+  try {
+    const result = await entApi.executeTableEdit(row.id)
+    ElMessage.success(`已提交 ${result.count} 项变更`)
+    await load()
+  } catch (failure: any) {
+    ElMessage.error(failure.message || '执行失败；请核对审批状态与目标数据')
+    await load()
+  } finally { downloadingId.value = null }
 }
 
 async function downloadApprovedDataSources(row: ApprovalRequest) {

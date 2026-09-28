@@ -1,8 +1,10 @@
 package io.github.lexaquila.lyradb.config;
 
 import io.github.lexaquila.lyradb.service.ApprovalRequiredException;
+import io.github.lexaquila.lyradb.service.AiProviderAuthenticationException;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.sql.SQLException;
 import java.util.Map;
@@ -26,6 +28,16 @@ class GlobalExceptionHandlerSecurityTest {
         assertEquals(400, response.getStatusCode().value());
         assertEquals("INVALID_REQUEST", response.getBody().get("error"));
         assertEquals("密码长度必须为 12-128 位", response.getBody().get("message"));
+    }
+
+    @Test
+    void authorizationFailureReturnsForbiddenWithoutResourceNames() {
+        ResponseEntity<Map<String, Object>> response = handler.handleAccessDenied(
+                new AccessDeniedException("表不在授权白名单内: private.payroll"));
+
+        assertEquals(403, response.getStatusCode().value());
+        assertEquals("ACCESS_DENIED", response.getBody().get("error"));
+        assertFalse(response.getBody().toString().contains("private.payroll"));
     }
 
     @Test
@@ -68,5 +80,18 @@ class GlobalExceptionHandlerSecurityTest {
         assertEquals(409, response.getStatusCode().value());
         assertEquals("OPERATION_REJECTED", response.getBody().get("error"));
         assertFalse(response.getBody().toString().contains("password=secret"));
+    }
+
+    @Test
+    void aiProviderAuthenticationReturnsActionableMessageWithoutCredential() {
+        ResponseEntity<Map<String, Object>> response =
+                handler.handleAiProviderAuthentication(
+                        new AiProviderAuthenticationException());
+
+        assertEquals(502, response.getStatusCode().value());
+        assertEquals("AI_PROVIDER_AUTH_FAILED", response.getBody().get("error"));
+        assertEquals("AI 服务鉴权失败，请管理员检查默认 Provider 的密钥、接入区域和模型权限",
+                response.getBody().get("message"));
+        assertFalse(response.getBody().toString().contains("sk-"));
     }
 }
