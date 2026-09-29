@@ -61,7 +61,7 @@ class EnterpriseTableInspectionSecurityTest {
                 .hasMessageContaining("黑名单");
 
         verify(dataSourceService, never())
-                .resolveActiveConnection("source-1");
+                .openQueryConnection("source-1");
     }
 
     @Test
@@ -71,6 +71,6 @@ class EnterpriseTableInspectionSecurityTest {
                 .hasMessageContaining("白名单");
 
         verify(dataSourceService, never())
-                .resolveActiveConnection("source-1");
+                .openQueryConnection("source-1");
     }
 }

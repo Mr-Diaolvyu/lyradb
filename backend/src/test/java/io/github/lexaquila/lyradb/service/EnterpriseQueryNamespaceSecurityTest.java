@@ -41,7 +41,7 @@ class EnterpriseQueryNamespaceSecurityTest {
 
         EnterpriseQueryService.ConnectionNamespaceState state =
                 service.switchNamespace(
-                        connection, "tenant", "POSTGRESQL", "source-1");
+                        connection, "tenant", "POSTGRESQL");
         state.restore();
 
         var order = inOrder(connection);
@@ -62,7 +62,7 @@ class EnterpriseQueryNamespaceSecurityTest {
 
         EnterpriseQueryService.ConnectionNamespaceState state =
                 service.switchNamespace(
-                        connection, "tenant", "MYSQL", "source-1");
+                        connection, "tenant", "MYSQL");
         state.restore();
 
         var order = inOrder(connection);
@@ -76,15 +76,15 @@ class EnterpriseQueryNamespaceSecurityTest {
     }
 
     @Test
-    void readBackMismatchFailsClosedAndDisconnects() throws Exception {
+    void readBackMismatchFailsClosedWithoutDisconnectingOtherRequests() throws Exception {
         Connection connection = mock(Connection.class);
         when(connection.getSchema()).thenReturn("public", "public");
 
         assertThrows(IllegalStateException.class,
                 () -> service.switchNamespace(
-                        connection, "tenant", "POSTGRESQL", "source-1"));
+                        connection, "tenant", "POSTGRESQL"));
 
-        verify(dataSourceService).disconnect("source-1");
+        verify(dataSourceService, never()).disconnect("source-1");
     }
 
     @Test
@@ -94,7 +94,7 @@ class EnterpriseQueryNamespaceSecurityTest {
 
         assertThrows(IllegalArgumentException.class,
                 () -> service.switchNamespace(
-                        connection, "dw;drop", "POSTGRESQL", "source-1"));
+                        connection, "dw;drop", "POSTGRESQL"));
 
         verify(dataSourceService, never()).disconnect("source-1");
         verify(connection, never()).setSchema(
@@ -130,15 +130,15 @@ class EnterpriseQueryNamespaceSecurityTest {
     }
 
     @Test
-    void unsupportedNamespaceSwitchFailsClosedAndDisconnects()
+    void unsupportedNamespaceSwitchFailsClosedWithoutDisconnectingOtherRequests()
             throws Exception {
         Connection connection = mock(Connection.class);
 
         assertThrows(IllegalStateException.class,
                 () -> service.switchNamespace(
-                        connection, "tenant", "SQLITE", "source-1"));
+                        connection, "tenant", "SQLITE"));
 
-        verify(dataSourceService).disconnect("source-1");
+        verify(dataSourceService, never()).disconnect("source-1");
         verify(connection, never()).setCatalog(
                 org.mockito.ArgumentMatchers.any());
         verify(connection, never()).setSchema(

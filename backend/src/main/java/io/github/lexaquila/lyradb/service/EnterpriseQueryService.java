@@ -112,15 +112,13 @@ public class EnterpriseQueryService {
                         sql, 0, 0, true, null, approvalId);
             }
 
-            ConnectionService.ActiveConnection active =
-                    dataSourceService.resolveActiveConnection(
-                            grant.getDataSourceId());
             int limit = Math.max(1, grant.getMaxRowsPerQuery());
-            try (ConnectionService.ActiveConnection.Lease ignored =
+            try (DataSourceService.QueryConnection active =
+                         dataSourceService.openQueryConnection(grant.getDataSourceId());
+                 ConnectionService.ActiveConnection.Lease ignored =
                          active.acquire()) {
                 result = executeMaterialized(
-                        active, grant.getDataSourceId(),
-                        dataSource.getDbType(), sql, limit,
+                        active, dataSource.getDbType(), sql, limit,
                         defaultDatabase, analysis,
                         externalDmlDispatched, executionId);
             }
@@ -227,12 +225,12 @@ public class EnterpriseQueryService {
                         ? "TABLE" : objectType.toUpperCase(Locale.ROOT));
         inspection.setDbType(access.dataSource().getDbType());
 
-        ConnectionService.ActiveConnection active =
-                dataSourceService.resolveActiveConnection(
-                        grant.getDataSourceId());
         boolean maxCompute = isMaxCompute(access.dataSource());
         boolean partitionMetadataFailed = false;
-        try (ConnectionService.ActiveConnection.Lease ignored =
+        String previewSql = "";
+        try (DataSourceService.QueryConnection active =
+                     dataSourceService.openQueryConnection(grant.getDataSourceId());
+             ConnectionService.ActiveConnection.Lease ignored =
                      active.acquire()) {
             try {
                 TableCommentMetadata comment =
@@ -284,48 +282,45 @@ public class EnterpriseQueryService {
             } catch (Exception exception) {
                 inspection.addError("ddl", safeMessage(exception));
             }
-        }
-
-        inspection.setPreviewRequiresPartition(maxCompute
-                && (inspection.isPartitioned()
-                || partitionMetadataFailed));
-        String previewSql = "";
-        if (includePreview) {
-            if (maxCompute && partitionMetadataFailed) {
-                inspection.addError("preview",
-                        "无法确认 MaxCompute 分区状态，为避免全表扫描已阻止数据预览");
-            } else if (inspection.isPartitioned()
-                    && (partitionSpec == null || partitionSpec.isBlank())) {
-                inspection.addError("preview",
-                        "必须先选择一个完整分区，已阻止无分区预览");
-            } else {
-                try (ConnectionService.ActiveConnection.Lease ignored =
-                             active.acquire()) {
-                    if (inspection.isPartitioned()) {
-                        previewSql = active.driver.buildPartitionPreviewSql(
-                                active.connection, schema, table,
-                                partitionSpec.trim(), limit);
-                        inspection.setSelectedPartition(partitionSpec.trim());
-                    } else {
-                        if (partitionSpec != null && !partitionSpec.isBlank()) {
-                            throw new IllegalArgumentException(
-                                    "非分区表不能指定 partitionSpec");
-                        }
-                        previewSql = active.driver.buildTablePreviewSql(
-                                active.connection, schema, table, limit);
-                    }
-                    inspection.setPreviewSql(previewSql);
-                } catch (Exception exception) {
-                    inspection.addError("preview", safeMessage(exception));
-                }
-                if (!previewSql.isBlank()) {
+            inspection.setPreviewRequiresPartition(maxCompute
+                    && (inspection.isPartitioned()
+                    || partitionMetadataFailed));
+            if (includePreview) {
+                if (maxCompute && partitionMetadataFailed) {
+                    inspection.addError("preview",
+                            "无法确认 MaxCompute 分区状态，为避免全表扫描已阻止数据预览");
+                } else if (inspection.isPartitioned()
+                        && (partitionSpec == null || partitionSpec.isBlank())) {
+                    inspection.addError("preview",
+                            "必须先选择一个完整分区，已阻止无分区预览");
+                } else {
                     try {
-                        inspection.setPreview(executeQuery(
-                                grantedSourceName, previewSql, null));
+                        if (inspection.isPartitioned()) {
+                            previewSql = active.driver.buildPartitionPreviewSql(
+                                    active.connection, schema, table,
+                                    partitionSpec.trim(), limit);
+                            inspection.setSelectedPartition(partitionSpec.trim());
+                        } else {
+                            if (partitionSpec != null && !partitionSpec.isBlank()) {
+                                throw new IllegalArgumentException(
+                                        "非分区表不能指定 partitionSpec");
+                            }
+                            previewSql = active.driver.buildTablePreviewSql(
+                                    active.connection, schema, table, limit);
+                        }
+                        inspection.setPreviewSql(previewSql);
                     } catch (Exception exception) {
                         inspection.addError("preview", safeMessage(exception));
                     }
                 }
+            }
+        }
+        if (!previewSql.isBlank()) {
+            try {
+                inspection.setPreview(executeQuery(
+                        grantedSourceName, previewSql, null));
+            } catch (Exception exception) {
+                inspection.addError("preview", safeMessage(exception));
             }
         }
         return inspection;
@@ -356,10 +351,9 @@ public class EnterpriseQueryService {
             throw new IllegalArgumentException("分区筛选内容不能超过 200 个字符");
         }
 
-        ConnectionService.ActiveConnection active =
-                dataSourceService.resolveActiveConnection(
-                        access.grant().getDataSourceId());
-        try (ConnectionService.ActiveConnection.Lease ignored =
+        try (DataSourceService.QueryConnection active =
+                     dataSourceService.openQueryConnection(access.grant().getDataSourceId());
+             ConnectionService.ActiveConnection.Lease ignored =
                      active.acquire()) {
             if (filter.isBlank()) {
                 PartitionMetadataPage page =
@@ -584,18 +578,16 @@ public class EnterpriseQueryService {
             throw new IllegalStateException(
                     "授权与真实数据源工作空间不一致");
         }
-        ConnectionService.ActiveConnection active =
-                dataSourceService.resolveActiveConnection(
-                        grant.getDataSourceId());
-        if (!(active.connection instanceof Connection jdbc)) {
-            throw new IllegalArgumentException(
-                    "企业流式导出当前仅支持 JDBC 数据源");
-        }
-
         long started = System.currentTimeMillis();
         long rows;
-        try (ConnectionService.ActiveConnection.Lease ignored =
+        try (DataSourceService.QueryConnection active =
+                     dataSourceService.openQueryConnection(grant.getDataSourceId());
+             ConnectionService.ActiveConnection.Lease ignored =
                      active.acquire()) {
+            if (!(active.connection instanceof Connection jdbc)) {
+                throw new IllegalArgumentException(
+                        "企业流式导出当前仅支持 JDBC 数据源");
+            }
             rows = streamJdbc(
                     jdbc, grant, dataSource.getDbType(),
                     analysis, sql, defaultDatabase, limit, consumer);
@@ -733,7 +725,7 @@ public class EnterpriseQueryService {
 
     private QueryResult executeMaterialized(
             ConnectionService.ActiveConnection active,
-            String dataSourceId, String dbType,
+            String dbType,
             String sql, int limit,
             String defaultDatabase,
             SqlParseUtil.Analysis analysis,
@@ -753,7 +745,7 @@ public class EnterpriseQueryService {
             }
             namespace = switchNamespace(
                     active.connection, defaultDatabase,
-                    dbType, dataSourceId);
+                    dbType);
             if (analysis.type() == SqlParseUtil.StatementType.READ) {
                 return active.driver.executeQuery(
                         active.connection, sql, limit);
@@ -768,7 +760,7 @@ public class EnterpriseQueryService {
         } finally {
             try {
                 restoreConnectionState(
-                        namespace, readOnlyState, dataSourceId, failure);
+                        namespace, readOnlyState, failure);
             } finally {
                 StatementRegistry.end();
             }
@@ -789,8 +781,7 @@ public class EnterpriseQueryService {
             readOnlyState = ReadOnlyState.capture(jdbc);
             readOnlyState.enable();
             namespace = switchNamespace(
-                    jdbc, defaultDatabase, dbType,
-                    grant.getDataSourceId());
+                    jdbc, defaultDatabase, dbType);
             try (Statement statement = jdbc.createStatement()) {
                 statement.setMaxRows(limit);
                 statement.setFetchSize(Math.min(1_000, limit));
@@ -850,8 +841,7 @@ public class EnterpriseQueryService {
         } finally {
             try {
                 restoreConnectionState(
-                        namespace, readOnlyState,
-                        grant.getDataSourceId(), failure);
+                        namespace, readOnlyState, failure);
             } finally {
                 StatementRegistry.end();
             }
@@ -860,7 +850,7 @@ public class EnterpriseQueryService {
 
     ConnectionNamespaceState switchNamespace(
             Object connection, String defaultDatabase,
-            String dbType, String dataSourceId) throws Exception {
+            String dbType) throws Exception {
         if (defaultDatabase == null || defaultDatabase.isBlank()) {
             return ConnectionNamespaceState.none();
         }
@@ -886,13 +876,8 @@ public class EnterpriseQueryService {
             return new ConnectionNamespaceState(
                     jdbc, attribute, original, true);
         } catch (Exception exception) {
-            try {
-                dataSourceService.disconnect(dataSourceId);
-            } catch (Exception disconnectFailure) {
-                exception.addSuppressed(disconnectFailure);
-            }
             throw new IllegalStateException(
-                    "默认数据库/Schema 切换失败，企业数据源连接已关闭",
+                    "默认数据库/Schema 切换失败，本次查询已终止",
                     exception);
         }
     }
@@ -900,7 +885,7 @@ public class EnterpriseQueryService {
     private void restoreConnectionState(
             ConnectionNamespaceState namespace,
             ReadOnlyState readOnlyState,
-            String dataSourceId, Exception executionFailure)
+            Exception executionFailure)
             throws Exception {
         Exception restoreFailure = null;
         try {
@@ -920,17 +905,12 @@ public class EnterpriseQueryService {
         if (restoreFailure == null) {
             return;
         }
-        try {
-            dataSourceService.disconnect(dataSourceId);
-        } catch (Exception disconnectFailure) {
-            restoreFailure.addSuppressed(disconnectFailure);
-        }
         if (executionFailure != null) {
             executionFailure.addSuppressed(restoreFailure);
             return;
         }
         throw new IllegalStateException(
-                "恢复数据库上下文失败，企业数据源连接已关闭",
+                "恢复数据库上下文失败，本次查询已终止",
                 restoreFailure);
     }
 

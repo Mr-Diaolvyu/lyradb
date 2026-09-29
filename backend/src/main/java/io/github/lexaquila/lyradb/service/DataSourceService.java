@@ -268,9 +268,56 @@ public class DataSourceService {
         return result;
     }
 
-    /**
-     * 解析授权 → 取得活跃连接（缓存）。仅企业查询服务内部调用。
-     */
+    /** 每次执行读取最新配置并新建连接，由调用方在 try-with-resources 中关闭。 */
+    public QueryConnection openQueryConnection(String dataSourceId) {
+        DataSource ds = getEntity(dataSourceId);
+        try {
+            Map<String, Object> params = credentialService.decryptSensitiveFields(
+                    parseParams(ds.getConnectionParamsJson()));
+            DatabaseDriver driver = driverFactory.createDriver(ds.getDbType());
+            Object connection = driver.connect(params);
+            if (connection == null) {
+                throw new IllegalStateException("驱动未返回有效连接");
+            }
+            return new QueryConnection(driver, connection);
+        } catch (Exception exception) {
+            throw new IllegalStateException("连接数据源失败", exception);
+        }
+    }
+
+    /** 请求独占的短连接，不加入数据源连接缓存，关闭时只释放自身。 */
+    public static final class QueryConnection
+            extends ConnectionService.ActiveConnection implements AutoCloseable {
+        private boolean released;
+
+        QueryConnection(DatabaseDriver driver, Object connection) {
+            super(driver, connection);
+        }
+
+        @Override
+        public void close() {
+            // 即使任务已被中断，也必须完成资源释放。
+            lock.lock();
+            try {
+                if (released) {
+                    return;
+                }
+                released = true;
+                markClosed();
+                try {
+                    driver.disconnect(connection);
+                } catch (RuntimeException exception) {
+                    // 关闭失败不能把已完成的 DML 改判为可重试，也不能覆盖原始查询异常。
+                    log.warn("关闭企业查询连接失败: {}",
+                            exception.getClass().getSimpleName());
+                }
+            } finally {
+                lock.unlock();
+            }
+        }
+    }
+
+    /** 供目录、快照和表编辑等功能取得缓存连接；查询执行使用 openQueryConnection。 */
     public synchronized ConnectionService.ActiveConnection resolveActiveConnection(String dataSourceId) {
         DataSource ds = getEntity(dataSourceId);
         String fingerprint = connectionFingerprint(ds);

@@ -19,6 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.mock;
@@ -176,5 +178,85 @@ class DataSourceServiceConnectionTest {
 
         assertSame(fresh, replacement.connection);
         verify(driver).disconnect(closed);
+    }
+
+    @Test
+    void queryConnectionsBypassEvenHealthyCacheAndReadCurrentConfiguration() throws Exception {
+        Connection cached = mock(Connection.class);
+        Connection first = mock(Connection.class);
+        Connection second = mock(Connection.class);
+        when(driver.connect(anyMap())).thenReturn(cached, first, second);
+        when(cached.isValid(3)).thenReturn(true);
+        service.resolveActiveConnection("source-1");
+
+        try (var query = service.openQueryConnection("source-1")) {
+            assertSame(first, query.connection);
+            assertNotSame(cached, query.connection);
+        }
+        DataSource source = repository.findById("source-1").orElseThrow();
+        source.setConnectionParamsJson("{\"host\":\"new-host\"}");
+        when(credentialService.decryptSensitiveFields(Map.of("host", "new-host")))
+                .thenReturn(Map.of("host", "new-host"));
+        try (var query = service.openQueryConnection("source-1")) {
+            assertSame(second, query.connection);
+        }
+
+        verify(driver).connect(Map.of("host", "new-host"));
+        verify(driver).disconnect(first);
+        verify(driver).disconnect(second);
+        verify(driver, never()).disconnect(cached);
+        verify(driverFactory, times(2)).createDriver("MYSQL");
+    }
+
+    @Test
+    void queryCloseIsIdempotentAndRejectsStaleReferences() throws Exception {
+        Object connection = new Object();
+        when(driver.connect(anyMap())).thenReturn(connection);
+        var query = service.openQueryConnection("source-1");
+
+        query.close();
+        query.close();
+
+        verify(driver, times(1)).disconnect(connection);
+        assertThrows(IllegalStateException.class, query::acquire);
+    }
+
+    @Test
+    void queryConnectionFailureDoesNotFallBackToCacheOrRetry() throws Exception {
+        when(driver.connect(anyMap())).thenThrow(new SQLException("connect failed"));
+
+        assertThrows(IllegalStateException.class,
+                () -> service.openQueryConnection("source-1"));
+
+        verify(driver, times(1)).connect(anyMap());
+        verify(driver, never()).disconnect(any());
+        verify(driverFactory, never()).getOrCreateDriver(any(), any());
+    }
+
+    @Test
+    void queryRejectsNullConnection() throws Exception {
+        when(driver.connect(anyMap())).thenReturn(null);
+
+        assertThrows(IllegalStateException.class,
+                () -> service.openQueryConnection("source-1"));
+        verify(driver, never()).disconnect(any());
+    }
+
+    @Test
+    void queryCleanupFailurePreservesOriginalException() throws Exception {
+        Object connection = new Object();
+        when(driver.connect(anyMap())).thenReturn(connection);
+        org.mockito.Mockito.doThrow(new IllegalStateException("close failed"))
+                .when(driver).disconnect(connection);
+        SQLException original = new SQLException("query failed");
+
+        SQLException actual = assertThrows(SQLException.class, () -> {
+            try (var query = service.openQueryConnection("source-1")) {
+                throw original;
+            }
+        });
+
+        assertSame(original, actual);
+        verify(driver).disconnect(connection);
     }
 }

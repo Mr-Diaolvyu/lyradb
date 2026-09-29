@@ -92,6 +92,6 @@ class EnterpriseQueryAuditFailClosedTest {
         assertThrows(IllegalStateException.class, () -> service.executeQuery(
                 "sales", "update dw.orders set status = 'DONE'", "dw"));
 
-        verify(dataSourceService, never()).resolveActiveConnection(anyString());
+        verify(dataSourceService, never()).openQueryConnection(anyString());
     }
 }

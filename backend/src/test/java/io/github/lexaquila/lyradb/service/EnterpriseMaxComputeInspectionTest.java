@@ -68,8 +68,8 @@ class EnterpriseMaxComputeInspectionTest {
 
         driver = mock(DatabaseDriver.class);
         connection = new Object();
-        when(dataSourceService.resolveActiveConnection("source-1"))
-                .thenReturn(new ConnectionService.ActiveConnection(
+        when(dataSourceService.openQueryConnection("source-1"))
+                .thenReturn(new DataSourceService.QueryConnection(
                         driver, connection));
 
         TableCommentMetadata comment = new TableCommentMetadata();
