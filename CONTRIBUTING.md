@@ -12,8 +12,8 @@ LyraDB 当前定位为“可私有化的可信 AI 数据智库”。涉及产品
 | --- | --- |
 | JDK | 17+；桌面打包需带 jpackage 的 JDK 21 |
 | Maven | 3.8+ |
-| Node.js | 20 |
-| npm | 随 Node.js 20，必须使用仓库锁文件 |
+| Node.js | 24.15+ |
+| npm | 随 Node.js 24，必须使用仓库锁文件 |
 
 后端：
 

@@ -445,7 +445,7 @@ watch(() => props.editable, () => {
 
 .row-count {
   font-size: var(--text-caption);
-  color: var(--color-muted);
+  color: var(--color-text-muted);
 }
 
 .col-count {
@@ -499,7 +499,6 @@ watch(() => props.editable, () => {
 :deep(.cell-null) {
   color: var(--color-text-muted);
   font-style: italic;
-  opacity: 0.65;
   font-size: var(--text-code);
 }
 
@@ -552,9 +551,13 @@ watch(() => props.editable, () => {
   --vxe-ui-table-header-background-color: var(--color-panel-header);
   --vxe-ui-table-border-color: var(--color-panel-border);
   --vxe-ui-table-row-striped-background-color: var(--color-background);
+  --vxe-ui-table-row-hover-striped-background-color: var(--color-hover);
   --vxe-ui-table-row-current-background-color: var(--color-active);
   --vxe-ui-table-row-hover-background-color: var(--color-hover);
-  --vxe-ui-table-row-hover-current-background-color: var(--color-hover);
+  --vxe-ui-table-row-hover-current-background-color: var(--color-active);
+  --vxe-ui-table-column-hover-background-color: var(--color-hover);
+  --vxe-ui-table-column-current-background-color: var(--color-active);
+  --vxe-ui-table-column-hover-current-background-color: var(--color-active);
 }
 
 .column-heading { display: block; min-width: 0; width: 100%; overflow: hidden; }

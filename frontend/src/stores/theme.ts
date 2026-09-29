@@ -10,13 +10,14 @@ export type AccentPreset = 'navy' | 'emerald' | 'amber' | 'violet'
 export type Density = 'comfortable' | 'compact'
 
 export const useThemeStore = defineStore('theme', () => {
-    const mode = ref<ThemeMode>('light')
+    const mode = ref<ThemeMode>('system')
     /** 当前实际是否为暗色（system 模式下由系统偏好解析而来） */
     const isDark = ref(false)
     const accent = ref<AccentPreset>('navy')
     const density = ref<Density>('comfortable')
 
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    let initialized = false
     let vxeThemeEnabled = false
     let vxeModulePromise: Promise<typeof import('vxe-pc-ui')> | null = null
 
@@ -37,7 +38,7 @@ export const useThemeStore = defineStore('theme', () => {
         el.setAttribute('data-theme', isDark.value ? 'dark' : 'light')
         // Element Plus 暗色变量依赖 html.dark 类（dark/css-vars.css）
         el.classList.toggle('dark', isDark.value)
-        // 只有 personal 探测完成并调用 initTheme 后才加载重型 VXE 运行时。
+        // 只有 personal 探测完成并启用 VXE 主题后才加载重型运行时。
         void applyVxeTheme()
     }
 
@@ -65,6 +66,8 @@ export const useThemeStore = defineStore('theme', () => {
     }
 
     function initTheme() {
+        if (initialized) return
+        initialized = true
         const savedTheme = localStorage.getItem('theme')
         if (savedTheme === 'light' || savedTheme === 'dark' || savedTheme === 'system') {
             mode.value = savedTheme
@@ -83,8 +86,13 @@ export const useThemeStore = defineStore('theme', () => {
         })
         document.documentElement.setAttribute('data-accent', accent.value)
         document.documentElement.setAttribute('data-density', density.value)
-        vxeThemeEnabled = true
         applyTheme()
+    }
+
+    /** 个人版确认后再加载表格主题运行时，企业版不需要它。 */
+    function enableVxeTheme() {
+        vxeThemeEnabled = true
+        void applyVxeTheme()
     }
 
     return {
@@ -97,6 +105,7 @@ export const useThemeStore = defineStore('theme', () => {
         setAccent,
         setDensity,
         initTheme,
+        enableVxeTheme,
         applyTheme,
     }
 })

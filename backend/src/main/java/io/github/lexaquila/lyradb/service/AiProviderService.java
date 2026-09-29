@@ -83,7 +83,7 @@ public class AiProviderService {
             }
         };
         requestFactory.setConnectTimeout(10_000);
-        requestFactory.setReadTimeout(60_000);
+        requestFactory.setReadTimeout(300_000);
         this.restTemplate = new RestTemplate(requestFactory);
         // 避免默认错误处理器先无界读取错误响应；状态码由有界 extractor 检查。
         this.restTemplate.setErrorHandler(new NoOpResponseErrorHandler());

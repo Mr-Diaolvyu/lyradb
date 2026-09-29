@@ -84,3 +84,13 @@ Gateway 令牌正文只显示一次，数据库只保存摘要。上线前必须
 ## 7. 密钥与日志
 
 AI Key 与计划正文使用 AES-GCM 加密。不要把真实 Key、连接凭据或业务样本写进环境样例、日志、评测问题或故障摘要。运行指标只记录固定操作名、调用数、失败数与耗时。
+
+## 8. 阿里云百炼 Token Plan
+
+“管理 → 模型与 AI → 配置 Provider”中选择“阿里云百炼 Token Plan”，使用 `PUBLIC` 部署模式。预设的 OpenAI 兼容 Base URL 是 `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`，默认模型为 `qwen3.7-plus`；按百炼控制台显示的套餐支持模型调整。填写 Token Plan 专属 API Key 后保存，再使用“测试可用性”做一次真实对话调用。测试会消耗少量套餐额度；不要把 API Key 写入仓库、环境样例或工单。
+
+Token Plan 个人版和团队版共用此预设，无需在 LyraDB 中区分版本。普通百炼 API Key 与 Token Plan 专属 API Key 必须使用各自对应的 Base URL；普通按量接入继续选择“阿里云百炼”。套餐资格和扣费以百炼控制台为准，不能仅根据 LyraDB 保存成功判断接入成功。
+
+本预设覆盖 OpenAI Chat Completions 对话。Ask Lyra、流式响应及 Agent 工具调用应分别验收。知识语义检索当前复用工作空间默认 Provider 调用 Embedding；Token Plan 文本模型接入不代表 Embedding 可用。启用语义检索前应另行确认该模型与端点支持，或为 Embedding 设计独立 Provider。
+
+参考：[百炼 Token Plan 快速开始](https://help.aliyun.com/zh/model-studio/token-plan-personal-quick-start)、[百炼 Token Plan 概览](https://help.aliyun.com/zh/model-studio/token-plan-personal-overview)。

@@ -163,8 +163,11 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
                 List<TreeNode> nodes = readInformationSchemaTables(
                         conn, tenantInformationSchemaSql(project),
                         "TENANT_INFORMATION_SCHEMA");
-                return verifyBlankCommentsWithSdk(
-                        conn, nodes, failures);
+                if (!nodes.isEmpty()) {
+                    return withProject(project,
+                            verifyBlankCommentsWithSdk(conn, nodes, failures));
+                }
+                failures.add("租户级 Information Schema 未返回当前 Project 的表");
             } catch (SQLException exception) {
                 failures.add("租户级 Information Schema 不可用："
                         + safeFailureReason(exception));
@@ -183,14 +186,29 @@ public class MaxComputeDriver extends AbstractJdbcDriver {
             List<TreeNode> nodes = readInformationSchemaTables(
                     conn, PROJECT_INFORMATION_SCHEMA_TABLES_SQL,
                     "PROJECT_INFORMATION_SCHEMA");
-            return verifyBlankCommentsWithSdk(conn, nodes, failures);
+            if (!nodes.isEmpty()) {
+                return withProject(project,
+                        verifyBlankCommentsWithSdk(conn, nodes, failures));
+            }
+            failures.add("项目级 Information Schema 未返回表");
         } catch (SQLException exception) {
             failures.add("项目级 Information Schema 不可用："
                     + safeFailureReason(exception));
         }
 
         List<TreeNode> showNodes = readShowTables(conn, "SHOW TABLES");
-        return enrichShowTablesWithSdk(conn, showNodes, failures);
+        return withProject(project,
+                enrichShowTablesWithSdk(conn, showNodes, failures));
+    }
+
+    private static List<TreeNode> withProject(String project,
+                                              List<TreeNode> nodes) {
+        if (project != null && !project.isBlank()) {
+            for (TreeNode node : nodes) {
+                node.getProperties().put("project", project);
+            }
+        }
+        return nodes;
     }
 
     private List<TreeNode> getProjectTables(

@@ -1104,7 +1104,7 @@ async function submitExportRequest() {
   font-weight: 720;
   letter-spacing: -0.03em;
 }
-.page-sub { color: var(--color-text-muted); font-size: 12px; }
+.page-sub { color: var(--color-text-muted); font-size: 13px; }
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -1122,9 +1122,12 @@ async function submitExportRequest() {
 .toolbar-secondary { flex-wrap: wrap; margin-left: auto; }
 .toolbar :deep(.el-button + .el-button) { margin-left: 0; }
 .query-workspace { display: flex; gap: 10px; flex: 1; min-height: 0; }
-.query-navigator { display: flex; flex: 0 0 230px; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; padding: 10px; border-radius: 12px; }
+.query-navigator { display: flex; flex: 0 0 clamp(260px, 19vw, 320px); flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; padding: 10px; border-radius: 12px; }
 .navigator-title { display: flex; align-items: center; justify-content: space-between; font-weight: 600; }
 .navigator-list { min-height: 0; flex: 1; overflow: auto; }
+.navigator-list :deep(.el-tree) { background: transparent; }
+.navigator-list :deep(.el-tree-node__content:hover) { background: var(--color-hover); }
+.nav-node-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-search-result { display: flex; width: 100%; flex-direction: column; padding: 7px 6px; border: 0; border-bottom: 1px solid var(--color-panel-border); background: transparent; color: var(--color-foreground); text-align: left; cursor: pointer; }
 .nav-search-result:hover, .nav-search-result:focus-visible { background: var(--color-hover); }
 .nav-search-result strong, .nav-search-result small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1229,7 +1232,7 @@ async function submitExportRequest() {
   border-bottom: 1px solid var(--color-panel-border);
   background: var(--color-panel-header);
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .warn { color: var(--color-destructive); }

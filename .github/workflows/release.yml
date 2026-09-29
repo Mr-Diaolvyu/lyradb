@@ -362,6 +362,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: 读取当前标签的版本说明
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+
       - name: 下载已验证产物
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -373,24 +378,7 @@ jobs:
         with:
           generate_release_notes: true
           fail_on_unmatched_files: true
-          body: |
-            > [!IMPORTANT]
-            > **普通个人用户只需下载 `LyraDB-<版本>-windows-x64-portable.zip`。**
-            > 其他附件用于企业部署、安全审计或源码查看，无需全部下载。
-
-            | 附件 | 用途 |
-            | --- | --- |
-            | `LyraDB-<版本>-windows-x64-portable.zip` | Windows x64 原生桌面个人版 |
-            | `LyraDB-Enterprise-Server-<版本>.jar` | 企业版 B/S 服务端 |
-            | `lyradb-frontend-<版本>.cdx.json` | 企业前端 CycloneDX 安全清单 |
-            | `lyradb-java-<版本>.cdx.json` | Java/Core/后端 CycloneDX 安全清单 |
-            | `SHA256SUMS.txt` | 下载文件完整性校验 |
-            | `Source code (zip/tar.gz)` | GitHub 根据标签自动生成的源码包 |
-
-            个人版：连接导入新增可见的 Excel 模板下载入口，填写 `.xlsx` 后可直接批量预览、裁决冲突并导入；原有 JSON 加密导入/导出继续保留。
-            企业版：管理员可下载同一份 Excel 模板并通过既有一次性预览、冲突裁决和审计流程批量导入；连接导出仍必须先审批。
-            模板：内置填写示例、字段说明和 9 类数据库参数说明，支持数据库类型/布尔下拉校验与通用 JSON 扩展字段。
-            安全：Excel 中密码和 Secret 明确按明文处理；解析器拒绝公式、错误单元格、外部链接、隐藏数据页、未知类型与超限内容。
+          body_path: docs/releases/版本说明-${{ needs.build-windows.outputs.version }}.md
           files: |
             release-assets/LyraDB-*-windows-x64-portable.zip
             release-assets/LyraDB-Enterprise-Server-*.jar

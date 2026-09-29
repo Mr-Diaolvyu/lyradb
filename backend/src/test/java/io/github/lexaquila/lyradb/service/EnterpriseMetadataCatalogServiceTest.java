@@ -333,4 +333,43 @@ class EnterpriseMetadataCatalogServiceTest {
         verify(driver, never()).getTableConstraints(
                 connection, "project_one", "fact_orders");
     }
+
+    @Test
+    void maxComputeRootTablesUseConnectionProjectUnderWildcardGrant()
+            throws Exception {
+        dataSource.setDbType("MAXCOMPUTE");
+        grant.setAllowedSchemas("*");
+        grant.setAllowedTables("*.*");
+        grant.setBlockedTables(null);
+        TreeNode table = TreeNode.of(
+                "fact_orders", "fact_orders", "TABLE", "fact_orders");
+        table.getProperties().put("project", "project_one");
+        when(driver.getTreeNodes(connection, null))
+                .thenReturn(List.of(table));
+
+        EnterpriseMetadataCatalog catalog = service.catalog("sales", true);
+
+        assertThat(catalog.getSchemas()).containsExactly("project_one");
+        assertThat(catalog.getTables()).extracting(
+                EnterpriseMetadataCatalog.Table::getQualifiedName)
+                .containsExactly("project_one.fact_orders");
+    }
+
+    @Test
+    void maxComputeRootTablesDoNotBorrowGrantForAnotherProject()
+            throws Exception {
+        dataSource.setDbType("MAXCOMPUTE");
+        grant.setAllowedSchemas("other_project");
+        grant.setAllowedTables("other_project.fact_orders");
+        grant.setBlockedTables(null);
+        TreeNode table = TreeNode.of(
+                "fact_orders", "fact_orders", "TABLE", "fact_orders");
+        table.getProperties().put("project", "project_one");
+        when(driver.getTreeNodes(connection, null))
+                .thenReturn(List.of(table));
+
+        EnterpriseMetadataCatalog catalog = service.catalog("sales", true);
+
+        assertThat(catalog.getTables()).isEmpty();
+    }
 }

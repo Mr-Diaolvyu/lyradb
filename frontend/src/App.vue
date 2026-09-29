@@ -52,14 +52,17 @@ async function boot(retry = false) {
 
   // 仅经过一致性校验的 personal 模式才初始化直连能力。
   personalInitialized = true
-  themeStore.initTheme()
+  themeStore.enableVxeTheme()
   await Promise.all([
     connectionStore.loadDrivers(),
     connectionStore.loadConnections(),
   ])
 }
 
-onMounted(() => boot())
+onMounted(() => {
+  themeStore.initTheme()
+  void boot()
+})
 </script>
 
 <style>

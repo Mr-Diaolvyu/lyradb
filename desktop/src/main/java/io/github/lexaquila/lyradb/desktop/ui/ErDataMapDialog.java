@@ -1,5 +1,7 @@
 package io.github.lexaquila.lyradb.desktop.ui;
 
+import io.github.lexaquila.lyradb.lineage.DataWorksLineageClient;
+
 import io.github.lexaquila.lyradb.desktop.DesktopRuntime;
 import io.github.lexaquila.lyradb.desktop.model.DesktopConnection;
 import io.github.lexaquila.lyradb.model.dto.TreeNode;
@@ -80,14 +82,14 @@ final class ErDataMapDialog extends JDialog {
     private final JButton clearTables = UiKit.button(
             "清空", LyraIcons.of(LyraIcons.Kind.CLOSE),
             UiKit.ButtonStyle.GHOST);
-    private final JComboBox<DataWorksLineageService.EntityKind> lineageKind =
-            new JComboBox<>(DataWorksLineageService.EntityKind.values());
-    private final JComboBox<DataWorksLineageService.Direction>
+    private final JComboBox<DataWorksLineageClient.EntityKind> lineageKind =
+            new JComboBox<>(DataWorksLineageClient.EntityKind.values());
+    private final JComboBox<DataWorksLineageClient.Direction>
             lineageDirection = new JComboBox<>(
-            DataWorksLineageService.Direction.values());
-    private final JComboBox<DataWorksLineageService.ProbePolicy>
+            DataWorksLineageClient.Direction.values());
+    private final JComboBox<DataWorksLineageClient.ProbePolicy>
             lineagePolicy = new JComboBox<>(
-            DataWorksLineageService.ProbePolicy.values());
+            DataWorksLineageClient.ProbePolicy.values());
     private final JComboBox<ColumnChoice> lineageColumn = new JComboBox<>();
     private final JPanel lineageBar = new JPanel(new FlowLayout(
             FlowLayout.LEFT, 8, 0));
@@ -502,7 +504,7 @@ final class ErDataMapDialog extends JDialog {
                     if (maxCompute) {
                         updateLineageColumns();
                         if (lineagePolicy.getSelectedItem()
-                                == DataWorksLineageService.ProbePolicy.ON_SELECTION) {
+                                == DataWorksLineageClient.ProbePolicy.ON_SELECTION) {
                             probeLineage();
                         }
                     }
@@ -690,42 +692,42 @@ final class ErDataMapDialog extends JDialog {
             setEmpty("MaxCompute 连接缺少 Project，无法构造血缘实体 ID");
             return;
         }
-        DataWorksLineageService.EntityKind kind =
-                (DataWorksLineageService.EntityKind)
+        DataWorksLineageClient.EntityKind kind =
+                (DataWorksLineageClient.EntityKind)
                         lineageKind.getSelectedItem();
         List<String> roots = new ArrayList<>();
-        if (kind == DataWorksLineageService.EntityKind.COLUMN) {
+        if (kind == DataWorksLineageClient.EntityKind.COLUMN) {
             ColumnChoice column = (ColumnChoice) lineageColumn.getSelectedItem();
             if (column != null) {
-                roots.add(DataWorksLineageService.columnEntityId(
+                roots.add(DataWorksLineageClient.columnEntityId(
                         project, column.table(), column.column()));
             }
         } else {
             selectedTables.values().forEach(choice -> roots.add(
-                    DataWorksLineageService.tableEntityId(
+                    DataWorksLineageClient.tableEntityId(
                             project, choice.name())));
         }
         if (roots.isEmpty()) {
             status.setForeground(NativeTheme.WARNING);
-            status.setText(kind == DataWorksLineageService.EntityKind.COLUMN
+            status.setText(kind == DataWorksLineageClient.EntityKind.COLUMN
                     ? "请先选择根表并选择一个根字段"
                     : "请先选择至少一张血缘根表");
             return;
         }
-        DataWorksLineageService.Direction direction =
-                (DataWorksLineageService.Direction)
+        DataWorksLineageClient.Direction direction =
+                (DataWorksLineageClient.Direction)
                         lineageDirection.getSelectedItem();
         long request = beginWork("正在通过 DataWorks 探查真实"
                 + kind + "…");
-        worker = new SwingWorker<DataWorksLineageService.LineageResult, Void>() {
+        worker = new SwingWorker<DataWorksLineageClient.LineageResult, Void>() {
             @Override
-            protected DataWorksLineageService.LineageResult
+            protected DataWorksLineageClient.LineageResult
                     doInBackground() throws Exception {
-                return DataWorksLineageService.fromConnection(
-                        source.connection()).explore(
+                return DataWorksLineageClient.fromParameters(
+                        source.connection().getParams()).explore(
                         roots, direction,
-                        DataWorksLineageService.DEFAULT_DEPTH,
-                        DataWorksLineageService.DEFAULT_MAX_NODES);
+                        DataWorksLineageClient.DEFAULT_DEPTH,
+                        DataWorksLineageClient.DEFAULT_MAX_NODES);
             }
 
             @Override
@@ -734,8 +736,15 @@ final class ErDataMapDialog extends JDialog {
                     return;
                 }
                 try {
-                    DataWorksLineageService.LineageResult result = get();
-                    currentGraph = result.graph();
+                    DataWorksLineageClient.LineageResult result = get();
+                    currentGraph = new ErDiagramDialog.SchemaGraph(
+                            result.graph().tables().stream().map(table -> new ErDiagramDialog.TableNode(
+                                    table.schema(), table.name(), table.columns().stream()
+                                    .map(column -> new ErDiagramDialog.ColumnNode(column.name(), column.typeName(),
+                                            column.primaryKey(), column.remarks())).toList())).toList(),
+                            result.graph().relations().stream().map(edge -> new ErDiagramDialog.Relation(
+                                    edge.from(), edge.to(), edge.fromColumn(), edge.toColumn())).toList(),
+                            result.graph().truncated());
                     graph.setGraph(currentGraph);
                     graph.setFilter(graphFilter.getText());
                     setLoading(false);
@@ -843,7 +852,7 @@ final class ErDataMapDialog extends JDialog {
             updatingLineageControls = true;
             try {
                 lineagePolicy.setSelectedItem(
-                        DataWorksLineageService.ProbePolicy.fromValue(
+                        DataWorksLineageClient.ProbePolicy.fromValue(
                                 connection.getParams().get(
                                         "lineageProbePolicy")));
             } finally {
@@ -871,7 +880,7 @@ final class ErDataMapDialog extends JDialog {
 
     private void updateLineageColumnState() {
         boolean columnMode = lineageKind.getSelectedItem()
-                == DataWorksLineageService.EntityKind.COLUMN;
+                == DataWorksLineageClient.EntityKind.COLUMN;
         lineageColumnLabel.setVisible(lineageKind.isVisible() && columnMode);
         lineageColumn.setVisible(lineageKind.isVisible() && columnMode);
         probeLineage.setEnabled(!columnMode
@@ -884,7 +893,7 @@ final class ErDataMapDialog extends JDialog {
             return;
         }
         Object selected = lineagePolicy.getSelectedItem();
-        if (!(selected instanceof DataWorksLineageService.ProbePolicy policy)) {
+        if (!(selected instanceof DataWorksLineageClient.ProbePolicy policy)) {
             return;
         }
         DesktopConnection updated = source.connection().copy();
@@ -902,7 +911,7 @@ final class ErDataMapDialog extends JDialog {
             periodicProbeTimer = null;
         }
         Object selected = lineagePolicy.getSelectedItem();
-        if (!(selected instanceof DataWorksLineageService.ProbePolicy policy)
+        if (!(selected instanceof DataWorksLineageClient.ProbePolicy policy)
                 || policy.intervalMs() <= 0) {
             return;
         }

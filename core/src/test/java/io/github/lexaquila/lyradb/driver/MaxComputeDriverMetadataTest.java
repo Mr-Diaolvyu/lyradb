@@ -169,6 +169,62 @@ class MaxComputeDriverMetadataTest {
     }
 
     @Test
+    void shouldTryProjectCatalogWhenTenantCatalogIsEmpty() throws Exception {
+        Connection connection = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        ResultSet tenantTables = mock(ResultSet.class);
+        ResultSet projectTables = mock(ResultSet.class);
+        when(connection.getCatalog()).thenReturn("demo_project");
+        when(connection.createStatement()).thenReturn(statement);
+        when(statement.executeQuery(TENANT_INFORMATION_SCHEMA_TABLES_SQL))
+                .thenReturn(tenantTables);
+        when(tenantTables.next()).thenReturn(false);
+        when(statement.executeQuery(INFORMATION_SCHEMA_TABLES_SQL))
+                .thenReturn(projectTables);
+        when(projectTables.next()).thenReturn(true, false);
+        when(projectTables.getString(1)).thenReturn("orders");
+        when(projectTables.getString(2)).thenReturn("TABLE");
+        when(projectTables.getString(3)).thenReturn("订单表");
+
+        var nodes = driver().getTreeNodes(connection, null);
+
+        assertThat(nodes).singleElement().satisfies(node -> {
+            assertThat(node.getName()).isEqualTo("orders");
+            assertThat(node.getProperties())
+                    .containsEntry("project", "demo_project")
+                    .containsEntry("metadataSource", "PROJECT_INFORMATION_SCHEMA");
+        });
+        verify(statement, never()).executeQuery("SHOW TABLES");
+    }
+
+    @Test
+    void shouldTryShowTablesWhenInformationSchemaReturnsNoRows() throws Exception {
+        Connection connection = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        ResultSet emptyTables = mock(ResultSet.class);
+        ResultSet showTables = mock(ResultSet.class);
+        when(connection.getCatalog()).thenReturn("demo_project");
+        when(connection.createStatement()).thenReturn(statement);
+        when(statement.executeQuery(TENANT_INFORMATION_SCHEMA_TABLES_SQL))
+                .thenReturn(emptyTables);
+        when(statement.executeQuery(INFORMATION_SCHEMA_TABLES_SQL))
+                .thenReturn(emptyTables);
+        when(emptyTables.next()).thenReturn(false);
+        when(statement.executeQuery("SHOW TABLES")).thenReturn(showTables);
+        when(showTables.next()).thenReturn(true, false);
+        when(showTables.getString(1)).thenReturn("v4_100:orders");
+
+        var nodes = driver().getTreeNodes(connection, null);
+
+        assertThat(nodes).singleElement().satisfies(node -> {
+            assertThat(node.getName()).isEqualTo("orders");
+            assertThat(node.getProperties())
+                    .containsEntry("project", "demo_project")
+                    .containsEntry("metadataSource", "SHOW_TABLES");
+        });
+    }
+
+    @Test
     void shouldBulkEnrichShowTablesWithSdkCommentAndPartitions()
             throws Exception {
         FakeTable table = FakeTable.partitioned(

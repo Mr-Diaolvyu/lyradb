@@ -17,6 +17,8 @@
 | 方法与路径 | 作用 | 主要门禁 | 影响 |
 |---|---|---|---|
 | `GET /ai/capabilities` | 返回服务端能力开关与写入硬门禁 | 已登录 | 只读 |
+| `POST /ai/tasks` | 提交 `CHAT`、`FIND_TABLE` 或 `METADATA` 后台任务 | 当前用户、空间与 Grant；请求标识去重 | 返回任务状态，不等待模型或采集完成 |
+| `GET /ai/tasks` | 恢复当前用户在当前空间的任务和结果 | 每次重新验证 Grant 及安全指纹 | 返回排队、执行中、完成或失败状态 |
 | `POST /ai/agent/orchestrate` | 最多四步调用知识检索或只读计划工具 | Ask Lyra + Knowledge Core + Governed Read Agent、当前 Grant | 回答或创建待确认计划，不执行 |
 | `POST /ai/agent/read/plans` | 为候选 SQL 创建不可变计划 | READ_ONLY Grant、AST、资源、行数、成本 | 加密持久化计划正文 |
 | `POST /ai/agent/read/plans/{runId}/execute` | 单次消费计划并执行 | 重新鉴权、计划摘要、有效期、执行前复检 | 受控读取并生成回执 |
@@ -30,6 +32,16 @@
 | `POST /ai/maxcompute/preflight` | 校验分区、扫描量、成本与授权 | MaxCompute Agent、READ_ONLY Grant | 创建单次预检摘要，不执行 SQL |
 | `POST /ai/maxcompute/diagnose` | 对脱敏任务摘要做确定性诊断 | MaxCompute Agent | 不自动重试 |
 | `GET /ai/operations/metrics` | 查看进程调用指标和持久运行状态 | `DS_ADMIN`/`STEWARD`/`AUDITOR` | 只读；不含提示词、SQL 或密钥 |
+
+### AI 助手后台任务
+
+默认 `/ai` 页面提供问答、找表与结构采集。受控读取计划、MaxCompute 预检、知识草稿保留在 `/ai/advanced` 高级工具入口；这些高级操作仍使用原有确认流程及接口。
+
+`POST /ai/tasks` 必填 `requestId`（16–64 位字母、数字或连字符）、`kind`、`grantedSourceName`。问答和找表使用 `message`；问答可附加 `history`、`attachMetadata`、`metadataSnapshotId`；结构采集使用 `database`、`schemas`、`tables`。相同用户、空间及请求标识的重复请求返回原任务，内容不一致则拒绝。
+
+状态为 `QUEUED → RUNNING → SUCCEEDED / FAILED`。页面展示状态、等待动画及耗时，不生成虚构的思考过程。切换页面、关闭浏览器和刷新均不会取消服务端任务；重新登录同一账号、进入同一空间后可以读取结果。此队列为单服务进程内存实现，完成后结果保留一小时；重启不恢复，集群需保持会话落在同一实例。每用户最多四个活动任务，线程池最多四线程、排队十六个任务、全局最多保留二百五十六个任务。结构快照仍遵循原有三十分钟有效期及一次性消费约束。
+
+元数据采集将 MySQL 数据库作为 Schema 匹配，兼容请求中的 `*`，仍逐表应用授权白名单与黑名单。空结果直接失败并提示检查范围、授权与连接权限，不创建可附加的空快照。界面不再把授权中的通配符当作具体 Schema 选项。
 
 ## 3. 计划确认状态机
 

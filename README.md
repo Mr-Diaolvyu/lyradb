@@ -3,9 +3,9 @@
 > 轻若天琴，智驭可信数据 —— 面向数据专业团队、可私有化部署的可信 AI 数据智库。
 
 [![Java](https://img.shields.io/badge/Java-17-orange)]()
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.5-brightgreen)]()
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.16-brightgreen)]()
 [![Vue](https://img.shields.io/badge/Vue-3.4-42b883)]()
-[![Version](https://img.shields.io/badge/version-3.1.2-334155)]()
+[![Version](https://img.shields.io/badge/version-3.2.0-334155)]()
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue)]()
 
 **简体中文** | [English](README.en.md)
@@ -55,6 +55,8 @@ LyraDB 把多数据库、授权元数据、已验证知识和治理规则连接�
 
 ## 企业版能力
 
+3.2.0 补齐企业 SQL 精确取消、授权范围内的完整 ER，以及 MaxCompute DataWorks 表/字段血缘。共同能力、治理差异和验证范围见[能力对齐核对](docs/product/企业版与个人版能力对齐.md)。
+
 企业版保留 Vue 3 + Spring Boot B/S 架构，提供工作空间 RBAC、托管数据源、连接迁移、审批后一次性导出、SQL 审批、脱敏、审计、定时报表、SSH 隧道和集中 AI Provider 管理。
 
 企业 AI 以 **Ask Lyra + Data Knowledge Core + Governed Read Agent** 为产品主线：Ask Lyra 可在有限步数内检索已审核知识并创建只读计划，返回工具轨迹、Token 用量、证据与 Context Receipt；数据读取必须先展示不可变计划，再由用户确认。计划状态加密持久化，支持重启恢复、单次认领和跨节点取消；团队知识只有经过数据管家审核后才能进入 AI 上下文。
@@ -89,7 +91,7 @@ LYRADB_AI_PRIVATE_MODEL_ALLOWED_HOSTS=
 
 ### Windows 个人版
 
-从 GitHub Release 下载 `LyraDB-3.1.2-windows-x64-portable.zip`，完整解压后运行：
+从 GitHub Release 下载 `LyraDB-3.2.0-windows-x64-portable.zip`，完整解压后运行：
 
 ```text
 LyraDB\LyraDB.exe
@@ -100,7 +102,7 @@ LyraDB\LyraDB.exe
 从源码构建需要带 `jpackage` 的 JDK 21 与 Maven：
 
 ```powershell
-.\package-desktop.ps1 -Version 3.1.2
+.\package-desktop.ps1 -Version 3.2.0
 ```
 
 脚本会运行 core/desktop 测试，生成原生 app-image，真实启动 EXE 并验证：
@@ -112,7 +114,7 @@ LyraDB\LyraDB.exe
 
 ### 企业版开发
 
-要求 JDK 17+、Maven 3.8+、Node.js 20+。
+要求 JDK 17+、Maven 3.8+、Node.js 24.15+。
 
 ```bash
 cd frontend
@@ -123,7 +125,7 @@ npm run dev
 ```bash
 # 仓库根目录
 mvn -B -ntp -pl backend -am clean package
-java -jar backend/target/lyradb-backend-3.1.2.jar
+java -jar backend/target/lyradb-backend-3.2.0.jar
 ```
 
 前端开发服务器默认位于 `http://localhost:5173`，并把 `/api` 代理到后端 `8080`。
@@ -177,10 +179,10 @@ lyradb/
 
 ```bash
 # 企业版服务端（包含 Vue 前端）
-bash package-server.sh 3.1.2
+bash package-server.sh 3.2.0
 
 # 个人版原生桌面
-bash package-desktop.sh 3.1.2
+bash package-desktop.sh 3.2.0
 ```
 
 Windows 使用同名 `.ps1` 脚本。服务端与桌面端是两条独立产物链，不会再互相包装。

@@ -3,9 +3,9 @@
 > Lightweight by design, trusted by evidence — a self-hostable Trusted AI Data Intelligence Hub for data professionals.
 
 [![Java](https://img.shields.io/badge/Java-17-orange)]()
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.5-brightgreen)]()
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.16-brightgreen)]()
 [![Vue](https://img.shields.io/badge/Vue-3.4-42b883)]()
-[![Version](https://img.shields.io/badge/version-3.1.2-334155)]()
+[![Version](https://img.shields.io/badge/version-3.2.0-334155)]()
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue)]()
 
 [简体中文](README.md) | **English**
@@ -51,13 +51,13 @@ Implementation status and rollout boundaries are documented in the [AI-native ro
 Native Windows package, using JDK 21 with `jpackage`:
 
 ```powershell
-.\package-desktop.ps1 -Version 3.1.2
+.\package-desktop.ps1 -Version 3.2.0
 ```
 
 Enterprise server:
 
 ```bash
-bash package-server.sh 3.1.2
+bash package-server.sh 3.2.0
 ```
 
 Quality gates:

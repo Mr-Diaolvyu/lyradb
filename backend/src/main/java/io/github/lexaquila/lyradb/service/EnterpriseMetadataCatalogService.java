@@ -495,11 +495,19 @@ public class EnterpriseMetadataCatalogService {
             Map<String, EnterpriseMetadataCatalog.Table> tables) {
         String owner = tableOwnerPath(node);
         String schema = owner == null
-                ? firstConcreteSchema(grant)
+                ? rootTableProject(node, grant)
                 : normalizeNamespace(owner);
         addTable(grant, schema,
                 owner == null ? schema : owner,
                 node, tables);
+    }
+
+    private static String rootTableProject(TreeNode node, Grant grant) {
+        Object project = node.getProperties() == null
+                ? null : node.getProperties().get("project");
+        String actualProject = blankToNull(text(project));
+        return actualProject == null
+                ? firstConcreteSchema(grant) : actualProject;
     }
 
     private static void addTable(
