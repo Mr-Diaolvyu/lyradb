@@ -1309,6 +1309,9 @@ async function submitExportRequest() {
   font: 700 16px var(--font-mono, monospace);
 }
 .enterprise-inspection {
+  display: grid;
+  /* 为模式栏单独分配高度，避免下方 100% 高度的表格溢出后被裁切。 */
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   flex: 1;
   overflow: hidden;
