@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDateTime;
@@ -85,6 +86,37 @@ class ApprovalServiceSecurityTest {
         assertEquals("workspace-1", saved.getWorkspaceId());
         assertEquals("grant-1", saved.getGrantId());
         assertEquals("CTX", saved.getSecurityContextHash());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"csv", "json"})
+    void exportWithoutDefaultDatabaseCanCompleteApprovalLifecycle(String format) throws Exception {
+        Grant grant = grant("user-1", "workspace-1", "source-1", "sales");
+        User applicant = user("user-1", "alice");
+        String sql = "select * from dw.orders";
+        when(credentialService.encryptValue(any())).thenReturn("ENC");
+
+        ApprovalRequest approval = service.create(grant, applicant, "EXPORT",
+                "{\"sql\":\"" + sql + "\",\"format\":\"" + format
+                        + "\",\"defaultDatabase\":null}", "导出核验");
+        approval.setId("approval-1");
+        when(repository.findByIdForUpdate("approval-1")).thenReturn(Optional.of(approval));
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(credentialService).encryptValue(payload.capture());
+        when(credentialService.decryptValue("ENC")).thenReturn(payload.getValue());
+
+        service.approve("approval-1", "approver-1", "workspace-1", null);
+        assertEquals("APPROVED", approval.getStatus());
+        String visiblePayload = (String) service.toView(approval, true).get("payloadJson");
+        // 审批详情省略空默认库；前端下载应以 null 还原同一份审批内容。
+        assertTrue(!new ObjectMapper().readTree(visiblePayload).has("defaultDatabase"));
+
+        service.claimForExecution("approval-1", applicant, grant, "EXPORT", sql, format, null);
+        assertEquals("EXECUTING", approval.getStatus());
+        service.markExecutionResult("approval-1", true, "已导出 1 行");
+        assertEquals("DONE", approval.getStatus());
+        assertThrows(RuntimeException.class, () -> service.claimForExecution(
+                "approval-1", applicant, grant, "EXPORT", sql, format, null));
     }
 
     @Test

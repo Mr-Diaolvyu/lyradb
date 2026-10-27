@@ -130,11 +130,12 @@ function parseExportPayload(row: ApprovalRequest): ExportPayload | null {
     const parsed = JSON.parse(row.payloadJson)
     if (typeof parsed?.sql !== 'string' || !parsed.sql.trim()) return null
     if (parsed.format !== 'csv' && parsed.format !== 'json') return null
-    if (parsed.defaultDatabase !== null && typeof parsed.defaultDatabase !== 'string') return null
+    // 服务端规范化审批时会省略空默认库；缺失与 null 表示同一审批内容。
+    if (parsed.defaultDatabase != null && typeof parsed.defaultDatabase !== 'string') return null
     return {
       sql: parsed.sql,
       format: parsed.format,
-      defaultDatabase: parsed.defaultDatabase,
+      defaultDatabase: parsed.defaultDatabase ?? null,
     }
   } catch {
     return null
